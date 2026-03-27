@@ -40,7 +40,8 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
         dni: '',
         nombre_completo: '',
         fecha_nacimiento: '',
-        sexo: 'femenino', // Valor por defecto
+        sexo: 'femenino',
+        obra_social_id: undefined,
       }
 
   const {
@@ -141,8 +142,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
                 control={control}
                 render={({ field }) => (
                   <Select
-                    defaultValue={field.value}
-                    value={field.value}
+                    value={field.value || ""}
                     onValueChange={field.onChange}
                   >
                     <SelectTrigger id="sexo" className={errors.sexo ? 'border-destructive' : ''}>
@@ -206,9 +206,8 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
                 control={control}
                 render={({ field }) => (
                   <Select
-                    defaultValue={field.value ? field.value.toString() : undefined}
-                    value={field.value ? field.value.toString() : undefined}
-                    onValueChange={(val) => field.onChange(Number(val))}
+                    value={field.value ? field.value.toString() : ""}
+                    onValueChange={(val) => field.onChange(val === "" ? undefined : Number(val))}
                   >
                     <SelectTrigger id="obra_social_id">
                       <SelectValue placeholder="Seleccionar" />

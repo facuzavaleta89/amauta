@@ -39,9 +39,9 @@ export function DeletePatientButton({ patientId, patientName }: DeletePatientBut
       setOpen(false)
       router.push('/pacientes')
       router.refresh()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error)
-      alert(error.message || 'Ocurrió un error al intentar eliminar el paciente.')
+      alert((error as Error).message || 'Ocurrió un error al intentar eliminar el paciente.')
     } finally {
       setIsDeleting(false)
     }

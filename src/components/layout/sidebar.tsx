@@ -90,7 +90,9 @@ export function Sidebar({ userFullName, userRole, userEmail }: SidebarProps) {
           </Avatar>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground truncate">{userFullName}</p>
-            <p className="text-[11px] text-muted-foreground truncate capitalize">{userRole}</p>
+            <p className="text-[11px] text-muted-foreground truncate capitalize">
+              {userRole} • {userEmail}
+            </p>
           </div>
         </div>
       </div>

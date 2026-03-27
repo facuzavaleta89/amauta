@@ -14,8 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Eye, Pencil, FileText } from 'lucide-react'
 import type { PacienteWithObraSocial } from '@/types/paciente'
-import { format, differenceInYears } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { differenceInYears } from 'date-fns'
 
 interface PatientTableProps {
   pacientes: PacienteWithObraSocial[]

@@ -27,3 +27,4 @@ export const historiaSchema = z.object({
 })
 
 export type HistoriaFormData = z.infer<typeof historiaSchema>
+export type HistoriaFormInput = z.input<typeof historiaSchema>

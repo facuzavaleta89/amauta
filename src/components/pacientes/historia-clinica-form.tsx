@@ -21,7 +21,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
-import { historiaSchema, type HistoriaFormData } from '@/lib/validations/historia.schema'
+import { historiaSchema, type HistoriaFormData, type HistoriaFormInput } from '@/lib/validations/historia.schema'
 
 interface HistoriaClinicaFormProps {
   pacienteId: string
@@ -33,7 +33,7 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
 
-  const form = useForm<HistoriaFormData>({
+  const form = useForm<HistoriaFormInput, any, HistoriaFormData>({
     resolver: zodResolver(historiaSchema),
     defaultValues: {
       antecedentes_patologicos: initialData?.antecedentes_patologicos || '',
@@ -210,7 +210,7 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
                       <FormItem>
                         <FormLabel>Peso (kg)</FormLabel>
                         <FormControl>
-                          <Input type="number" step="0.1" placeholder="Ej. 70.5" {...field} value={field.value ?? ''} onChange={e => field.onChange(e.target.value)} />
+                          <Input type="number" step="0.1" placeholder="Ej. 70.5" {...field} value={(field.value as string | number) ?? ''} onChange={e => field.onChange(e.target.value)} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -224,7 +224,7 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
                       <FormItem>
                         <FormLabel>Talla (cm)</FormLabel>
                         <FormControl>
-                          <Input type="number" step="1" placeholder="Ej. 175" {...field} value={field.value ?? ''} onChange={e => field.onChange(e.target.value)} />
+                          <Input type="number" step="1" placeholder="Ej. 175" {...field} value={(field.value as string | number) ?? ''} onChange={e => field.onChange(e.target.value)} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -238,7 +238,7 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
                       <FormItem>
                         <FormLabel>Cintura (cm)</FormLabel>
                         <FormControl>
-                          <Input type="number" step="1" placeholder="Ej. 90" {...field} value={field.value ?? ''} onChange={e => field.onChange(e.target.value)} />
+                          <Input type="number" step="1" placeholder="Ej. 90" {...field} value={(field.value as string | number) ?? ''} onChange={e => field.onChange(e.target.value)} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
