@@ -71,7 +71,6 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
 
       toast.success('Historia clínica guardada exitosamente')
       router.refresh()
-      router.push(`/pacientes/${pacienteId}`)
     } catch (error) {
       toast.error('Ocurrió un error al guardar')
       console.error(error)

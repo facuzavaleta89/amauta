@@ -2,6 +2,7 @@
 -- 004_evoluciones.sql
 -- Registros de evolución clínica por paciente (series temporales)
 -- Para gráficos: peso, IMC, HbA1c, perfil lipídico, etc.
+-- RLS: tenant via pacientes.creado_por = get_medico_id()
 -- ============================================================
 
 CREATE TABLE public.evoluciones (
@@ -51,26 +52,35 @@ CREATE INDEX idx_evoluciones_paciente_fecha ON public.evoluciones(paciente_id, f
 
 ALTER TABLE public.evoluciones ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes pueden ver/registrar evoluciones de sus pacientes
 CREATE POLICY "evoluciones_select" ON public.evoluciones
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()
+  ));
 
 CREATE POLICY "evoluciones_insert" ON public.evoluciones
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()
+  ));
 
--- Solo médico puede modificar/eliminar evoluciones (datos clínicos sensibles)
+-- Solo el médico puede modificar/eliminar evoluciones (datos clínicos sensibles)
 CREATE POLICY "evoluciones_update" ON public.evoluciones
   FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = evoluciones.paciente_id AND creado_por = auth.uid()
     )
   );
 
 CREATE POLICY "evoluciones_delete" ON public.evoluciones
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = evoluciones.paciente_id AND creado_por = auth.uid()
     )
   );
 

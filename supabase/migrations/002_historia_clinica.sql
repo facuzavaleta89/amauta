@@ -1,6 +1,7 @@
 -- ============================================================
 -- 002_historia_clinica.sql
 -- Historia clínica: 1 por paciente (relación 1:1)
+-- RLS: tenant via pacientes.creado_por = get_medico_id()
 -- ============================================================
 
 CREATE TABLE public.historia_clinica (
@@ -19,7 +20,7 @@ CREATE TABLE public.historia_clinica (
   clinica_actual            TEXT,   -- Motivo de consulta / clínica actual
   examen_fisico             TEXT,
   laboratorio               TEXT,
-  estudios_complementarios  TEXT,   -- Descripción textual (los archivos van en tabla estudios)
+  estudios_complementarios  TEXT,   -- Descripción textual (archivos van en tabla estudios)
   conducta                  TEXT,   -- Plan / conducta médica
   proximo_control           DATE,   -- Puede linkear con un turno futuro
 
@@ -39,20 +40,32 @@ CREATE INDEX idx_historia_paciente ON public.historia_clinica(paciente_id);
 
 ALTER TABLE public.historia_clinica ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes pueden leer/escribir historia de sus pacientes
 CREATE POLICY "historia_select" ON public.historia_clinica
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = historia_clinica.paciente_id AND creado_por = get_medico_id()
+  ));
 
 CREATE POLICY "historia_insert" ON public.historia_clinica
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = historia_clinica.paciente_id AND creado_por = get_medico_id()
+  ));
 
 CREATE POLICY "historia_update" ON public.historia_clinica
-  FOR UPDATE USING (auth.role() = 'authenticated');
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = historia_clinica.paciente_id AND creado_por = get_medico_id()
+  ));
 
+-- Solo el médico puede eliminar historias clínicas
 CREATE POLICY "historia_delete" ON public.historia_clinica
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = historia_clinica.paciente_id AND creado_por = auth.uid()
     )
   );
 

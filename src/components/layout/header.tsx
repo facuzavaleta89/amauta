@@ -11,16 +11,35 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Breadcrumb } from './breadcrumb'
+import { NotificacionesMedico } from './notificaciones-medico'
 import { LogOut, User } from 'lucide-react'
-import type { UserRole } from '@/constants/nav-items'
+import type { UserRole } from '@/types/roles'
+
+interface Solicitud {
+  id: string
+  solicitante_nombre: string
+  solicitante_email: string
+  mensaje: string | null
+  created_at: string
+}
 
 interface HeaderProps {
   userFullName: string
   userRole: UserRole
   userEmail: string
+  userId: string
+  medicoId: string | null
+  solicitudesPendientes?: Solicitud[]
 }
 
-export function Header({ userFullName, userRole, userEmail }: HeaderProps) {
+export function Header({
+  userFullName,
+  userRole,
+  userEmail,
+  userId,
+  medicoId,
+  solicitudesPendientes = [],
+}: HeaderProps) {
   const initials = userFullName
     .split(' ')
     .map((n) => n[0])
@@ -28,13 +47,25 @@ export function Header({ userFullName, userRole, userEmail }: HeaderProps) {
     .join('')
     .toUpperCase()
 
+  const roleLabel =
+    userRole === 'medico' ? 'Médico' : 'Asistente'
+
   return (
     <header className="h-14 border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between px-6 shrink-0">
       {/* Breadcrumb */}
       <Breadcrumb />
 
       {/* Acciones del usuario */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
+        {/* Campana de notificaciones — solo para médicos */}
+        {userRole === 'medico' && (
+          <NotificacionesMedico
+            medicoId={userId}
+            solicitudesIniciales={solicitudesPendientes}
+          />
+        )}
+
+        {/* Menú de usuario */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -45,8 +76,8 @@ export function Header({ userFullName, userRole, userEmail }: HeaderProps) {
                 <p className="text-sm font-medium text-foreground leading-none">
                   {userFullName}
                 </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5 capitalize">
-                  {userRole}
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {roleLabel}
                 </p>
               </div>
               <Avatar className="h-8 w-8">
@@ -57,11 +88,12 @@ export function Header({ userFullName, userRole, userEmail }: HeaderProps) {
             </button>
           </DropdownMenuTrigger>
 
-          <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>
               <div>
                 <p className="font-medium text-sm">{userFullName}</p>
                 <p className="text-xs text-muted-foreground font-normal">{userEmail}</p>
+                <p className="text-xs text-primary font-normal mt-0.5">{roleLabel}</p>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />

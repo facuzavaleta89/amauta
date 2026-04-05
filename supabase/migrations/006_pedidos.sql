@@ -1,6 +1,7 @@
 -- ============================================================
 -- 006_pedidos.sql
 -- Pedidos de estudios complementarios con generación de PDF
+-- RLS: tenant via pacientes.creado_por = get_medico_id()
 -- ============================================================
 
 CREATE TABLE public.pedidos (
@@ -38,23 +39,34 @@ CREATE INDEX idx_pedidos_fecha ON public.pedidos(fecha_pedido);
 
 ALTER TABLE public.pedidos ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes pueden ver pedidos de sus pacientes
 CREATE POLICY "pedidos_select" ON public.pedidos
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = pedidos.paciente_id AND creado_por = get_medico_id()
+  ));
 
--- Cualquier autenticado puede crear un pedido
+-- Médico y asistentes pueden crear pedidos para sus pacientes
 CREATE POLICY "pedidos_insert" ON public.pedidos
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = pedidos.paciente_id AND creado_por = get_medico_id()
+  ));
 
--- Cualquier autenticado puede modificar (para guardar el pdf_path)
+-- Médico y asistentes pueden modificar pedidos (para guardar el pdf_path)
 CREATE POLICY "pedidos_update" ON public.pedidos
-  FOR UPDATE USING (auth.role() = 'authenticated');
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = pedidos.paciente_id AND creado_por = get_medico_id()
+  ));
 
--- Solo médico puede eliminar
+-- Solo el médico puede eliminar pedidos
 CREATE POLICY "pedidos_delete" ON public.pedidos
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = pedidos.paciente_id AND creado_por = auth.uid()
     )
   );
 

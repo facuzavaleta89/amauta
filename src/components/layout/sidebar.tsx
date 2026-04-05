@@ -6,7 +6,8 @@ import { cn } from '@/lib/utils/cn'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { getNavItemsByRole, type UserRole } from '@/constants/nav-items'
+import { getNavItemsByRole } from '@/constants/nav-items'
+import type { UserRole } from '@/types/roles'
 
 interface SidebarProps {
   userFullName: string

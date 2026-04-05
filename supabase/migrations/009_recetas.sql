@@ -1,11 +1,12 @@
 -- ============================================================
 -- 009_recetas.sql
--- Recetas digitales (baja prioridad — estructura lista)
+-- Recetas digitales (estructura lista, funcionalidad pendiente)
 -- En Argentina regulado por Ley 26.529 y disposiciones ANMAT/PAMI
--- El médico está en proceso de cumplir los requisitos legales
+-- El médico está en proceso de cumplir los requisitos legales.
 --
--- ⚠️  Esta migración crea la tabla vacía.
---     La funcionalidad se implementará cuando se regularice.
+-- RLS: tenant via pacientes.creado_por = get_medico_id()
+-- Solo el médico puede emitir/modificar/eliminar recetas.
+-- Los asistentes pueden ver pero NO crear ni modificar.
 -- ============================================================
 
 CREATE TABLE public.recetas (
@@ -25,7 +26,7 @@ CREATE TABLE public.recetas (
 
   -- Fecha de prescripción y vencimiento legal (en AR: 30 días hábiles)
   fecha_receta       DATE NOT NULL DEFAULT CURRENT_DATE,
-  fecha_vencimiento  DATE GENERATED ALWAYS AS (fecha_receta + INTERVAL '30 days') STORED,
+  fecha_vencimiento  DATE,            -- Calculado externamente o por trigger
 
   -- Número de receta (asignado por el sistema o por la autoridad regulatoria)
   numero_receta      TEXT UNIQUE,
@@ -38,7 +39,7 @@ CREATE TABLE public.recetas (
   pdf_path           TEXT,
   pdf_generado_at    TIMESTAMPTZ,
 
-  -- Auditoría
+  -- Auditoría (solo el médico firma recetas)
   firmado_por  UUID NOT NULL REFERENCES public.profiles(id),
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -50,31 +51,40 @@ CREATE INDEX idx_recetas_numero ON public.recetas(numero_receta);
 
 ALTER TABLE public.recetas ENABLE ROW LEVEL SECURITY;
 
--- Solo el médico puede emitir recetas (control estricto)
+-- Médico y asistentes pueden VER recetas del tenant
 CREATE POLICY "recetas_select" ON public.recetas
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = recetas.paciente_id AND creado_por = get_medico_id()
+  ));
 
+-- Solo el médico puede emitir recetas (control legal estricto)
 CREATE POLICY "recetas_insert" ON public.recetas
   FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = recetas.paciente_id AND creado_por = auth.uid()
     )
   );
 
+-- Solo el médico puede modificar recetas (ej: guardar pdf_path, firma)
 CREATE POLICY "recetas_update" ON public.recetas
   FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = recetas.paciente_id AND creado_por = auth.uid()
     )
   );
 
+-- Solo el médico puede eliminar recetas
 CREATE POLICY "recetas_delete" ON public.recetas
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = recetas.paciente_id AND creado_por = auth.uid()
     )
   );
 

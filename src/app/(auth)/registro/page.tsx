@@ -65,15 +65,18 @@ export default function RegistroPage() {
 
           <div className="space-y-2">
             <Label htmlFor="role">Rol</Label>
-            <Select name="role" required disabled={isPending} defaultValue="secretario">
+            <Select name="role" required disabled={isPending} defaultValue="asistente">
               <SelectTrigger className="h-10">
                 <SelectValue placeholder="Seleccioná tu rol" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="medico">Médico (Acceso total)</SelectItem>
-                <SelectItem value="secretario">Secretaría (Operativo)</SelectItem>
+                <SelectItem value="asistente">Asistente (Operativo)</SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+              Los asistentes deberán solicitar acceso a un médico luego de registrarse.
+            </p>
           </div>
 
           {state?.error && (

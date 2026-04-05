@@ -1,6 +1,8 @@
 -- ============================================================
 -- 008_difusion.sql
 -- Área de difusión: posts/mensajes para enviar por mail o WhatsApp
+-- Multi-tenant: medico_id en difusion_posts
+-- RLS: el médico (y asistentes) solo ven los posts de su agenda
 -- ============================================================
 
 CREATE TYPE difusion_estado AS ENUM (
@@ -16,6 +18,7 @@ CREATE TYPE difusion_canal AS ENUM (
   'ambos'
 );
 
+-- medico_id = tenant key (a qué médico pertenece este post)
 CREATE TABLE public.difusion_posts (
   id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 
@@ -29,11 +32,11 @@ CREATE TABLE public.difusion_posts (
   -- Para emails (via Resend)
   asunto_email TEXT,                   -- Subject del mail
 
-  -- Para WhatsApp: se genera un link wa.me con el contenido
-  -- No requiere campos extra
-
   -- Imagen adjunta opcional (Storage bucket "difusion", público)
   imagen_path  TEXT,
+
+  -- Multi-tenancy: agenda del médico
+  medico_id    UUID NOT NULL REFERENCES public.profiles(id),
 
   -- Auditoría
   creado_por   UUID NOT NULL REFERENCES public.profiles(id),
@@ -43,35 +46,30 @@ CREATE TABLE public.difusion_posts (
 
 CREATE INDEX idx_difusion_estado ON public.difusion_posts(estado);
 CREATE INDEX idx_difusion_created ON public.difusion_posts(created_at DESC);
+CREATE INDEX idx_difusion_medico ON public.difusion_posts(medico_id);
 
 ALTER TABLE public.difusion_posts ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes ven los posts del tenant
 CREATE POLICY "difusion_select" ON public.difusion_posts
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (medico_id = get_medico_id());
 
--- Solo médico puede crear/modificar/eliminar posts de difusión
+-- Médico y asistentes pueden crear posts
 CREATE POLICY "difusion_insert" ON public.difusion_posts
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
-  );
+  FOR INSERT WITH CHECK (medico_id = get_medico_id());
 
+-- Solo el médico puede publicar/editar posts (control editorial)
 CREATE POLICY "difusion_update" ON public.difusion_posts
   FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
+    medico_id = auth.uid()
+    AND (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
   );
 
+-- Solo el médico puede eliminar posts
 CREATE POLICY "difusion_delete" ON public.difusion_posts
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
+    medico_id = auth.uid()
+    AND (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
   );
 
 CREATE TRIGGER difusion_updated_at
@@ -104,13 +102,16 @@ CREATE INDEX idx_envios_paciente ON public.difusion_envios(paciente_id);
 
 ALTER TABLE public.difusion_envios ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes pueden ver los envíos de sus posts
 CREATE POLICY "envios_select" ON public.difusion_envios
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
-  );
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.difusion_posts
+    WHERE id = difusion_envios.post_id AND medico_id = get_medico_id()
+  ));
 
+-- Médico y asistentes pueden registrar envíos
 CREATE POLICY "envios_insert" ON public.difusion_envios
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.difusion_posts
+    WHERE id = difusion_envios.post_id AND medico_id = get_medico_id()
+  ));
