@@ -23,6 +23,7 @@ export const historiaSchema = z.object({
     peso_inicial: data.peso_inicial === '' ? null : data.peso_inicial,
     talla: data.talla === '' ? null : data.talla,
     perimetro_cintura: data.perimetro_cintura === '' ? null : data.perimetro_cintura,
+    proximo_control: data.proximo_control === '' ? null : data.proximo_control,
   }
 })
 

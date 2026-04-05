@@ -11,6 +11,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
+    // Determinar el medico_id del tenant:
+    // - Si es médico: su propio id
+    // - Si es asistente: el medico_id al que está vinculado
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, medico_id')
+      .eq('id', user.id)
+      .single()
+
+    const tenantMedicoId =
+      profile?.role === 'medico'    ? user.id :
+      profile?.role === 'asistente' ? profile.medico_id :
+      null
+
+    if (!tenantMedicoId) {
+      return NextResponse.json({ error: 'No autorizado: sin tenant asignado' }, { status: 403 })
+    }
+
     const body = await request.json()
 
     // Validar con zod
@@ -22,13 +40,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Insertar usando Supabase
-    // El RLS permite a cualquier autenticado hacer INSERT en pacientes
+    // Insertar usando el medico_id del tenant como creado_por
     const { data: paciente, error } = await supabase
       .from('pacientes')
       .insert({
         ...result.data,
-        creado_por: user.id
+        creado_por: tenantMedicoId   // ← siempre el ID del médico, no del asistente
       })
       .select()
       .single()
@@ -42,11 +59,11 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
-    
-    // Crear historia clinica generica empty for the user immediately
+
+    // Crear historia clínica vacía para el paciente
     await supabase.from('historia_clinica').insert({
       paciente_id: paciente.id,
-      creado_por: user.id
+      creado_por: tenantMedicoId   // ← ídem: ID del médico
     })
 
     return NextResponse.json({ data: paciente }, { status: 201 })
@@ -58,3 +75,4 @@ export async function POST(request: NextRequest) {
     )
   }
 }
+

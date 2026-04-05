@@ -1,6 +1,7 @@
 -- ============================================================
 -- 005_turnos.sql
 -- Turnero: turnos, bloqueos de agenda y log de auditoría
+-- Multi-tenant: medico_id en turnos y bloqueos_agenda
 -- ============================================================
 
 -- ── TIPOS ────────────────────────────────────────────────────
@@ -14,6 +15,9 @@ CREATE TYPE turno_estado AS ENUM (
 );
 
 -- ── TURNOS ───────────────────────────────────────────────────
+-- medico_id = tenant key (apunta al médico dueño de la agenda).
+-- Tanto el médico como sus asistentes pueden operar en esta tabla.
+-- Al crear un turno (médico o asistente), medico_id = get_medico_id().
 CREATE TABLE public.turnos (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   paciente_id   UUID REFERENCES public.pacientes(id) ON DELETE SET NULL,
@@ -34,38 +38,40 @@ CREATE TABLE public.turnos (
   -- Recordatorio
   recordatorio_enviado BOOLEAN DEFAULT false,
 
-  -- Auditoría (quién agendó el turno - requerimiento del médico)
+  -- Multi-tenancy: agenda del médico
+  medico_id     UUID NOT NULL REFERENCES public.profiles(id),
+
+  -- Auditoría (quién agendó el turno)
   agendado_por  UUID NOT NULL REFERENCES public.profiles(id),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_turnos_fecha ON public.turnos(fecha_inicio);
+CREATE INDEX idx_turnos_rango ON public.turnos(fecha_inicio, fecha_fin);
 CREATE INDEX idx_turnos_paciente ON public.turnos(paciente_id);
 CREATE INDEX idx_turnos_estado ON public.turnos(estado);
--- Índice para rango de fechas (queries de calendario)
-CREATE INDEX idx_turnos_rango ON public.turnos(fecha_inicio, fecha_fin);
+CREATE INDEX idx_turnos_medico ON public.turnos(medico_id);
 
 ALTER TABLE public.turnos ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes ven la agenda del médico
 CREATE POLICY "turnos_select" ON public.turnos
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (medico_id = get_medico_id());
 
--- Cualquier autenticado puede agendar turnos
+-- Médico y asistentes pueden agendar turnos en la agenda del médico
 CREATE POLICY "turnos_insert" ON public.turnos
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (medico_id = get_medico_id());
 
--- Cualquier autenticado puede actualizar (cambiar estado, reprogramar)
+-- Médico y asistentes pueden modificar turnos (cambiar estado, reprogramar)
 CREATE POLICY "turnos_update" ON public.turnos
-  FOR UPDATE USING (auth.role() = 'authenticated');
+  FOR UPDATE USING (medico_id = get_medico_id());
 
 -- Solo el médico puede eliminar turnos permanentemente
 CREATE POLICY "turnos_delete" ON public.turnos
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
+    medico_id = auth.uid()
+    AND (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
   );
 
 CREATE TRIGGER turnos_updated_at
@@ -74,6 +80,7 @@ CREATE TRIGGER turnos_updated_at
 
 -- ── BLOQUEOS DE AGENDA ────────────────────────────────────────
 -- Para bloquear horarios: vacaciones, almuerzo, reuniones, etc.
+-- medico_id = tenant key de la agenda.
 CREATE TABLE public.bloqueos_agenda (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   fecha_inicio  TIMESTAMPTZ NOT NULL,
@@ -84,30 +91,30 @@ CREATE TABLE public.bloqueos_agenda (
   recurrencia_fin DATE,        -- Hasta cuándo aplica la recurrencia
   dias_semana   INTEGER[],     -- Array de días: 0=Dom, 1=Lun...6=Sáb
 
+  -- Multi-tenancy: agenda del médico
+  medico_id     UUID NOT NULL REFERENCES public.profiles(id),
+
   creado_por    UUID NOT NULL REFERENCES public.profiles(id),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE INDEX idx_bloqueos_medico ON public.bloqueos_agenda(medico_id);
+
 ALTER TABLE public.bloqueos_agenda ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes ven los bloqueos de la agenda
 CREATE POLICY "bloqueos_select" ON public.bloqueos_agenda
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (medico_id = get_medico_id());
 
--- Solo médico puede bloquear/desbloquear su agenda
+-- Médico y asistentes pueden crear bloqueos en la agenda del médico
 CREATE POLICY "bloqueos_insert" ON public.bloqueos_agenda
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
-  );
+  FOR INSERT WITH CHECK (medico_id = get_medico_id());
 
+-- Solo el médico puede eliminar bloqueos
 CREATE POLICY "bloqueos_delete" ON public.bloqueos_agenda
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
+    medico_id = auth.uid()
+    AND (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
   );
 
 -- ── LOG DE AUDITORÍA DE TURNOS ────────────────────────────────
@@ -126,17 +133,16 @@ CREATE INDEX idx_audit_usuario ON public.turnos_audit_log(usuario_id);
 
 ALTER TABLE public.turnos_audit_log ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes pueden ver el log de auditoría de su agenda
 CREATE POLICY "audit_select" ON public.turnos_audit_log
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
-    )
-  );
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.turnos
+    WHERE id = turnos_audit_log.turno_id AND medico_id = get_medico_id()
+  ));
 
--- Solo insert desde server-side (service role), no desde el cliente
+-- Insert abierto (lo inserta el trigger server-side)
 CREATE POLICY "audit_insert" ON public.turnos_audit_log
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (true);
 
 -- ── TRIGGER: auto-log al modificar un turno ──────────────────
 CREATE OR REPLACE FUNCTION public.log_turno_cambio()

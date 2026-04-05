@@ -1,6 +1,7 @@
 -- ============================================================
 -- 003_estudios.sql
 -- Estudios complementarios: archivos PDF/imagen por paciente
+-- RLS: tenant via pacientes.creado_por = get_medico_id()
 -- ============================================================
 
 CREATE TABLE public.estudios (
@@ -28,20 +29,32 @@ CREATE INDEX idx_estudios_fecha ON public.estudios(fecha_estudio);
 
 ALTER TABLE public.estudios ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes ven/suben estudios de sus pacientes
 CREATE POLICY "estudios_select" ON public.estudios
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = estudios.paciente_id AND creado_por = get_medico_id()
+  ));
 
 CREATE POLICY "estudios_insert" ON public.estudios
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = estudios.paciente_id AND creado_por = get_medico_id()
+  ));
 
 CREATE POLICY "estudios_update" ON public.estudios
-  FOR UPDATE USING (auth.role() = 'authenticated');
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = estudios.paciente_id AND creado_por = get_medico_id()
+  ));
 
+-- Solo el médico puede eliminar estudios
 CREATE POLICY "estudios_delete" ON public.estudios
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = estudios.paciente_id AND creado_por = auth.uid()
     )
   );
 
@@ -50,10 +63,10 @@ CREATE POLICY "estudios_delete" ON public.estudios
 -- (Storage > New bucket > Private).
 -- Las políticas de acceso se configuran en el Dashboard o via CLI:
 --
--- Permitir SELECT (download) solo a usuarios autenticados:
+-- Permitir SELECT (download) solo a usuarios autenticados del tenant:
 --   storage.objects: SELECT WHERE bucket_id = 'estudios' AND auth.role() = 'authenticated'
--- Permitir INSERT (upload) a usuarios autenticados:
+-- Permitir INSERT (upload) a usuarios autenticados del tenant:
 --   storage.objects: INSERT WHERE bucket_id = 'estudios' AND auth.role() = 'authenticated'
 -- Permitir DELETE solo al médico:
 --   storage.objects: DELETE WHERE bucket_id = 'estudios'
---     AND EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'medico')
+--     AND (SELECT role FROM profiles WHERE id = auth.uid()) = 'medico'

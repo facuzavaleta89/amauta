@@ -1,6 +1,7 @@
 -- ============================================================
 -- 007_certificados.sql
 -- Certificados médicos con generación de PDF
+-- RLS: tenant via pacientes.creado_por = get_medico_id()
 -- ============================================================
 
 CREATE TYPE certificado_tipo AS ENUM (
@@ -52,20 +53,32 @@ CREATE INDEX idx_certificados_fecha ON public.certificados(fecha_certificado);
 
 ALTER TABLE public.certificados ENABLE ROW LEVEL SECURITY;
 
+-- Médico y asistentes pueden ver/emitir certificados de sus pacientes
 CREATE POLICY "certificados_select" ON public.certificados
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = certificados.paciente_id AND creado_por = get_medico_id()
+  ));
 
 CREATE POLICY "certificados_insert" ON public.certificados
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = certificados.paciente_id AND creado_por = get_medico_id()
+  ));
 
 CREATE POLICY "certificados_update" ON public.certificados
-  FOR UPDATE USING (auth.role() = 'authenticated');
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.pacientes
+    WHERE id = certificados.paciente_id AND creado_por = get_medico_id()
+  ));
 
+-- Solo el médico puede eliminar certificados
 CREATE POLICY "certificados_delete" ON public.certificados
   FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'medico'
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'medico'
+    AND EXISTS (
+      SELECT 1 FROM public.pacientes
+      WHERE id = certificados.paciente_id AND creado_por = auth.uid()
     )
   );
 

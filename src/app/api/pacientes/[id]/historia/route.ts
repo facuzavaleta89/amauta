@@ -15,14 +15,28 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  const profileRes = await supabase.from('profiles').select('id').eq('id', user.id).single()
-  if (profileRes.error) {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('role, medico_id')
+    .eq('id', user.id)
+    .single()
+
+  if (profileError || !profile) {
     return NextResponse.json({ error: 'Perfil no encontrado' }, { status: 404 })
+  }
+
+  const tenantMedicoId =
+    profile.role === 'medico'    ? user.id :
+    profile.role === 'asistente' ? profile.medico_id :
+    null
+
+  if (!tenantMedicoId) {
+    return NextResponse.json({ error: 'No autorizado: sin tenant asignado' }, { status: 403 })
   }
 
   const body = await request.json()
   const result = historiaSchema.safeParse(body)
-  
+
   if (!result.success) {
     return NextResponse.json(
       { error: 'Datos inválidos', details: result.error.format() },
@@ -56,7 +70,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // Crear si no existe
     response = await supabase
       .from('historia_clinica')
-      .insert({ ...updateData, creado_por: user.id })
+      .insert({ ...updateData, creado_por: tenantMedicoId })
       .select()
       .single()
   }

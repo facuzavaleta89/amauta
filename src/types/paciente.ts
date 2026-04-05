@@ -1,4 +1,9 @@
-export type UserRole = 'medico' | 'secretario'
+// ============================================================
+// paciente.ts
+// Tipos de pacientes y obras sociales
+// ============================================================
+
+export type { UserRole } from './roles'
 
 export interface ObraSocial {
   id: number
@@ -9,7 +14,7 @@ export interface Paciente {
   id: string
   dni: string
   nombre_completo: string
-  fecha_nacimiento: string   // ISO date string
+  fecha_nacimiento: string   // ISO date string (YYYY-MM-DD)
   sexo: 'masculino' | 'femenino' | 'otro'
   telefono: string | null
   email: string | null
@@ -18,7 +23,7 @@ export interface Paciente {
   obra_social_id: number | null
   obra_social_otro: string | null
   numero_afiliado: string | null
-  creado_por: string
+  creado_por: string         // uuid del médico dueño del registro
   created_at: string
   updated_at: string
 }
@@ -39,9 +44,9 @@ export interface PacienteInsert {
   obra_social_id?: number
   obra_social_otro?: string
   numero_afiliado?: string
-  creado_por: string
+  creado_por: string         // debe ser get_medico_id() del usuario actual
 }
 
-export interface PacienteUpdate extends Partial<PacienteInsert> {
+export interface PacienteUpdate extends Partial<Omit<PacienteInsert, 'creado_por'>> {
   id: string
 }

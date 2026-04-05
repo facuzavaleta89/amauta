@@ -9,7 +9,7 @@ import {
   Pill,
 } from 'lucide-react'
 
-export type UserRole = 'medico' | 'secretario'
+export type UserRole = 'medico' | 'asistente'
 
 export interface NavItem {
   href: string
@@ -25,37 +25,37 @@ export const navItems: NavItem[] = [
     href: '/dashboard',
     label: 'Dashboard',
     icon: LayoutDashboard,
-    roles: ['medico', 'secretario'],
+    roles: ['medico', 'asistente'],
   },
   {
     href: '/pacientes',
     label: 'Pacientes',
     icon: Users,
-    roles: ['medico', 'secretario'],
+    roles: ['medico', 'asistente'],
   },
   {
     href: '/turnero',
     label: 'Turnero',
     icon: CalendarDays,
-    roles: ['medico', 'secretario'],
+    roles: ['medico', 'asistente'],
   },
   {
     href: '/pedidos',
     label: 'Pedidos',
     icon: ClipboardList,
-    roles: ['medico', 'secretario'],
+    roles: ['medico', 'asistente'],
   },
   {
     href: '/certificados',
     label: 'Certificados',
     icon: FileText,
-    roles: ['medico', 'secretario'],
+    roles: ['medico', 'asistente'],
   },
   {
     href: '/difusion',
     label: 'Difusión',
     icon: Megaphone,
-    roles: ['medico'],          // Solo médico
+    roles: ['medico', 'asistente'],  // Asistente puede crear borradores
   },
   {
     href: '/recetas',
