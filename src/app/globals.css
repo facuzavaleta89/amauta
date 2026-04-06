@@ -176,3 +176,144 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 }
+
+/* ── FULLCALENDAR OVERRIDES ────────────────────────────────── */
+@layer components {
+  .fc {
+    --fc-page-bg-color: transparent;
+    --fc-neutral-bg-color: var(--base);
+    --fc-neutral-text-color: var(--foreground);
+    --fc-border-color: var(--border);
+
+    --fc-button-text-color: var(--primary-foreground);
+    --fc-button-bg-color: var(--primary);
+    --fc-button-border-color: var(--primary);
+    --fc-button-hover-bg-color: var(--primary);
+    --fc-button-hover-border-color: var(--primary);
+    --fc-button-active-bg-color: var(--primary);
+    --fc-button-active-border-color: var(--primary);
+
+    --fc-event-bg-color: var(--primary);
+    --fc-event-border-color: var(--primary);
+    --fc-event-text-color: var(--primary-foreground);
+    --fc-event-selected-overlay-color: rgba(0, 0, 0, 0.25);
+
+    --fc-more-link-bg-color: var(--secondary);
+    --fc-more-link-text-color: var(--secondary-foreground);
+
+    --fc-highlight-color: var(--secondary);
+    --fc-today-bg-color: var(--muted);
+    font-family: inherit;
+  }
+
+  /* Separar botones unidos de fullCalendar */
+  .fc .fc-button-group {
+    display: inline-flex;
+    gap: 0.5rem;
+  }
+  .fc .fc-button-group > .fc-button {
+    border-radius: var(--radius) !important;
+  }
+
+  .fc .fc-button {
+    background-color: var(--primary) !important;
+    border-color: var(--primary) !important;
+    color: var(--primary-foreground) !important;
+    border-radius: var(--radius) !important;
+    font-weight: 500;
+    box-shadow: none !important;
+    text-transform: capitalize;
+  }
+  .fc .fc-button:hover {
+    opacity: 0.9;
+  }
+  .fc .fc-button:active,
+  .fc .fc-button-active {
+    opacity: 0.8;
+  }
+  .fc-theme-standard .fc-scrollgrid {
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .fc .fc-col-header-cell-cushion {
+    padding: 8px 4px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+  .fc .fc-timegrid-slot-label-cushion {
+    font-size: 0.85rem;
+    color: var(--muted-foreground);
+  }
+  .fc .fc-toolbar-title {
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: var(--foreground);
+    text-transform: capitalize;
+  }
+  .fc-v-event {
+    border-radius: calc(var(--radius) - 2px);
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    border: none;
+    transition: opacity 0.15s;
+  }
+  .fc-bg-event {
+    opacity: 1 !important;
+  }
+  .fc-v-event:hover {
+    opacity: 0.9;
+  }
+
+  /* Estilos para vista de Mes y consistencia de fuentes */
+  .fc .fc-daygrid-event {
+    border: none !important;
+    padding: 2px 4px !important;
+    font-size: 0.8rem !important;
+    display: flex !important;
+    align-items: center !important;
+    min-height: 1.5rem !important;
+    border-radius: 4px !important;
+  }
+
+  /* Ocultar la "pelotita" (dot) de FullCalendar en vista de mes */
+  .fc .fc-daygrid-event-dot,
+  .fc .fc-event-dot {
+    display: none !important;
+  }
+
+  .fc .fc-event-time {
+    font-weight: 600 !important; /* Hora en negrita */
+    margin-right: 4px;
+  }
+
+  .fc .fc-event-title,
+  .fc .fc-event-main,
+  .fc .fc-event-title-container,
+  .fc .fc-daygrid-block-event .fc-event-title {
+    font-weight: 400 !important; /* Nombre/Título en normal */
+    text-decoration: none !important;
+  }
+
+  /* Alineación horizontal en vista de mes si hay espacio */
+  .fc-daygrid-event .fc-event-main {
+    display: flex !important;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  /* Forzar colores de fondo y texto con máxima prioridad */
+  .fc [class*="bg-primary"] {
+    background-color: var(--primary) !important;
+    color: white !important;
+  }
+
+  .fc [class*="bg-destructive"] {
+    background-color: color-mix(in srgb, var(--destructive) 80%, transparent) !important;
+    color: white !important;
+  }
+
+  /* Asegurar que el texto sea blanco en los eventos destructivos y primarios */
+  .fc [class*="bg-destructive"] *,
+  .fc [class*="bg-primary"] * {
+    color: white !important;
+  }
+}

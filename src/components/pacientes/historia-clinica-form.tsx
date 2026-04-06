@@ -70,7 +70,13 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
       }
 
       toast.success('Historia clínica guardada exitosamente')
+      // Update form state directly with the saved values (especially null transformations)
+      form.reset(data)
+      // Request server to refresh its data
       router.refresh()
+      
+      // Scroll to the top of the form for better UX
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
       toast.error('Ocurrió un error al guardar')
       console.error(error)
@@ -334,7 +340,12 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
                     <FormItem>
                       <FormLabel>Próximo Control (Opcional)</FormLabel>
                       <FormControl>
-                        <Input type="date" {...field} value={field.value || ''} />
+                        <Input 
+                          type="date" 
+                          {...field} 
+                          value={field.value || ''} 
+                          onChange={(e) => field.onChange(e.target.value)} 
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

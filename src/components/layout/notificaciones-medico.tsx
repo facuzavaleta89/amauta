@@ -20,6 +20,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
+import { Button } from '@/components/ui/button'
+import Link from 'next/link'
 
 interface Solicitud {
   id: string
@@ -249,6 +251,11 @@ export function NotificacionesMedico({ medicoId, solicitudesIniciales }: Props) 
             ))}
           </div>
         )}
+        <div className="p-3 bg-muted/40 border-t border-border mt-1">
+          <Button variant="outline" className="w-full text-xs h-8" asChild>
+            <Link href="/notificaciones">Ver todas las notificaciones</Link>
+          </Button>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   )
