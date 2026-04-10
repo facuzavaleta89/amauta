@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Ban, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { BloqueoFormData, bloqueoAgendaSchema } from '@/lib/validations/turno.schema'
 
@@ -15,6 +15,17 @@ import {
   DialogDescription,
   DialogFooter
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -79,7 +90,6 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
 
   async function onDelete() {
       if (!initialData) return
-      if (!window.confirm('¿Seguro que querés eliminar este bloqueo?')) return
       setIsLoading(true)
       try {
           const response = await fetch(`/api/turnero/bloqueos/${initialData.id}`, { method: 'DELETE' })
@@ -119,12 +129,12 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
         throw new Error(errorData.error)
       }
 
-      toast.success('Horario bloqueado exitosamente')
+      toast.success(initialData ? 'Bloqueo actualizado' : 'Horario bloqueado exitosamente')
       form.reset()
       onSaved()
       onOpenChange(false)
     } catch (error: any) {
-      toast.error('Error al bloquear horario', { description: error.message })
+      toast.error('Error al guardar bloqueo', { description: error.message })
     } finally {
       setIsLoading(false)
     }
@@ -132,12 +142,19 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
-          <DialogTitle>{initialData ? 'Editar Bloqueo' : 'Bloquear Horario de Agenda'}</DialogTitle>
-          <DialogDescription>
-            Este bloque indicará indisponibilidad temporal. (Ej: Vacaciones, Congreso, Motivo Personal).
-          </DialogDescription>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+              <Ban className="w-4 h-4 text-destructive" />
+            </div>
+            <div>
+              <DialogTitle>{initialData ? 'Editar Bloqueo' : 'Bloquear Horario'}</DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                Este bloque marcará indisponibilidad temporal en la agenda.
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         <Form {...form}>
@@ -149,7 +166,7 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
                   name="fecha_inicio"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Inicio (Bloqueo)</FormLabel>
+                      <FormLabel>Inicio</FormLabel>
                       <FormControl>
                         <Input type="datetime-local" {...field} />
                       </FormControl>
@@ -162,7 +179,7 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
                   name="fecha_fin"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Fin (Bloqueo)</FormLabel>
+                      <FormLabel>Fin</FormLabel>
                       <FormControl>
                         <Input type="datetime-local" {...field} />
                       </FormControl>
@@ -177,20 +194,48 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
               name="motivo"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Motivo interno / Nota</FormLabel>
+                  <FormLabel>Motivo <span className="text-muted-foreground font-normal">(opcional)</span></FormLabel>
                   <FormControl>
-                     <Textarea placeholder="Ej: Congreso médico" className="resize-none" {...field} value={field.value || ''} />
+                     <Textarea
+                       placeholder="Ej: Congreso médico, vacaciones, motivo personal..."
+                       className="resize-none"
+                       rows={3}
+                       {...field}
+                       value={field.value || ''}
+                     />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <DialogFooter className="pt-4 border-t flex justify-between w-full sm:justify-between items-center">
+            <DialogFooter className="pt-4 border-t flex justify-between w-full sm:justify-between items-center gap-2">
               {initialData ? (
-                 <Button type="button" variant="destructive" onClick={onDelete} disabled={isLoading}>
-                    Eliminar
-                 </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button type="button" variant="destructive" size="sm" disabled={isLoading} className="gap-1.5">
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Eliminar
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Eliminar este bloqueo?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        El horario quedará disponible nuevamente en la agenda.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        onClick={onDelete}
+                      >
+                        Sí, eliminar
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               ) : (
                 <div />
               )}
@@ -198,8 +243,16 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
                 <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
                   Cancelar
                 </Button>
-                <Button type="submit" disabled={isLoading} variant={initialData ? "default" : "destructive"} className="min-w-28">
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : (initialData ? 'Guardar Cambios' : 'Confirmar Bloqueo')}
+                <Button
+                  type="submit"
+                  disabled={isLoading}
+                  variant={initialData ? 'default' : 'destructive'}
+                  className="min-w-32"
+                >
+                  {isLoading
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : (initialData ? 'Guardar Cambios' : 'Confirmar Bloqueo')
+                  }
                 </Button>
               </div>
             </DialogFooter>

@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { rateLimitAction, getIpFromHeaders } from '@/lib/rate-limit'
 
 export async function login(
   _prevState: { error: string } | undefined,
@@ -12,6 +13,18 @@ export async function login(
 
   if (!email || !password) {
     return { error: 'Completá todos los campos.' }
+  }
+
+  // Rate limit: 10 intentos por IP+email cada 15 minutos
+  const ip = await getIpFromHeaders()
+  const { success, retryAfter } = await rateLimitAction({
+    key: `login:${ip}:${email.toLowerCase()}`,
+    limit: 10,
+    windowMs: 15 * 60 * 1000,
+  })
+  if (!success) {
+    const mins = Math.ceil(retryAfter! / 60000)
+    return { error: `Demasiados intentos. Esperá ${mins} minuto${mins !== 1 ? 's' : ''} antes de reintentar.` }
   }
 
   const supabase = await createClient()
@@ -42,6 +55,18 @@ export async function registerUser(
 
   if (!email || !password || !fullName || !role) {
     return { error: 'Completá todos los campos obligatorios.' }
+  }
+
+  // Rate limit: 5 registros por IP cada 60 minutos
+  const ip = await getIpFromHeaders()
+  const { success, retryAfter } = await rateLimitAction({
+    key: `register:${ip}`,
+    limit: 5,
+    windowMs: 60 * 60 * 1000,
+  })
+  if (!success) {
+    const mins = Math.ceil(retryAfter! / 60000)
+    return { error: `Demasiados intentos de registro. Esperá ${mins} minuto${mins !== 1 ? 's' : ''}.` }
   }
 
   const supabase = await createClient()

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { pacienteSchema } from '@/lib/validations/paciente.schema'
+import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,6 +10,15 @@ export async function GET(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
+
+    const rl = rateLimit(request, {
+      key: `pacientes_get:${user.id}`,
+      limit: 60,
+      windowMs: 60 * 1000 // 1 minute
+    })
+    if (!rl.success) {
+      return rateLimitResponse(rl.retryAfter!)
     }
 
     const { data: profile } = await supabase
