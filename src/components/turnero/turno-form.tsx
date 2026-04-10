@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { format } from 'date-fns'
-import { Loader2 } from 'lucide-react'
+import { Loader2, CalendarPlus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
 
@@ -16,6 +15,17 @@ import {
   DialogDescription,
   DialogFooter
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -25,8 +35,24 @@ import {
   FormLabel,
   FormMessage
 } from '@/components/ui/form'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+
+const ESTADO_CONFIG: Record<string, { label: string; className: string }> = {
+  pendiente:    { label: 'Pendiente',    className: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+  confirmado:   { label: 'Confirmado',   className: 'bg-blue-100 text-blue-800 border-blue-200' },
+  presente:     { label: 'Presente',     className: 'bg-green-100 text-green-800 border-green-200' },
+  ausente:      { label: 'Ausente',      className: 'bg-red-100 text-red-800 border-red-200' },
+  cancelado:    { label: 'Cancelado',    className: 'bg-gray-100 text-gray-600 border-gray-200' },
+  reprogramado: { label: 'Reprogramado', className: 'bg-purple-100 text-purple-800 border-purple-200' },
+}
 
 interface TurnoFormModalProps {
   open: boolean
@@ -60,7 +86,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
       motivo: '',
       notas: '',
       estado: 'pendiente',
-      color: undefined // relies on CSS variable default
+      color: undefined
     }
   })
 
@@ -103,7 +129,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
     return () => clearTimeout(delayDebounceFn)
   }, [searchTerm])
 
-  // Whenever initialDates or initialData changes, reset form
+  // On open/close: reset form and clear search state
   React.useEffect(() => {
     if (open) {
       if (initialData) {
@@ -129,12 +155,16 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
           color: undefined
         })
       }
+    } else {
+      // Cleanup search state when closing
+      setSearchTerm('')
+      setPacientes([])
+      setShowDropdown(false)
     }
   }, [initialDates, initialData, open, form])
 
   async function onDelete() {
       if (!initialData) return
-      if (!window.confirm('¿Seguro que querés eliminar este turno?')) return
       setIsLoading(true)
       try {
           const response = await fetch(`/api/turnero/${initialData.id}`, { method: 'DELETE' })
@@ -155,7 +185,6 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
   async function onSubmit(data: TurnoFormData) {
     setIsLoading(true)
     try {
-      // transform local dates back to ISO
       const payload = {
           ...data,
           fecha_inicio: formatDateToIsoOutput(data.fecha_inicio),
@@ -175,30 +204,41 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
         throw new Error(errorData.error)
       }
 
-      toast.success('Turno agendado correctamente')
+      toast.success(initialData ? 'Turno actualizado' : 'Turno agendado correctamente')
       form.reset()
       onSaved()
       onOpenChange(false)
     } catch (error: any) {
-      toast.error('Error al agendar turno', { description: error.message })
+      toast.error('Error al guardar turno', { description: error.message })
     } finally {
       setIsLoading(false)
     }
   }
 
+  const estadoActual = form.watch('estado')
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>{initialData ? 'Editar Turno' : 'Agendar Nuevo Turno'}</DialogTitle>
-          <DialogDescription>
-            {initialData ? 'Modificá los detalles del turno.' : 'Completá los datos del turno. Podés asignar un paciente o usar un nombre libre.'}
-          </DialogDescription>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+              <CalendarPlus className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <DialogTitle>{initialData ? 'Editar Turno' : 'Agendar Nuevo Turno'}</DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                {initialData
+                  ? 'Modificá los detalles del turno.'
+                  : 'Completá los datos del turno. Podés asignar un paciente o usar nombre libre.'}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         {!initialData && (
-          <div className="flex justify-start mb-2">
-             <Button type="button" variant="link" className="px-0 h-auto text-sm text-muted-foreground" onClick={onSwitchToBlock}>
+          <div className="flex justify-start -mt-1">
+             <Button type="button" variant="link" className="px-0 h-auto text-xs text-muted-foreground" onClick={onSwitchToBlock}>
                ¿Necesitás bloquear este horario?
              </Button>
           </div>
@@ -212,24 +252,24 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
               name="paciente_nombre_libre"
               render={({ field }) => (
                 <FormItem className="relative" ref={wrapperRef}>
-                  <FormLabel>Nombre del Paciente (Buscar o Texto Libre)</FormLabel>
+                  <FormLabel>Paciente</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="Ej. Juan Pérez" 
+                      placeholder="Buscar por nombre o ingresá uno libre..." 
                       {...field} 
                       value={field.value || ''}
                       onChange={(e) => {
                           field.onChange(e)
-                          form.setValue('paciente_id', null)
+                          form.setValue('paciente_id', undefined)
                           setSearchTerm(e.target.value)
                       }}
                       onFocus={() => { if(pacientes.length > 0 || searchTerm.trim().length >= 3) setShowDropdown(true) }}
                     />
                   </FormControl>
                   {showDropdown && (
-                    <div className="absolute top-[60px] left-0 w-full bg-popover text-popover-foreground border rounded-md shadow-md z-50 max-h-60 overflow-y-auto">
+                    <div className="absolute top-[4.2rem] left-0 w-full bg-popover text-popover-foreground border rounded-lg shadow-lg z-50 max-h-56 overflow-y-auto">
                        {searching ? (
-                          <div className="p-2 text-sm text-muted-foreground flex items-center"><Loader2 className="w-4 h-4 mr-2 animate-spin"/> Buscando...</div>
+                          <div className="p-3 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Buscando...</div>
                        ) : pacientes.length > 0 ? (
                           <ul className="py-1">
                              {pacientes.map(p => (
@@ -240,7 +280,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                                     form.setValue('paciente_id', p.id)
                                     form.setValue('paciente_nombre_libre', p.nombre_completo)
                                     form.clearErrors('paciente_nombre_libre')
-                                    setSearchTerm('') // stop searching to hide dropdown mostly
+                                    setSearchTerm('')
                                     setShowDropdown(false)
                                  }}
                                >
@@ -250,8 +290,8 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                              ))}
                           </ul>
                        ) : (
-                          <div className="p-2 text-sm text-muted-foreground">
-                            No se encontraron pacientes. Se agendará como paciente no registrado.
+                          <div className="p-3 text-sm text-muted-foreground">
+                            No se encontraron pacientes. Se agendará como nombre libre.
                           </div>
                        )}
                     </div>
@@ -295,34 +335,85 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
               name="motivo"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Motivo de Consulta (Opcional)</FormLabel>
+                  <FormLabel>Motivo de Consulta <span className="text-muted-foreground font-normal">(opcional)</span></FormLabel>
                   <FormControl>
-                     <Input placeholder="Control general..." {...field} value={field.value || ''} />
+                     <Input placeholder="Control general, guardia, seguimiento..." {...field} value={field.value || ''} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
+            {initialData && (
+              <FormField
+                control={form.control}
+                name="estado"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Estado del Turno</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccioná un estado" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.entries(ESTADO_CONFIG).map(([value, config]) => (
+                          <SelectItem key={value} value={value}>
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium`}>
+                              {config.label}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
              <FormField
               control={form.control}
               name="notas"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Notas internas</FormLabel>
+                  <FormLabel>Notas internas <span className="text-muted-foreground font-normal">(opcional)</span></FormLabel>
                   <FormControl>
-                     <Textarea placeholder="..." className="resize-none" {...field} value={field.value || ''} />
+                     <Textarea placeholder="Observaciones para el médico..." className="resize-none" rows={2} {...field} value={field.value || ''} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <DialogFooter className="pt-4 border-t flex justify-between w-full sm:justify-between items-center">
+            <DialogFooter className="pt-4 border-t flex justify-between w-full sm:justify-between items-center gap-2">
               {initialData ? (
-                 <Button type="button" variant="destructive" onClick={onDelete} disabled={isLoading}>
-                    Eliminar
-                 </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button type="button" variant="destructive" size="sm" disabled={isLoading} className="gap-1.5">
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Eliminar
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Eliminar este turno?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Esta acción no se puede deshacer. El turno será eliminado permanentemente de la agenda.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        onClick={onDelete}
+                      >
+                        Sí, eliminar
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               ) : (
                 <div />
               )}
@@ -330,7 +421,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                 <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
                   Cancelar
                 </Button>
-                <Button type="submit" disabled={isLoading} className="min-w-28">
+                <Button type="submit" disabled={isLoading} className="min-w-32">
                   {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : (initialData ? 'Guardar Cambios' : 'Confirmar Turno')}
                 </Button>
               </div>

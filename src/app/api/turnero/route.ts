@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { turnoSchema } from '@/lib/validations/turno.schema'
+import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -70,6 +71,15 @@ export async function POST(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
+
+    const rl = rateLimit(request, {
+      key: `turnero_post:${user.id}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000 // 1 hour
+    })
+    if (!rl.success) {
+      return rateLimitResponse(rl.retryAfter!)
     }
 
     const { data: profile, error: profileError } = await supabase

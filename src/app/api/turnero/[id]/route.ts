@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { turnoUpdateSchema } from '@/lib/validations/turno.schema'
+import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -14,6 +15,15 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     if (!user) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
+
+    const rl = rateLimit(request, {
+      key: `turnero_patch:${user.id}`,
+      limit: 60,
+      windowMs: 60 * 60 * 1000 // 1 hour
+    })
+    if (!rl.success) {
+      return rateLimitResponse(rl.retryAfter!)
     }
 
     const { data: profile } = await supabase
@@ -97,6 +107,15 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
 
     if (!user) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
+
+    const rl = rateLimit(request, {
+      key: `turnero_delete:${user.id}`,
+      limit: 20,
+      windowMs: 60 * 60 * 1000 // 1 hour
+    })
+    if (!rl.success) {
+      return rateLimitResponse(rl.retryAfter!)
     }
 
     const { data: profile } = await supabase

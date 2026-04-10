@@ -1,15 +1,15 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import esLocale from '@fullcalendar/core/locales/es'
 import { toast } from 'sonner'
-import { Loader2 } from 'lucide-react'
+import { Loader2, CalendarPlus, Ban, RefreshCw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
-// Dialogs that we will implement next
 import { TurnoFormModal } from './turno-form'
 import { BlockSlotModal } from './block-slot-modal'
 
@@ -65,11 +65,8 @@ export function CalendarView() {
       start: selectInfo.startStr,
       end: selectInfo.endStr
     })
-    // For now automatically trigger Turno Modal
     setTurnoModalOpen(true)
-    
-    let calendarApi = selectInfo.view.calendar
-    calendarApi.unselect() 
+    selectInfo.view.calendar.unselect()
   }
 
   const handleEventClick = (clickInfo: any) => {
@@ -87,7 +84,7 @@ export function CalendarView() {
     const event = dropInfo.event
     if (event.extendedProps.type === 'bloqueo') {
       dropInfo.revert()
-      return toast.error('No arrastrar bloqueos vía calendario.')
+      return toast.error('No se puede arrastrar un bloqueo. Editalo desde el menú.')
     }
 
     try {
@@ -105,9 +102,9 @@ export function CalendarView() {
         throw new Error(errorData.error)
       }
 
-      toast.success('Turno reprogramado exitosamente')
+      toast.success('Turno reprogramado')
     } catch (error: any) {
-      toast.error('Error de reprogramación', { description: error.message })
+      toast.error('Error al reprogramar', { description: error.message })
       dropInfo.revert()
     }
   }
@@ -116,7 +113,7 @@ export function CalendarView() {
     const event = resizeInfo.event
     if (event.extendedProps.type === 'bloqueo') {
       resizeInfo.revert()
-      return toast.error('No redimensionar bloqueos vía calendario.')
+      return toast.error('No se puede redimensionar un bloqueo desde aquí.')
     }
 
     try {
@@ -136,7 +133,7 @@ export function CalendarView() {
 
       toast.success('Duración actualizada')
     } catch (error: any) {
-      toast.error('Error al redimensionar', { description: error.message })
+      toast.error('Error al actualizar duración', { description: error.message })
       resizeInfo.revert()
     }
   }
@@ -147,15 +144,57 @@ export function CalendarView() {
     }
   }
 
+  const handleNewTurno = () => {
+    setSelectedEvent(null)
+    setSelectedSlot(null)
+    setTurnoModalOpen(true)
+  }
+
+  const handleNewBloqueo = () => {
+    setSelectedEvent(null)
+    setSelectedSlot(null)
+    setBlockModalOpen(true)
+  }
+
   return (
     <>
-      {loading && (
-        <div className="absolute top-2 right-2 p-2 z-10 bg-background/50 backdrop-blur rounded">
-           <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      {/* Toolbar de acciones */}
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={handleNewTurno}
+            className="gap-1.5 h-8 text-xs"
+          >
+            <CalendarPlus className="w-3.5 h-3.5" />
+            Nuevo turno
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleNewBloqueo}
+            className="gap-1.5 h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
+          >
+            <Ban className="w-3.5 h-3.5" />
+            Bloquear horario
+          </Button>
         </div>
-      )}
-      
-      <div className="calendar-container h-full w-full">
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={refreshAction}
+          disabled={loading}
+          className="gap-1.5 h-8 text-xs text-muted-foreground"
+        >
+          {loading
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <RefreshCw className="w-3.5 h-3.5" />
+          }
+          {loading ? 'Cargando...' : 'Actualizar'}
+        </Button>
+      </div>
+
+      <div className="calendar-container h-[calc(100%-3rem)] w-full">
         <FullCalendar
           ref={calendarRef}
           plugins={[ timeGridPlugin, interactionPlugin, dayGridPlugin ]}
@@ -175,7 +214,7 @@ export function CalendarView() {
           }}
           slotMinTime="08:00:00"
           slotMaxTime="20:00:00"
-          hiddenDays={[0, 6]} // Hide Sunday and Saturday
+          hiddenDays={[0, 6]}
           allDaySlot={false}
           selectable={true}
           editable={true}
