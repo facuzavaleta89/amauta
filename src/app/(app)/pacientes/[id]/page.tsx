@@ -5,7 +5,7 @@ import { DeletePatientButton } from '@/components/pacientes/delete-patient-butto
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText } from 'lucide-react'
+import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award } from 'lucide-react'
 import Link from 'next/link'
 import { differenceInYears, format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -199,6 +199,18 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
           <Link href={`/turnero?paciente_id=${id}`}>
             <CalendarDays className="h-4 w-4" />
             Ver turnos
+          </Link>
+        </Button>
+        <Button variant="outline" className="gap-2" asChild>
+          <Link href={`/pedidos/nuevo?paciente_id=${id}`}>
+            <ClipboardList className="h-4 w-4" />
+            Nuevo Pedido
+          </Link>
+        </Button>
+        <Button variant="outline" className="gap-2" asChild>
+          <Link href={`/certificados/nuevo?paciente_id=${id}`}>
+            <Award className="h-4 w-4" />
+            Nuevo Certificado
           </Link>
         </Button>
         <Button variant="default" className="gap-2" asChild>

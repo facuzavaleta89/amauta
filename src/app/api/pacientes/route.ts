@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
 
     let dbQuery = supabase
       .from('pacientes')
-      .select('id, nombre_completo, dni, obra_social_id, numero_afiliado, telefono, email')
+      .select('id, nombre_completo, dni, fecha_nacimiento, obra_social_id, numero_afiliado, telefono, email, obras_sociales ( nombre )')
       .eq('creado_por', tenantMedicoId)
 
     if (query && query.trim().length > 0) {
