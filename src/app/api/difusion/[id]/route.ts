@@ -12,73 +12,102 @@ async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClien
   return profile?.role === 'medico' ? userId : profile?.medico_id ?? null
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    const { id } = await params
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `difusion_get:${user.id}`, limit: 60, windowMs: 60_000 })
+    const rl = rateLimit(request, { key: `difusion_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
-    const { searchParams } = new URL(request.url)
-    const estado = searchParams.get('estado')
-    const q = searchParams.get('q')
-
-    let query = supabase
+    const { data, error } = await supabase
       .from('difusion_posts')
-      .select('id, titulo, contenido, estado, canal, asunto_email, created_at, updated_at')
-      .order('created_at', { ascending: false })
+      .select('*')
+      .eq('id', id)
+      .single()
 
-    if (estado && estado !== 'todos') query = query.eq('estado', estado)
-    if (q) query = query.ilike('titulo', `%${q}%`)
-
-    const { data, error } = await query.limit(50)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!data) return NextResponse.json({ error: 'Post no encontrado' }, { status: 404 })
 
     return NextResponse.json({ data })
   } catch (err) {
-    console.error('[GET /api/difusion]', err)
+    console.error('[GET /api/difusion/[id]]', err)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    const { id } = await params
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `difusion_post:${user.id}`, limit: 30, windowMs: 60_000 })
+    const rl = rateLimit(request, { key: `difusion_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const body = await request.json()
-    const result = difusionSchema.safeParse(body)
+    const result = difusionSchema.partial().safeParse(body)
     if (!result.success) {
       return NextResponse.json({ error: 'Datos inválidos', details: result.error.format() }, { status: 400 })
     }
 
     const { data, error } = await supabase
       .from('difusion_posts')
-      .insert({
-        ...result.data,
-        medico_id: tenantMedicoId,
-        creado_por: user.id,
-      })
+      .update(result.data)
+      .eq('id', id)
+      // RLS ensure only authorized can update, but we can also ensure medico_id matches (redundant but safe)
       .select()
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    return NextResponse.json({ data }, { status: 201 })
+    return NextResponse.json({ data })
   } catch (err) {
-    console.error('[POST /api/difusion]', err)
+    console.error('[PATCH /api/difusion/[id]]', err)
+    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    const rl = rateLimit(request, { key: `difusion_delete:${user.id}`, limit: 10, windowMs: 60_000 })
+    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
+
+    // RLS: solo el médico puede eliminar. Está configurado en la base de datos, 
+    // pero intentamos ejecutar el delete y validamos el error.
+    const { error } = await supabase
+      .from('difusion_posts')
+      .delete()
+      .eq('id', id)
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    return new NextResponse(null, { status: 204 })
+  } catch (err) {
+    console.error('[DELETE /api/difusion/[id]]', err)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }
