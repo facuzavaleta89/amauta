@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { difusionSchema } from '@/lib/validations/difusion.schema'
+import { difusionBaseSchema } from '@/lib/validations/difusion.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
@@ -61,7 +61,7 @@ export async function PATCH(
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const body = await request.json()
-    const result = difusionSchema.partial().safeParse(body)
+    const result = difusionBaseSchema.partial().safeParse(body)
     if (!result.success) {
       return NextResponse.json({ error: 'Datos inválidos', details: result.error.format() }, { status: 400 })
     }
