@@ -140,7 +140,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-w-3xl mx-auto">
 
       {/* Buscador de paciente */}
-      <Card className="border-border/60 shadow-sm">
+      <Card className="border-border/60 shadow-sm overflow-visible">
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
             <User className="h-5 w-5 text-primary" />
