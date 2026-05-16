@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
         tipo, tipo_descripcion, fecha_certificado,
         pdf_path, created_at
       `)
+      .eq('firmado_por', tenantMedicoId)
       .order('fecha_certificado', { ascending: false })
 
     if (pacienteId) query = query.eq('paciente_id', pacienteId)

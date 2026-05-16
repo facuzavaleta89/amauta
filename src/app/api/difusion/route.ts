@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from('difusion_posts')
       .select('id, titulo, contenido, estado, canal, asunto_email, created_at, updated_at')
+      .eq('medico_id', tenantMedicoId)
       .order('created_at', { ascending: false })
 
     if (estado && estado !== 'todos') query = query.eq('estado', estado)

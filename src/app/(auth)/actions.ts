@@ -57,6 +57,12 @@ export async function registerUser(
     return { error: 'Completá todos los campos obligatorios.' }
   }
 
+  // Validar que el rol sea uno de los valores permitidos (defensa contra manipulación de FormData)
+  const rolesPermitidos = ['medico', 'asistente'] as const
+  if (!rolesPermitidos.includes(role as typeof rolesPermitidos[number])) {
+    return { error: 'Rol no válido.' }
+  }
+
   // Rate limit: 5 registros por IP cada 60 minutos
   const ip = await getIpFromHeaders()
   const { success, retryAfter } = await rateLimitAction({
