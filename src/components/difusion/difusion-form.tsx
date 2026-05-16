@@ -217,7 +217,7 @@ export function DifusionForm({ initialData }: DifusionFormProps) {
             ) : (
               <Save className="h-4 w-4" />
             )}
-            {isSubmitting ? 'Guardando...' : (isEditing ? 'Actualizar Post' : 'Crear Post')}
+            {isSubmitting ? 'Guardando...' : (isEditing ? 'Actualizar Comunicado' : 'Guardar Comunicado')}
           </Button>
           <Button
             type="button"

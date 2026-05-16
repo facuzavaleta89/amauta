@@ -105,33 +105,64 @@ export default async function DifusionPage(props: {
       <div className="flex flex-col sm:flex-row items-center gap-3">
         <form className="relative flex-1 w-full max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input 
-            name="q" 
-            defaultValue={q} 
-            placeholder="Buscar comunicados por título..." 
+          <Input
+            name="q"
+            defaultValue={q}
+            placeholder="Buscar comunicados por título..."
             className="pl-9 bg-card shadow-sm"
           />
           {estado && estado !== 'todos' && <input type="hidden" name="estado" value={estado} />}
         </form>
-        
+
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          {/* Todos */}
           <Link href={`/difusion?q=${q}&estado=todos`}>
-            <Badge variant={estado === 'todos' || !estado ? 'default' : 'outline'} className="cursor-pointer">
+            <Badge
+              variant={!estado || estado === 'todos' ? 'default' : 'outline'}
+              className="cursor-pointer select-none"
+            >
               Todos
             </Badge>
           </Link>
+
+          {/* Borradores */}
           <Link href={`/difusion?q=${q}&estado=borrador`}>
-            <Badge variant={estado === 'borrador' ? 'secondary' : 'outline'} className="cursor-pointer">
+            <Badge
+              variant="outline"
+              className={`cursor-pointer select-none transition-colors ${
+                estado === 'borrador'
+                  ? 'bg-secondary text-secondary-foreground border-secondary'
+                  : 'hover:bg-muted'
+              }`}
+            >
               Borradores
             </Badge>
           </Link>
+
+          {/* Listos */}
           <Link href={`/difusion?q=${q}&estado=listo`}>
-            <Badge variant={estado === 'listo' ? 'default' : 'outline'} className="cursor-pointer bg-blue-600 hover:bg-blue-700">
+            <Badge
+              variant="outline"
+              className={`cursor-pointer select-none transition-colors ${
+                estado === 'listo'
+                  ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                  : 'hover:bg-muted'
+              }`}
+            >
               Listos
             </Badge>
           </Link>
+
+          {/* Enviados */}
           <Link href={`/difusion?q=${q}&estado=enviado`}>
-            <Badge variant={estado === 'enviado' ? 'default' : 'outline'} className="cursor-pointer bg-emerald-600 hover:bg-emerald-700">
+            <Badge
+              variant="outline"
+              className={`cursor-pointer select-none transition-colors ${
+                estado === 'enviado'
+                  ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                  : 'hover:bg-muted'
+              }`}
+            >
               Enviados
             </Badge>
           </Link>

@@ -3,12 +3,10 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
 import { toast } from 'sonner'
 import {
-  ArrowLeft, Edit, Trash2, Send, Mail, MessageCircle, 
-  Calendar, CheckCircle2, Clock, Archive, Loader2, AlertCircle
+  ArrowLeft, Edit, Trash2, Send, Mail, MessageCircle,
+  Calendar, CheckCircle2, Clock, Archive, Loader2, AlertCircle, Megaphone,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -24,10 +22,44 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { DIFUSION_CANAL_LABELS, DIFUSION_ESTADO_LABELS } from '@/lib/validations/difusion.schema'
+import {
+  DIFUSION_CANAL_LABELS,
+  type DifusionEstado,
+  type DifusionCanal,
+} from '@/lib/validations/difusion.schema'
+import { formatFecha } from '@/lib/utils'
+
+// Tipo explícito del post de difusión
+interface DifusionPost {
+  id: string
+  titulo: string
+  contenido: string
+  estado: DifusionEstado
+  canal: DifusionCanal
+  asunto_email?: string | null
+  medico_id: string
+  creado_por: string
+  created_at: string
+  updated_at: string
+}
 
 interface DifusionPreviewProps {
-  post: any
+  post: DifusionPost
+}
+
+function EstadoBadge({ estado }: { estado: DifusionEstado }) {
+  switch (estado) {
+    case 'borrador':
+      return <Badge variant="secondary" className="gap-1"><Clock className="w-3 h-3" /> Borrador</Badge>
+    case 'listo':
+      return <Badge variant="default" className="gap-1 bg-blue-600 hover:bg-blue-700"><CheckCircle2 className="w-3 h-3" /> Listo para enviar</Badge>
+    case 'enviado':
+      return <Badge variant="default" className="gap-1 bg-emerald-600 hover:bg-emerald-700"><Megaphone className="w-3 h-3" /> Enviado</Badge>
+    case 'archivado':
+      return <Badge variant="outline" className="gap-1"><Archive className="w-3 h-3" /> Archivado</Badge>
+    default:
+      return null
+  }
 }
 
 export function DifusionPreview({ post }: DifusionPreviewProps) {
@@ -39,7 +71,6 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
     try {
       const res = await fetch(`/api/difusion/${post.id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Error al eliminar')
-      
       toast.success('Comunicado eliminado')
       router.push('/difusion')
       router.refresh()
@@ -49,28 +80,38 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
     }
   }
 
-  // Helper para el badge de estado
-  const getEstadoBadge = () => {
-    switch (post.estado) {
-      case 'borrador': return <Badge variant="secondary"><Clock className="w-3 h-3 mr-1"/> Borrador</Badge>
-      case 'listo': return <Badge variant="default" className="bg-blue-600"><CheckCircle2 className="w-3 h-3 mr-1"/> Listo para enviar</Badge>
-      case 'enviado': return <Badge variant="default" className="bg-emerald-600"><CheckCircle2 className="w-3 h-3 mr-1"/> Enviado</Badge>
-      case 'archivado': return <Badge variant="outline"><Archive className="w-3 h-3 mr-1"/> Archivado</Badge>
+  function handleConfigurarEnvio() {
+    if (post.estado === 'borrador') {
+      toast.info('Primero cambiá el estado a "Listo para enviar" antes de configurar el envío.')
+      return
     }
+    if (post.estado === 'enviado') {
+      toast.info('Este comunicado ya fue enviado.')
+      return
+    }
+    // Estado "listo" o "archivado" → funcionalidad próxima
+    toast.info('La configuración de envío masivo estará disponible próximamente.')
   }
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Encabezado de acciones */}
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Link href="/difusion" className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link
+            href="/difusion"
+            className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted shrink-0"
+          >
             <ArrowLeft className="h-5 w-5" />
           </Link>
-          <h1 className="text-2xl font-bold text-foreground">Vista Previa</h1>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-foreground truncate">{post.titulo}</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">Vista previa del comunicado</p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Eliminar */}
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
@@ -81,12 +122,16 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
               <AlertDialogHeader>
                 <AlertDialogTitle>¿Eliminar comunicado?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Esta acción no se puede deshacer. El comunicado &quot;{post.titulo}&quot; será eliminado permanentemente.
+                  Esta acción no se puede deshacer. El comunicado <strong>&quot;{post.titulo}&quot;</strong> será eliminado permanentemente.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-destructive hover:bg-destructive/90">
+                <AlertDialogAction
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="bg-destructive hover:bg-destructive/90"
+                >
                   {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                   Eliminar
                 </AlertDialogAction>
@@ -94,16 +139,24 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
             </AlertDialogContent>
           </AlertDialog>
 
-          <Link href={`/difusion/${post.id}/editar`}>
-            <Button variant="outline" className="gap-2">
-              <Edit className="h-4 w-4" />
-              Editar
-            </Button>
-          </Link>
-          
-          <Button disabled={post.estado === 'enviado'} className="gap-2 shadow-md">
+          {/* Editar — solo si no fue enviado */}
+          {post.estado !== 'enviado' && (
+            <Link href={`/difusion/${post.id}/editar`}>
+              <Button variant="outline" className="gap-2">
+                <Edit className="h-4 w-4" />
+                Editar
+              </Button>
+            </Link>
+          )}
+
+          {/* Configurar Envío */}
+          <Button
+            onClick={handleConfigurarEnvio}
+            disabled={post.estado === 'enviado'}
+            className="gap-2 shadow-md"
+          >
             <Send className="h-4 w-4" />
-            Configurar Envío
+            {post.estado === 'enviado' ? 'Ya enviado' : 'Configurar Envío'}
           </Button>
         </div>
       </div>
@@ -111,28 +164,40 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
       {/* Tarjeta de Resumen */}
       <div className="bg-card border border-border/60 rounded-xl shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row gap-6 justify-between items-start">
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            {getEstadoBadge()}
+          <div className="flex items-center gap-2 flex-wrap">
+            <EstadoBadge estado={post.estado} />
             <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Calendar className="h-3 w-3" />
-              Actualizado el {format(new Date(post.updated_at), "d MMM, yyyy", { locale: es })}
+              Actualizado el {formatFecha(post.updated_at)}
             </span>
           </div>
           <h2 className="text-xl font-bold text-foreground">{post.titulo}</h2>
         </div>
-        
+
         <div className="bg-muted/50 rounded-lg p-3 shrink-0 min-w-[200px]">
           <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-2">Canal de envío</p>
           <div className="flex items-center gap-2 text-sm font-medium">
-            {post.canal === 'whatsapp' ? <MessageCircle className="h-4 w-4 text-green-600" /> : <Mail className="h-4 w-4 text-blue-600" />}
-            {DIFUSION_CANAL_LABELS[post.canal as keyof typeof DIFUSION_CANAL_LABELS]}
+            {post.canal === 'whatsapp'
+              ? <MessageCircle className="h-4 w-4 text-green-600" />
+              : <Mail className="h-4 w-4 text-blue-600" />}
+            {DIFUSION_CANAL_LABELS[post.canal]}
           </div>
         </div>
       </div>
 
+      {/* Aviso borrador */}
+      {post.estado === 'borrador' && (
+        <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-700 dark:text-blue-400">
+          <AlertCircle className="h-5 w-5 shrink-0" />
+          <p>
+            Este comunicado es un borrador. Editalo y cambiá su estado a <strong>&quot;Listo para enviar&quot;</strong> para poder enviarlo.
+          </p>
+        </div>
+      )}
+
       {/* Visor de Documento (Simulación de Email/Mensaje) */}
-      <div className="bg-white border border-border/60 rounded-xl shadow-lg overflow-hidden mt-8">
-        {/* Header simulado */}
+      <div className="bg-white border border-border/60 rounded-xl shadow-lg overflow-hidden">
+        {/* Header simulado de email */}
         {(post.canal === 'email' || post.canal === 'ambos') && (
           <div className="bg-muted/30 border-b border-border/40 px-6 py-4 space-y-1">
             <div className="flex items-center gap-2 text-sm">
@@ -163,15 +228,6 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
           Este mensaje se enviará a través de la plataforma Amauta.
         </div>
       </div>
-      
-      {post.estado === 'borrador' && (
-        <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-          <AlertCircle className="h-5 w-5 shrink-0 text-blue-600" />
-          <p>
-            Este comunicado aún es un borrador. Para poder enviarlo, modificalo y cambiá su estado a <strong>&quot;Listo para enviar&quot;</strong>.
-          </p>
-        </div>
-      )}
     </div>
   )
 }

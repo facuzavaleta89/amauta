@@ -2,13 +2,13 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { format, differenceInYears } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { differenceInYears } from 'date-fns'
 import {
   Download, Loader2, Trash2, ArrowLeft,
   User, Calendar, Award, Clock,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatFecha, formatFechaLarga } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -34,20 +34,13 @@ interface CertificadoDocViewProps {
   userRole: 'medico' | 'asistente'
 }
 
-function formatFecha(dateStr: string) {
-  try {
-    return format(new Date(dateStr + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })
-  } catch {
-    return dateStr
-  }
-}
 
-const TIPO_BADGE_COLORS: Record<string, string> = {
-  aptitud_fisica: 'bg-green-100 text-green-800 border-green-200',
-  reposo:         'bg-blue-100 text-blue-800 border-blue-200',
-  diagnostico:    'bg-purple-100 text-purple-800 border-purple-200',
-  libre_deuda:    'bg-amber-100 text-amber-800 border-amber-200',
-  otro:           'bg-gray-100 text-gray-700 border-gray-200',
+const TIPO_BADGE_COLORS: Record<string, { bg: string; text: string; ring: string }> = {
+  aptitud_fisica: { bg: 'bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', ring: 'ring-emerald-500/30' },
+  reposo:         { bg: 'bg-blue-500/10',    text: 'text-blue-700 dark:text-blue-400',       ring: 'ring-blue-500/30'    },
+  diagnostico:    { bg: 'bg-violet-500/10',  text: 'text-violet-700 dark:text-violet-400',   ring: 'ring-violet-500/30'  },
+  libre_deuda:    { bg: 'bg-amber-500/10',   text: 'text-amber-700 dark:text-amber-400',     ring: 'ring-amber-500/30'   },
+  otro:           { bg: 'bg-muted',          text: 'text-muted-foreground',                  ring: 'ring-border'         },
 }
 
 export function CertificadoDocView({
@@ -61,7 +54,7 @@ export function CertificadoDocView({
   const [isDeleting, setIsDeleting] = useState(false)
 
   const tipoLabel = CERTIFICADO_TIPO_LABELS[certificado.tipo] ?? 'Certificado'
-  const badgeColor = TIPO_BADGE_COLORS[certificado.tipo] ?? TIPO_BADGE_COLORS.otro
+  const badge = TIPO_BADGE_COLORS[certificado.tipo] ?? TIPO_BADGE_COLORS.otro
 
   // Calcular edad del paciente
   const edad = certificado.paciente_dob
@@ -116,7 +109,9 @@ export function CertificadoDocView({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-foreground">Certificado Médico</h1>
-              <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${badgeColor}`}>
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset ${badge.bg} ${badge.text} ${badge.ring}`}
+              >
                 {tipoLabel}
               </span>
             </div>
@@ -228,7 +223,7 @@ export function CertificadoDocView({
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Fecha Nac.</p>
                 <p className="text-sm text-foreground">
-                  {formatFecha(certificado.paciente_dob)}
+                  {formatFechaLarga(certificado.paciente_dob)}
                   {edad !== null && <span className="text-muted-foreground ml-1">({edad} años)</span>}
                 </p>
               </div>
@@ -268,12 +263,12 @@ export function CertificadoDocView({
                 <p className="text-3xl font-bold text-blue-900 mt-1">{certificado.dias_reposo}</p>
               </div>
               {certificado.fecha_inicio_reposo && (
-                <div className="border-l border-blue-200 pl-8">
-                  <p className="text-[10px] text-blue-600 uppercase tracking-widest font-bold">
+                <div className="border-l border-blue-200/50 pl-8">
+                  <p className="text-[10px] text-blue-700 dark:text-blue-300 uppercase tracking-widest font-bold">
                     Inicio
                   </p>
-                  <p className="text-sm font-semibold text-blue-900 mt-1">
-                    {formatFecha(certificado.fecha_inicio_reposo)}
+                  <p className="text-sm font-semibold text-blue-900 dark:text-blue-100 mt-1">
+                    {formatFechaLarga(certificado.fecha_inicio_reposo!)}
                   </p>
                 </div>
               )}
@@ -282,10 +277,10 @@ export function CertificadoDocView({
 
           {/* Validez */}
           {certificado.valido_hasta && (
-            <div className="flex items-center gap-2 text-sm bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
-              <Clock className="h-4 w-4 text-amber-600 shrink-0" />
-              <span className="text-amber-800 font-medium">
-                Válido hasta: {formatFecha(certificado.valido_hasta)}
+            <div className="flex items-center gap-2 text-sm bg-amber-50/50 border border-amber-200/50 rounded-lg px-4 py-2">
+              <Clock className="h-4 w-4 text-amber-700 dark:text-amber-300 shrink-0" />
+              <span className="text-amber-900 dark:text-amber-100 font-medium">
+                Válido hasta: {formatFechaLarga(certificado.valido_hasta!)}
               </span>
             </div>
           )}
@@ -307,7 +302,7 @@ export function CertificadoDocView({
           <div className="flex items-center gap-2">
             <Calendar className="h-3 w-3 text-muted-foreground" />
             <span className="text-xs text-muted-foreground">
-              {formatFecha(certificado.fecha_certificado)}
+              {formatFechaLarga(certificado.fecha_certificado)}
             </span>
           </div>
           <span className="text-xs text-primary font-bold tracking-widest">AMAUTA</span>

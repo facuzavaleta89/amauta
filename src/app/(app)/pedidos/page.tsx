@@ -1,18 +1,25 @@
 import { createClient } from '@/lib/supabase/server'
 import { Button } from '@/components/ui/button'
-import { PlusCircle, ClipboardList, FileText, Calendar } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { PlusCircle, ClipboardList, FileText, Calendar, Search, X } from 'lucide-react'
 import Link from 'next/link'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { formatFecha } from '@/lib/utils'
 
 export const metadata = {
-  title: 'Pedidos de Estudios',
+  title: 'Pedidos de Estudios — Amauta',
 }
 
-export default async function PedidosPage() {
+interface Props {
+  searchParams?: Promise<{ q?: string }>
+}
+
+export default async function PedidosPage({ searchParams }: Props) {
+  const params = await searchParams
+  const q = params?.q?.trim() ?? ''
+
   const supabase = await createClient()
 
-  const { data: pedidos } = await supabase
+  let query = supabase
     .from('pedidos')
     .select(`
       id, paciente_id, paciente_nombre, paciente_dni,
@@ -21,13 +28,12 @@ export default async function PedidosPage() {
     .order('fecha_pedido', { ascending: false })
     .limit(50)
 
-  const formatFecha = (d: string) => {
-    try {
-      return format(new Date(d + 'T12:00:00'), "d MMM yyyy", { locale: es })
-    } catch {
-      return d
-    }
+  if (q) {
+    // Busca por nombre o DNI
+    query = query.or(`paciente_nombre.ilike.%${q}%,paciente_dni.ilike.%${q}%`)
   }
+
+  const { data: pedidos } = await query
 
   return (
     <div className="space-y-6">
@@ -39,13 +45,43 @@ export default async function PedidosPage() {
             Solicitudes de estudios complementarios emitidas
           </p>
         </div>
-        <Button asChild className="gap-2">
+        <Button asChild className="gap-2 shrink-0">
           <Link href="/pedidos/nuevo">
             <PlusCircle className="h-4 w-4" />
             Nuevo Pedido
           </Link>
         </Button>
       </div>
+
+      {/* Búsqueda */}
+      <form className="flex items-center gap-2 max-w-md">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            name="q"
+            defaultValue={q}
+            placeholder="Buscar por nombre o DNI..."
+            className="pl-9"
+            autoComplete="off"
+          />
+        </div>
+        {q && (
+          <Button asChild variant="ghost" size="icon" title="Limpiar búsqueda">
+            <Link href="/pedidos">
+              <X className="h-4 w-4" />
+            </Link>
+          </Button>
+        )}
+      </form>
+
+      {/* Resultados */}
+      {q && (
+        <p className="text-sm text-muted-foreground -mt-2">
+          {pedidos?.length
+            ? `${pedidos.length} resultado${pedidos.length !== 1 ? 's' : ''} para "${q}"`
+            : `Sin resultados para "${q}"`}
+        </p>
+      )}
 
       {/* Lista */}
       {!pedidos || pedidos.length === 0 ? (
@@ -54,17 +90,21 @@ export default async function PedidosPage() {
             <ClipboardList className="h-8 w-8 text-primary" />
           </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">
-            Sin pedidos registrados
+            {q ? 'Sin resultados' : 'Sin pedidos registrados'}
           </h3>
           <p className="text-sm text-muted-foreground max-w-sm mb-6">
-            Los pedidos de estudios que emitas aparecerán aquí. Podés crear uno desde la ficha del paciente o desde este botón.
+            {q
+              ? 'No hay pedidos que coincidan con tu búsqueda. Probá con otro nombre o DNI.'
+              : 'Los pedidos de estudios que emitas aparecerán aquí. Podés crear uno desde la ficha del paciente o desde este botón.'}
           </p>
-          <Button asChild className="gap-2">
-            <Link href="/pedidos/nuevo">
-              <PlusCircle className="h-4 w-4" />
-              Crear primer pedido
-            </Link>
-          </Button>
+          {!q && (
+            <Button asChild className="gap-2">
+              <Link href="/pedidos/nuevo">
+                <PlusCircle className="h-4 w-4" />
+                Crear primer pedido
+              </Link>
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -87,16 +127,21 @@ export default async function PedidosPage() {
                       <p className="text-xs text-muted-foreground mt-0.5">
                         DNI: {pedido.paciente_dni}
                       </p>
-                      <p className="text-sm text-muted-foreground mt-1.5 line-clamp-1">
-                        {pedido.diagnostico}
-                      </p>
+                      {pedido.diagnostico && (
+                        <p className="text-sm text-muted-foreground mt-1.5 line-clamp-1">
+                          {pedido.diagnostico}
+                        </p>
+                      )}
+                      {pedido.estudios_pedidos && (
+                        <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-1 font-mono">
+                          {pedido.estudios_pedidos.split('\n')[0]}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Calendar className="h-3 w-3" />
-                      {formatFecha(pedido.fecha_pedido)}
-                    </div>
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+                    <Calendar className="h-3 w-3" />
+                    {formatFecha(pedido.fecha_pedido)}
                   </div>
                 </div>
               </div>

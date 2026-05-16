@@ -2,13 +2,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
 import {
   Download, Loader2, Trash2, ArrowLeft,
   User, Calendar, Stethoscope, FileText, AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatFecha, formatFechaLarga } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -33,13 +32,6 @@ interface PedidoDocViewProps {
   userRole: 'medico' | 'asistente'
 }
 
-function formatFecha(dateStr: string) {
-  try {
-    return format(new Date(dateStr + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })
-  } catch {
-    return dateStr
-  }
-}
 
 export function PedidoDocView({ pedido, medicoNombre, medicoMatricula, userRole }: PedidoDocViewProps) {
   const router = useRouter()
@@ -95,7 +87,7 @@ export function PedidoDocView({ pedido, medicoNombre, medicoMatricula, userRole 
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-foreground">Pedido de Estudios</h1>
               <Badge variant="outline" className="text-xs">
-                {pedido.fecha_pedido}
+                {formatFecha(pedido.fecha_pedido)}
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground mt-0.5">
@@ -275,7 +267,7 @@ export function PedidoDocView({ pedido, medicoNombre, medicoMatricula, userRole 
           <div className="flex items-center gap-2">
             <Calendar className="h-3 w-3 text-muted-foreground" />
             <span className="text-xs text-muted-foreground">
-              {formatFecha(pedido.fecha_pedido)}
+              {formatFechaLarga(pedido.fecha_pedido)}
             </span>
           </div>
           <span className="text-xs text-primary font-bold tracking-widest">AMAUTA</span>
