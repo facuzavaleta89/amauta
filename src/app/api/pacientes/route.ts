@@ -39,13 +39,16 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const query = searchParams.get('q') || ''
 
+    // Escapar caracteres especiales de SQL LIKE para evitar alteraciones en la búsqueda
+    const sanitizedQuery = query.trim().replace(/[%_\\]/g, (c) => `\\${c}`)
+
     let dbQuery = supabase
       .from('pacientes')
       .select('id, nombre_completo, dni, fecha_nacimiento, obra_social_id, numero_afiliado, telefono, email, obras_sociales ( nombre )')
       .eq('creado_por', tenantMedicoId)
 
-    if (query && query.trim().length > 0) {
-      dbQuery = dbQuery.or(`nombre_completo.ilike.%${query.trim()}%,dni.ilike.%${query.trim()}%`)
+    if (sanitizedQuery.length > 0) {
+      dbQuery = dbQuery.or(`nombre_completo.ilike.%${sanitizedQuery}%,dni.ilike.%${sanitizedQuery}%`)
     }
 
     const { data: pacientes, error } = await dbQuery.order('nombre_completo', { ascending: true }).limit(20)

@@ -14,7 +14,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const { data: profile, error: profileError } = await supabase
+    const rl = rateLimit(request, { key: `turnero_get:${user.id}`, limit: 120, windowMs: 60_000 })
+    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
+
+    const { data: profile } = await supabase
       .from('profiles')
       .select('role, medico_id')
       .eq('id', user.id)
@@ -26,7 +29,7 @@ export async function GET(request: NextRequest) {
       null
 
     if (!tenantMedicoId) {
-      return NextResponse.json({ error: `Tenant inválido. Profile: ${JSON.stringify(profile)}. Error: ${JSON.stringify(profileError)}. Role: ${profile?.role}` }, { status: 403 })
+      return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -82,7 +85,7 @@ export async function POST(request: NextRequest) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile } = await supabase
       .from('profiles')
       .select('role, medico_id')
       .eq('id', user.id)
@@ -94,7 +97,7 @@ export async function POST(request: NextRequest) {
       null
 
     if (!tenantMedicoId) {
-      return NextResponse.json({ error: `Tenant inválido. Profile: ${JSON.stringify(profile)}. Error: ${JSON.stringify(profileError)}. Role: ${profile?.role}` }, { status: 403 })
+      return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
     }
 
     const body = await request.json()
