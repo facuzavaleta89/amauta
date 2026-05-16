@@ -240,7 +240,14 @@ export function CalendarView() {
           }}
           locales={[esLocale]}
           locale="es"
-          buttonText={{ today: 'Hoy', month: 'Mes', week: 'Semana', day: 'Día' }}
+          buttonText={{
+            today: 'Hoy',
+            month: 'Mes',
+            week: 'Semana',
+            day: 'Día',
+            prev: '‹',
+            next: '›'
+          }}
           slotMinTime="08:00:00"
           slotMaxTime="20:00:00"
           hiddenDays={[0, 6]}
