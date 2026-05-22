@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { CertificadoDocView } from '@/components/certificados/certificado-pdf'
 import type { Metadata } from 'next'
@@ -35,9 +36,11 @@ export default async function CertificadoDetailPage({ params }: Props) {
 
   if (error || !certificado) notFound()
 
-  const { data: medico } = await supabase
+  // Cargar datos del médico firmante con admin client para evitar RLS restrictivo sobre perfiles
+  const admin = createAdminClient()
+  const { data: medico } = await admin
     .from('profiles')
-    .select('full_name, matricula')
+    .select('full_name, matricula, firma_url')
     .eq('id', certificado.firmado_por)
     .single()
 
@@ -55,6 +58,7 @@ export default async function CertificadoDetailPage({ params }: Props) {
       certificado={certificado}
       medicoNombre={medico?.full_name ?? 'Médico'}
       medicoMatricula={medico?.matricula ?? null}
+      medicoFirma={medico?.firma_url ?? null}
       userRole={userRole}
     />
   )
