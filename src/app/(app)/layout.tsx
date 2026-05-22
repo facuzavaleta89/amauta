@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { Sidebar } from '@/components/layout/sidebar'
-import { Header } from '@/components/layout/header'
+import { LayoutShell } from '@/components/layout/layout-shell'
 import type { UserRole } from '@/types/roles'
 import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
 
@@ -36,33 +35,20 @@ export default async function AppLayout({
     redirect('/onboarding')
   }
 
-  const { data: solicitudesPendientes } = userRole === 'medico' 
-    ? await obtenerSolicitudesPendientes() 
+  const { data: solicitudesPendientes } = userRole === 'medico'
+    ? await obtenerSolicitudesPendientes()
     : { data: [] }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar
-        userFullName={userFullName}
-        userRole={userRole}
-        userEmail={userEmail}
-      />
-
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <Header
-          userFullName={userFullName}
-          userRole={userRole}
-          userEmail={userEmail}
-          userId={user.id}
-          medicoId={medicoId}
-          solicitudesPendientes={solicitudesPendientes}
-        />
-        <main className="flex-1 overflow-y-auto scrollbar-thin">
-          <div className="p-6 animate-fade-in">
-            {children}
-          </div>
-        </main>
-      </div>
-    </div>
+    <LayoutShell
+      userFullName={userFullName}
+      userRole={userRole}
+      userEmail={userEmail}
+      userId={user.id}
+      medicoId={medicoId}
+      solicitudesPendientes={solicitudesPendientes ?? []}
+    >
+      {children}
+    </LayoutShell>
   )
 }

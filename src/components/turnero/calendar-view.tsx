@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
@@ -12,6 +12,21 @@ import { Button } from '@/components/ui/button'
 
 import { TurnoFormModal } from './turno-form'
 import { BlockSlotModal } from './block-slot-modal'
+
+// ── Hook: detecta si es móvil ────────────────────────────────
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`)
+    setIsMobile(mq.matches)
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [breakpoint])
+
+  return isMobile
+}
 
 // ── Renderizado custom — vista semana/día ────────────────────
 function TurnoEventContent({ event }: { event: any }) {
@@ -68,15 +83,24 @@ function DayGridEventContent({ event }: { event: any }) {
 
 export function CalendarView() {
   const calendarRef = useRef<FullCalendar>(null)
+  const isMobile = useIsMobile()
 
   const [loading, setLoading] = useState(false)
-
-  // Modals state
   const [turnoModalOpen, setTurnoModalOpen] = useState(false)
   const [blockModalOpen, setBlockModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: string; end: string } | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null)
   const [currentView, setCurrentView] = useState('timeGridWeek')
+
+  // Cambiar vista al detectar cambio de tamaño
+  useEffect(() => {
+    const api = calendarRef.current?.getApi()
+    if (!api) return
+    const targetView = isMobile ? 'timeGridDay' : 'timeGridWeek'
+    if (api.view.type !== targetView) {
+      api.changeView(targetView)
+    }
+  }, [isMobile])
 
   const fetchEvents = useCallback(
     async (info: any, successCallback: any, failureCallback: any) => {
@@ -181,11 +205,24 @@ export function CalendarView() {
     calendarRef.current?.getApi().refetchEvents()
   }
 
+  // ── Toolbar adaptiva ─────────────────────────────────────────
+  const headerToolbar = isMobile
+    ? {
+        left: 'prev,next',
+        center: 'title',
+        right: 'today',
+      }
+    : {
+        left: 'prev,next today',
+        center: 'title',
+        right: 'dayGridMonth,timeGridWeek,timeGridDay',
+      }
+
   return (
     <>
-      {/* Toolbar */}
-      <div className="flex items-center justify-between mb-3 gap-2">
-        <div className="flex items-center gap-2">
+      {/* ── Toolbar de acciones ───────────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between mb-3 gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             onClick={() => {
@@ -196,7 +233,7 @@ export function CalendarView() {
             className="gap-1.5 h-8 text-xs"
           >
             <CalendarPlus className="w-3.5 h-3.5" />
-            Nuevo turno
+            <span className="hidden xs:inline">Nuevo</span> turno
           </Button>
           <Button
             size="sm"
@@ -209,7 +246,8 @@ export function CalendarView() {
             className="gap-1.5 h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
           >
             <Ban className="w-3.5 h-3.5" />
-            Bloquear horario
+            <span className="hidden sm:inline">Bloquear horario</span>
+            <span className="sm:hidden">Bloquear</span>
           </Button>
         </div>
         <Button
@@ -224,7 +262,7 @@ export function CalendarView() {
           ) : (
             <RefreshCw className="w-3.5 h-3.5" />
           )}
-          {loading ? 'Cargando...' : 'Actualizar'}
+          <span className="hidden sm:inline">{loading ? 'Cargando...' : 'Actualizar'}</span>
         </Button>
       </div>
 
@@ -232,12 +270,8 @@ export function CalendarView() {
         <FullCalendar
           ref={calendarRef}
           plugins={[timeGridPlugin, interactionPlugin, dayGridPlugin]}
-          initialView="timeGridWeek"
-          headerToolbar={{
-            left: 'prev,next today',
-            center: 'title',
-            right: 'dayGridMonth,timeGridWeek,timeGridDay',
-          }}
+          initialView={isMobile ? 'timeGridDay' : 'timeGridWeek'}
+          headerToolbar={headerToolbar}
           locales={[esLocale]}
           locale="es"
           buttonText={{
@@ -246,14 +280,14 @@ export function CalendarView() {
             week: 'Semana',
             day: 'Día',
             prev: '‹',
-            next: '›'
+            next: '›',
           }}
           slotMinTime="08:00:00"
           slotMaxTime="20:00:00"
           hiddenDays={[0, 6]}
           allDaySlot={false}
           selectable={true}
-          editable={true}
+          editable={!isMobile}
           selectMirror={true}
           events={fetchEvents}
           select={handleDateSelect}

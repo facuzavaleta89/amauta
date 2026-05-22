@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Breadcrumb } from './breadcrumb'
 import { NotificacionesMedico } from './notificaciones-medico'
-import { LogOut, User } from 'lucide-react'
+import { LogOut, Menu, User } from 'lucide-react'
 import type { UserRole } from '@/types/roles'
 
 interface Solicitud {
@@ -30,6 +30,7 @@ interface HeaderProps {
   userId: string
   medicoId: string | null
   solicitudesPendientes?: Solicitud[]
+  onMenuToggle?: () => void
 }
 
 export function Header({
@@ -39,6 +40,7 @@ export function Header({
   userId,
   medicoId,
   solicitudesPendientes = [],
+  onMenuToggle,
 }: HeaderProps) {
   const initials = userFullName
     .split(' ')
@@ -51,13 +53,25 @@ export function Header({
     userRole === 'medico' ? 'Médico' : 'Asistente'
 
   return (
-    <header className="h-14 border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between px-6 shrink-0">
-      {/* Breadcrumb */}
-      <Breadcrumb />
+    <header className="h-14 border-b border-border bg-card/80 backdrop-blur-sm flex items-center gap-3 px-3 sm:px-4 md:px-6 shrink-0">
+      {/* ── Hamburguesa (solo móvil) ─────────────────────────── */}
+      <button
+        id="sidebar-toggle"
+        aria-label="Abrir menú"
+        onClick={onMenuToggle}
+        className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg hover:bg-muted transition-colors shrink-0"
+      >
+        <Menu className="h-5 w-5 text-muted-foreground" />
+      </button>
 
-      {/* Acciones del usuario */}
-      <div className="flex items-center gap-2">
-        {/* Campana de notificaciones — solo para médicos */}
+      {/* ── Breadcrumb ──────────────────────────────────────── */}
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <Breadcrumb />
+      </div>
+
+      {/* ── Acciones ────────────────────────────────────────── */}
+      <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        {/* Campana de notificaciones — solo médicos */}
         {userRole === 'medico' && (
           <NotificacionesMedico
             medicoId={userId}
