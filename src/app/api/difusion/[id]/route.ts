@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { difusionBaseSchema } from '@/lib/validations/difusion.schema'
+import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
@@ -18,6 +19,12 @@ export async function GET(
 ) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de post inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
@@ -32,10 +39,12 @@ export async function GET(
       .from('difusion_posts')
       .select('*')
       .eq('id', id)
+      .eq('medico_id', tenantMedicoId)
       .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    if (!data) return NextResponse.json({ error: 'Post no encontrado' }, { status: 404 })
+    if (error || !data) {
+      return NextResponse.json({ error: 'Post no encontrado o sin permisos' }, { status: 404 })
+    }
 
     return NextResponse.json({ data })
   } catch (err) {
@@ -50,6 +59,12 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de post inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
@@ -59,6 +74,18 @@ export async function PATCH(
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+
+    // Verificar pertenencia al tenant antes de actualizar
+    const { data: existing, error: findError } = await supabase
+      .from('difusion_posts')
+      .select('id')
+      .eq('id', id)
+      .eq('medico_id', tenantMedicoId)
+      .single()
+
+    if (findError || !existing) {
+      return NextResponse.json({ error: 'Post no encontrado o sin permisos' }, { status: 404 })
+    }
 
     const body = await request.json()
     const result = difusionBaseSchema.partial().safeParse(body)
@@ -70,7 +97,7 @@ export async function PATCH(
       .from('difusion_posts')
       .update(result.data)
       .eq('id', id)
-      // RLS ensure only authorized can update, but we can also ensure medico_id matches (redundant but safe)
+      .eq('medico_id', tenantMedicoId)
       .select()
       .single()
 
@@ -89,6 +116,12 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de post inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
@@ -96,12 +129,26 @@ export async function DELETE(
     const rl = rateLimit(request, { key: `difusion_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    // RLS: solo el médico puede eliminar. Está configurado en la base de datos, 
-    // pero intentamos ejecutar el delete y validamos el error.
+    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+
+    // Verificar pertenencia antes de eliminar
+    const { data: existing, error: findError } = await supabase
+      .from('difusion_posts')
+      .select('id')
+      .eq('id', id)
+      .eq('medico_id', tenantMedicoId)
+      .single()
+
+    if (findError || !existing) {
+      return NextResponse.json({ error: 'Post no encontrado o sin permisos' }, { status: 404 })
+    }
+
     const { error } = await supabase
       .from('difusion_posts')
       .delete()
       .eq('id', id)
+      .eq('medico_id', tenantMedicoId)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

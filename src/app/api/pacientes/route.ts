@@ -37,7 +37,8 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const query = searchParams.get('q') || ''
+    const rawQuery = searchParams.get('q') || ''
+    const query = rawQuery.slice(0, 100)
 
     // Escapar caracteres especiales de SQL LIKE para evitar alteraciones en la búsqueda
     const sanitizedQuery = query.trim().replace(/[%_\\]/g, (c) => `\\${c}`)

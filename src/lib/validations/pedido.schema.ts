@@ -1,25 +1,54 @@
 import * as z from 'zod'
+import { isValidDateStr } from './shared'
 
-// ── PEDIDO DE ESTUDIOS ────────────────────────────────────────
+// ── Helpers locales ───────────────────────────────────────────────────────────
+/** Solo números, entre 1 y 8 dígitos (DNI argentino) */
+const dniRegex = /^\d{7,8}$/
+
+// ── PEDIDO DE ESTUDIOS ────────────────────────────────────────────────────────
 
 export const pedidoSchema = z.object({
   paciente_id: z.string().uuid({ message: 'Seleccioná un paciente válido' }),
-  // Snapshot del paciente (auto-completados en el form)
-  paciente_nombre: z.string().min(1, 'Requerido'),
-  paciente_dni: z.string().min(1, 'Requerido'),
-  paciente_dob: z.string().min(1, 'Requerido'),
-  obra_social_nombre: z.string().optional().nullable(),
-  numero_afiliado: z.string().optional().nullable(),
+
+  // Snapshot del paciente — validamos longitud y formato para evitar datos inválidos
+  paciente_nombre: z
+    .string()
+    .min(1, 'Requerido')
+    .max(150, 'Nombre demasiado largo'),
+  paciente_dni: z
+    .string()
+    .min(1, 'Requerido')
+    .max(8, 'DNI inválido')
+    .regex(dniRegex, 'El DNI debe contener entre 7 y 8 dígitos'),
+  paciente_dob: z
+    .string()
+    .min(1, 'Requerido')
+    .refine(isValidDateStr, 'Fecha de nacimiento inválida'),
+
+  obra_social_nombre: z.string().max(150).optional().nullable(),
+  numero_afiliado: z.string().max(50).optional().nullable(),
+
   // Contenido clínico
-  diagnostico: z.string().min(1, 'El diagnóstico es requerido'),
-  estudios_pedidos: z.string().min(1, 'Indicá al menos un estudio'),
-  indicaciones: z.string().optional().nullable(),
-  fecha_pedido: z.string().optional(),
+  diagnostico: z
+    .string()
+    .min(1, 'El diagnóstico es requerido')
+    .max(2000, 'Máximo 2000 caracteres'),
+  estudios_pedidos: z
+    .string()
+    .min(1, 'Indicá al menos un estudio')
+    .max(2000, 'Máximo 2000 caracteres'),
+  indicaciones: z.string().max(2000, 'Máximo 2000 caracteres').optional().nullable(),
+
+  // fecha_pedido: validamos que sea fecha real si se proporciona
+  fecha_pedido: z
+    .string()
+    .refine((v) => !v || isValidDateStr(v), 'Fecha de pedido inválida')
+    .optional(),
 })
 
 export type PedidoFormValues = z.infer<typeof pedidoSchema>
 
-// ── CERTIFICADO MÉDICO ────────────────────────────────────────
+// ── CERTIFICADO MÉDICO ────────────────────────────────────────────────────────
 
 export const CERTIFICADO_TIPOS = [
   'aptitud_fisica',
@@ -42,32 +71,62 @@ export const CERTIFICADO_TIPO_LABELS: Record<CertificadoTipo, string> = {
 export const certificadoSchema = z
   .object({
     paciente_id: z.string().uuid({ message: 'Seleccioná un paciente válido' }),
-    // Snapshot
-    paciente_nombre: z.string().min(1, 'Requerido'),
-    paciente_dni: z.string().min(1, 'Requerido'),
-    paciente_dob: z.string().min(1, 'Requerido'),
-    obra_social_nombre: z.string().optional().nullable(),
-    numero_afiliado: z.string().optional().nullable(),
+
+    // Snapshot — con límites
+    paciente_nombre: z.string().min(1, 'Requerido').max(150),
+    paciente_dni: z
+      .string()
+      .min(1, 'Requerido')
+      .max(8)
+      .regex(dniRegex, 'El DNI debe contener entre 7 y 8 dígitos'),
+    paciente_dob: z
+      .string()
+      .min(1, 'Requerido')
+      .refine(isValidDateStr, 'Fecha de nacimiento inválida'),
+
+    obra_social_nombre: z.string().max(150).optional().nullable(),
+    numero_afiliado: z.string().max(50).optional().nullable(),
+
     // Tipo
     tipo: z.enum(CERTIFICADO_TIPOS),
-    tipo_descripcion: z.string().optional().nullable(),
+    tipo_descripcion: z.string().max(200).optional().nullable(),
+
     // Contenido
-    contenido: z.string().min(10, 'El contenido debe tener al menos 10 caracteres'),
+    contenido: z
+      .string()
+      .min(10, 'El contenido debe tener al menos 10 caracteres')
+      .max(5000, 'Máximo 5000 caracteres'),
+
     // Reposo (condicional)
-    dias_reposo: z.coerce.number().int().min(1).optional().nullable(),
-    fecha_inicio_reposo: z.string().optional().nullable(),
-    // Fechas
-    fecha_certificado: z.string().optional(),
-    valido_hasta: z.string().optional().nullable(),
+    dias_reposo: z.coerce.number().int().min(1).max(365).optional().nullable(),
+    fecha_inicio_reposo: z
+      .string()
+      .refine(
+        (v) => !v || isValidDateStr(v),
+        'Fecha de inicio de reposo inválida'
+      )
+      .optional()
+      .nullable(),
+
+    // Fechas del documento
+    fecha_certificado: z
+      .string()
+      .refine((v) => !v || isValidDateStr(v), 'Fecha de certificado inválida')
+      .optional(),
+    valido_hasta: z
+      .string()
+      .refine((v) => !v || isValidDateStr(v), 'Fecha de validez inválida')
+      .optional()
+      .nullable(),
   })
   .transform((data) => ({
     ...data,
-    dias_reposo: data.tipo === 'reposo' ? data.dias_reposo : null,
-    fecha_inicio_reposo: data.tipo === 'reposo' ? data.fecha_inicio_reposo : null,
-    tipo_descripcion: data.tipo === 'otro' ? data.tipo_descripcion : null,
-    valido_hasta: data.valido_hasta === '' ? null : data.valido_hasta,
-    fecha_inicio_reposo_clean:
-      data.fecha_inicio_reposo === '' ? null : data.fecha_inicio_reposo,
+    dias_reposo:           data.tipo === 'reposo' ? data.dias_reposo : null,
+    fecha_inicio_reposo:   data.tipo === 'reposo' ? (data.fecha_inicio_reposo === '' ? null : data.fecha_inicio_reposo) : null,
+    tipo_descripcion:      data.tipo === 'otro'   ? data.tipo_descripcion : null,
+    valido_hasta:          data.valido_hasta === '' ? null : data.valido_hasta,
+    // Campo auxiliar usado internamente (no se inserta en la DB)
+    fecha_inicio_reposo_clean: data.fecha_inicio_reposo === '' ? null : data.fecha_inicio_reposo,
   }))
 
 export type CertificadoFormValues = z.infer<typeof certificadoSchema>

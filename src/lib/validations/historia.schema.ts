@@ -2,17 +2,17 @@ import * as z from 'zod'
 
 export const historiaSchema = z
   .object({
-    antecedentes_patologicos: z.string().optional().nullable(),
-    medicacion_diaria: z.string().optional().nullable(),
-    habitos_toxicos: z.string().optional().nullable(),
-    actividad_fisica: z.string().optional().nullable(),
-    actividad_laboral: z.string().optional().nullable(),
-    antecedentes_quirurgicos: z.string().optional().nullable(),
-    clinica_actual: z.string().optional().nullable(),
-    examen_fisico: z.string().optional().nullable(),
-    laboratorio: z.string().optional().nullable(),
-    estudios_complementarios: z.string().optional().nullable(),
-    conducta: z.string().optional().nullable(),
+    antecedentes_patologicos: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    medicacion_diaria: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    habitos_toxicos: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    actividad_fisica: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    actividad_laboral: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    antecedentes_quirurgicos: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    clinica_actual: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    examen_fisico: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    laboratorio: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    estudios_complementarios: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
+    conducta: z.string().max(5000, 'Máximo 5000 caracteres').optional().nullable(),
 
     proximo_control: z
       .string()
@@ -40,7 +40,7 @@ export const historiaSchema = z
         z.coerce
           .number()
           .min(30, 'La talla debe ser mayor a 30 cm')
-          .max(250, 'La talla ingresada parece incorrecta (máx. 250 cm)'),
+          .max(250, 'La talla ingresada parece incorrecto (máx. 250 cm)'),
         z.literal(''),
       ])
       .optional()
