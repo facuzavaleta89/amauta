@@ -14,6 +14,7 @@ import { Breadcrumb } from './breadcrumb'
 import { NotificacionesMedico } from './notificaciones-medico'
 import { LogOut, Menu, User } from 'lucide-react'
 import type { UserRole } from '@/types/roles'
+import Link from 'next/link'
 
 interface Solicitud {
   id: string
@@ -110,10 +111,11 @@ export function Header({
                 <p className="text-xs text-primary font-normal mt-0.5">{roleLabel}</p>
               </div>
             </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="gap-2 text-sm cursor-pointer">
-              <User className="h-4 w-4 text-muted-foreground" />
-              Mi perfil
+            <DropdownMenuItem asChild className="gap-2 text-sm cursor-pointer">
+              <Link href="/perfil">
+                <User className="h-4 w-4 text-muted-foreground" />
+                Mi perfil
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

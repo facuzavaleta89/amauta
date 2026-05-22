@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { PedidoPDFTemplate } from '@/lib/pdf/pedido-template'
 import React from 'react'
@@ -28,10 +29,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       return new NextResponse('Pedido no encontrado', { status: 404 })
     }
 
-    // Cargar datos del médico firmante
-    const { data: medico } = await supabase
+    // Cargar datos del médico firmante con admin client para evitar RLS
+    const admin = createAdminClient()
+    const { data: medico } = await admin
       .from('profiles')
-      .select('full_name, matricula')
+      .select('full_name, matricula, firma_url')
       .eq('id', pedido.firmado_por)
       .single()
 
@@ -41,6 +43,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         medico: {
           full_name: medico?.full_name ?? 'Médico',
           matricula: medico?.matricula ?? null,
+          firma_url: medico?.firma_url ?? null,
         },
       }) as React.ReactElement<DocumentProps>
     )

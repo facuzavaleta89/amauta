@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { PedidoDocView } from '@/components/pedidos/pedido-pdf'
 import type { Metadata } from 'next'
@@ -36,10 +37,11 @@ export default async function PedidoDetailPage({ params }: Props) {
 
   if (error || !pedido) notFound()
 
-  // Cargar datos del médico firmante
-  const { data: medico } = await supabase
+  // Cargar datos del médico firmante con admin client para evitar RLS restrictivo sobre perfiles
+  const admin = createAdminClient()
+  const { data: medico } = await admin
     .from('profiles')
-    .select('full_name, matricula')
+    .select('full_name, matricula, firma_url')
     .eq('id', pedido.firmado_por)
     .single()
 
@@ -58,6 +60,7 @@ export default async function PedidoDetailPage({ params }: Props) {
       pedido={pedido}
       medicoNombre={medico?.full_name ?? 'Médico'}
       medicoMatricula={medico?.matricula ?? null}
+      medicoFirma={medico?.firma_url ?? null}
       userRole={userRole}
     />
   )

@@ -5,6 +5,7 @@ import {
   View,
   StyleSheet,
   Font,
+  Image,
 } from '@react-pdf/renderer'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -159,8 +160,14 @@ const s = StyleSheet.create({
   },
   // Firma
   firmaContainer: {
-    marginTop: 40,
+    marginTop: 20,
     alignItems: 'flex-end',
+  },
+  firmaImage: {
+    width: 110,
+    height: 45,
+    marginBottom: 2,
+    marginRight: 35,
   },
   firmaLinea: {
     width: 180,
@@ -220,6 +227,7 @@ interface PedidoPDFProps {
   medico: {
     full_name: string
     matricula?: string | null
+    firma_url?: string | null
   }
 }
 
@@ -343,6 +351,9 @@ export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
 
         {/* Firma */}
         <View style={s.firmaContainer}>
+          {medico.firma_url && (
+            <Image src={medico.firma_url} style={s.firmaImage} />
+          )}
           <View style={s.firmaLinea} />
           <Text style={s.firmaNombre}>{medico.full_name}</Text>
           {medico.matricula && (

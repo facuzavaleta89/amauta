@@ -31,6 +31,7 @@ interface CertificadoDocViewProps {
   certificado: Certificado
   medicoNombre: string
   medicoMatricula?: string | null
+  medicoFirma?: string | null
   userRole: 'medico' | 'asistente'
 }
 
@@ -47,6 +48,7 @@ export function CertificadoDocView({
   certificado,
   medicoNombre,
   medicoMatricula,
+  medicoFirma,
   userRole,
 }: CertificadoDocViewProps) {
   const router = useRouter()
@@ -287,8 +289,17 @@ export function CertificadoDocView({
 
           {/* Firma */}
           <div className="flex justify-end pt-6">
-            <div className="text-right min-w-[200px]">
-              <div className="border-b border-foreground mb-2" />
+            <div className="text-right min-w-[200px] flex flex-col items-center">
+              {medicoFirma && (
+                <div className="h-14 w-auto flex items-center justify-center mb-1">
+                  <img
+                    src={medicoFirma}
+                    alt="Firma digital"
+                    className="max-h-14 w-auto object-contain select-none pointer-events-none"
+                  />
+                </div>
+              )}
+              <div className="border-b border-foreground w-full mb-2" />
               <p className="text-sm font-semibold text-foreground">{medicoNombre}</p>
               {medicoMatricula && (
                 <p className="text-xs text-muted-foreground">{medicoMatricula}</p>

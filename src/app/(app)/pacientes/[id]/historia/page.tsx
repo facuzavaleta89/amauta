@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { HistoriaClinicaForm } from '@/components/pacientes/historia-clinica-form'
 
 interface Props {
@@ -13,6 +13,20 @@ export const metadata = {
 export default async function HistoriaClinicaPage({ params }: Props) {
   const { id } = await params
   const supabase = await createClient()
+
+  // Verificar permisos del usuario actual
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) notFound()
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role, puede_ver_historias')
+    .eq('id', user.id)
+    .single()
+
+  if (profile?.role === 'asistente' && profile?.puede_ver_historias === false) {
+    redirect('/dashboard')
+  }
 
   // Buscar paciente
   const { data: paciente, error: pacienteError } = await supabase
