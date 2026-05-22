@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { difusionSchema } from '@/lib/validations/difusion.schema'
+import { difusionSchema, DIFUSION_ESTADOS } from '@/lib/validations/difusion.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
@@ -26,7 +26,12 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const estado = searchParams.get('estado')
-    const q = searchParams.get('q')
+    const rawQ = searchParams.get('q')
+    const q = rawQ ? rawQ.slice(0, 100) : null
+
+    if (estado && estado !== 'todos' && !(DIFUSION_ESTADOS as readonly string[]).includes(estado)) {
+      return NextResponse.json({ error: 'Estado de difusión inválido' }, { status: 400 })
+    }
 
     let query = supabase
       .from('difusion_posts')

@@ -32,7 +32,8 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const pacienteId = searchParams.get('paciente_id')
-    const q = searchParams.get('q')
+    const rawQ = searchParams.get('q')
+    const q = rawQ ? rawQ.slice(0, 100) : null
 
     let query = supabase
       .from('pedidos')

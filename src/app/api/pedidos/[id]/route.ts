@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { pedidoSchema } from '@/lib/validations/pedido.schema'
+import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 interface RouteParams {
@@ -21,6 +22,12 @@ async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClien
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de pedido inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
@@ -28,10 +35,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const rl = rateLimit(request, { key: `pedidos_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
+    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+
     const { data, error } = await supabase
       .from('pedidos')
       .select('*')
       .eq('id', id)
+      .eq('firmado_por', tenantMedicoId)
       .single()
 
     if (error || !data) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
@@ -49,12 +60,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de pedido inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
     const rl = rateLimit(request, { key: `pedidos_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
+
+    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+
+    // Verificar tenant
+    const { data: existing, error: findError } = await supabase
+      .from('pedidos')
+      .select('id')
+      .eq('id', id)
+      .eq('firmado_por', tenantMedicoId)
+      .single()
+
+    if (findError || !existing) {
+      return NextResponse.json({ error: 'Pedido no encontrado o sin permisos' }, { status: 404 })
+    }
 
     const body = await request.json()
 
@@ -72,6 +104,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       .from('pedidos')
       .update(result.data)
       .eq('id', id)
+      .eq('firmado_por', tenantMedicoId)
       .select()
       .single()
 
@@ -89,6 +122,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de pedido inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })

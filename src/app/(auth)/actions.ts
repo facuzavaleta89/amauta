@@ -15,6 +15,14 @@ export async function login(
     return { error: 'Completá todos los campos.' }
   }
 
+  if (email.length > 254 || !email.includes('@')) {
+    return { error: 'Formato de email inválido.' }
+  }
+
+  if (password.length > 128) {
+    return { error: 'La contraseña es demasiado larga.' }
+  }
+
   // Rate limit: 10 intentos por IP+email cada 15 minutos
   const ip = await getIpFromHeaders()
   const { success, retryAfter } = await rateLimitAction({
@@ -55,6 +63,22 @@ export async function registerUser(
 
   if (!email || !password || !fullName || !role) {
     return { error: 'Completá todos los campos obligatorios.' }
+  }
+
+  const cleanedEmail = email.trim()
+  const cleanedName = fullName.trim()
+
+  if (cleanedEmail.length > 254 || !cleanedEmail.includes('@')) {
+    return { error: 'Formato de email inválido.' }
+  }
+  if (password.length < 6 || password.length > 128) {
+    return { error: 'La contraseña debe tener entre 6 y 128 caracteres.' }
+  }
+  if (cleanedName.length < 3 || cleanedName.length > 100) {
+    return { error: 'El nombre completo debe tener entre 3 y 100 caracteres.' }
+  }
+  if (!/^[a-zA-ZÁÉÍÓÚÜÑñ\s'\-\.]+$/.test(cleanedName)) {
+    return { error: 'El nombre completo contiene caracteres no válidos.' }
   }
 
   // Validar que el rol sea uno de los valores permitidos (defensa contra manipulación de FormData)

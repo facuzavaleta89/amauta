@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { z } from 'zod'
 
 // ─────────────────────────────────────────────────────────────
 // Buscar médicos por email o nombre (usa service role para
@@ -16,6 +17,8 @@ export async function buscarMedicos(query: string): Promise<{
   if (!query || query.trim().length < 3) {
     return { data: [], error: null }
   }
+
+  const sanitizedQuery = query.trim().slice(0, 100)
 
   // Verificar sesión
   const supabase = await createClient()
@@ -36,7 +39,7 @@ export async function buscarMedicos(query: string): Promise<{
   // Usar admin client para la búsqueda (bypasea RLS)
   const admin = createAdminClient()
 
-  const trimmed = query.trim().toLowerCase()
+  const trimmed = sanitizedQuery.toLowerCase()
   const isEmailSearch = trimmed.includes('@')
 
   // Obtener auth users para enriquecer con emails
@@ -90,6 +93,18 @@ export async function enviarSolicitud(
   medicoId: string,
   mensaje?: string
 ): Promise<{ error: string | null }> {
+  // Validar medicoId UUID
+  const idValidation = z.string().uuid().safeParse(medicoId)
+  if (!idValidation.success) {
+    return { error: 'ID de médico inválido.' }
+  }
+
+  // Validar longitud del mensaje
+  const cleanedMsg = mensaje?.trim() || null
+  if (cleanedMsg && cleanedMsg.length > 1000) {
+    return { error: 'El mensaje es demasiado largo (máximo 1000 caracteres).' }
+  }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'No autenticado.' }
@@ -111,7 +126,7 @@ export async function enviarSolicitud(
   const { error } = await supabase.from('solicitudes_asistente').insert({
     solicitante_id: user.id,
     medico_id: medicoId,
-    mensaje: mensaje?.trim() || null,
+    mensaje: cleanedMsg,
   })
 
   if (error) {
@@ -184,6 +199,16 @@ export async function responderSolicitud(
   solicitudId: string,
   decision: 'aprobada' | 'rechazada'
 ): Promise<{ error: string | null }> {
+  // Validar solicitudId UUID
+  const idValidation = z.string().uuid().safeParse(solicitudId)
+  if (!idValidation.success) {
+    return { error: 'ID de solicitud inválido.' }
+  }
+
+  if (decision !== 'aprobada' && decision !== 'rechazada') {
+    return { error: 'Decisión inválida.' }
+  }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'No autenticado.' }

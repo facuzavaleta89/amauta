@@ -20,12 +20,29 @@ export const DIFUSION_CANAL_LABELS: Record<DifusionCanal, string> = {
 }
 
 export const difusionBaseSchema = z.object({
-  titulo: z.string().min(3, 'El título debe tener al menos 3 caracteres'),
-  contenido: z.string().min(10, 'El contenido debe ser un poco más largo (mín. 10 caracteres)'),
+  titulo: z
+    .string()
+    .min(3, 'El título debe tener al menos 3 caracteres')
+    .max(200, 'El título no puede superar los 200 caracteres')
+    .trim(),
+  contenido: z
+    .string()
+    .min(10, 'El contenido debe ser un poco más largo (mín. 10 caracteres)')
+    .max(10000, 'El contenido no puede superar los 10.000 caracteres')
+    .trim(),
   estado: z.enum(DIFUSION_ESTADOS).default('borrador'),
   canal: z.enum(DIFUSION_CANALES).default('email'),
-  asunto_email: z.string().optional().nullable(),
-  imagen_path: z.string().optional().nullable(),
+  asunto_email: z
+    .string()
+    .max(200, 'El asunto de email no puede superar los 200 caracteres')
+    .optional()
+    .nullable()
+    .transform((val) => val?.trim() || null),
+  imagen_path: z
+    .string()
+    .max(500, 'La ruta de la imagen es demasiado larga')
+    .optional()
+    .nullable(),
 })
 
 export const difusionSchema = difusionBaseSchema.refine((data) => {

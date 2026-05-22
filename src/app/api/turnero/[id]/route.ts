@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { turnoUpdateSchema } from '@/lib/validations/turno.schema'
+import { turnoUpdateWithDatesSchema } from '@/lib/validations/turno.schema'
+import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 interface RouteContext {
@@ -10,6 +11,12 @@ interface RouteContext {
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de turno inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
@@ -46,7 +53,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     const body = await request.json()
-    const result = turnoUpdateSchema.safeParse(body)
+    // Usar el esquema de actualización que tiene los refines cruzados si vienen ambas fechas
+    const result = turnoUpdateWithDatesSchema.safeParse(body)
     
     if (!result.success) {
       return NextResponse.json(
@@ -106,6 +114,12 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 export async function DELETE(request: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
+
+    const idValidation = uuidSchema.safeParse(id)
+    if (!idValidation.success) {
+      return NextResponse.json({ error: 'ID de turno inválido' }, { status: 400 })
+    }
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 

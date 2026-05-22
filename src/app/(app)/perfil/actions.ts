@@ -20,12 +20,28 @@ export async function actualizarPerfil(
     if (cleanedName.length < 3) {
       return { error: 'El nombre debe tener al menos 3 caracteres.' }
     }
+    if (cleanedName.length > 100) {
+      return { error: 'El nombre no puede tener más de 100 caracteres.' }
+    }
+    if (!/^[a-zA-ZÁÉÍÓÚÜÑñ\s'\-\.]+$/.test(cleanedName)) {
+      return { error: 'El nombre contiene caracteres no válidos.' }
+    }
+
+    const cleanedMatricula = matricula?.trim() || null
+    if (cleanedMatricula) {
+      if (cleanedMatricula.length > 20) {
+        return { error: 'La matrícula no puede superar los 20 caracteres.' }
+      }
+      if (!/^[a-zA-Z0-9\s\-\/\.]+$/.test(cleanedMatricula)) {
+        return { error: 'La matrícula contiene caracteres no válidos.' }
+      }
+    }
 
     const { error } = await supabase
       .from('profiles')
       .update({
         full_name: cleanedName,
-        matricula: matricula?.trim() || null,
+        matricula: cleanedMatricula,
       })
       .eq('id', user.id)
 
@@ -59,6 +75,15 @@ export async function guardarFirma(
 
     if (profile?.role !== 'medico') {
       return { error: 'Solo los médicos pueden tener una firma digital registrada.' }
+    }
+
+    if (base64Image) {
+      if (base64Image.length > 700000) {
+        return { error: 'La firma es demasiado pesada (máximo 500 KB).' }
+      }
+      if (!/^data:image\/(png|jpeg|jpg|svg\+xml);base64,/.test(base64Image)) {
+        return { error: 'Formato de imagen inválido (solo PNG, JPG o SVG en base64).' }
+      }
     }
 
     const { error } = await supabase
