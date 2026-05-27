@@ -9,6 +9,7 @@ import esLocale from '@fullcalendar/core/locales/es'
 import { toast } from 'sonner'
 import { Loader2, CalendarPlus, Ban, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 import { TurnoFormModal } from './turno-form'
 import { BlockSlotModal } from './block-slot-modal'
@@ -91,6 +92,7 @@ export function CalendarView() {
   const [selectedSlot, setSelectedSlot] = useState<{ start: string; end: string } | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null)
   const [currentView, setCurrentView] = useState('timeGridWeek')
+  const [creationMode, setCreationMode] = useState<'turno' | 'bloqueo'>('turno')
 
   // Cambiar vista al detectar cambio de tamaño
   useEffect(() => {
@@ -143,7 +145,11 @@ export function CalendarView() {
   const handleDateSelect = (selectInfo: any) => {
     setSelectedEvent(null)
     setSelectedSlot({ start: selectInfo.startStr, end: selectInfo.endStr })
-    setTurnoModalOpen(true)
+    if (creationMode === 'bloqueo') {
+      setBlockModalOpen(true)
+    } else {
+      setTurnoModalOpen(true)
+    }
     selectInfo.view.calendar.unselect()
   }
 
@@ -225,29 +231,35 @@ export function CalendarView() {
         <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
+            variant={creationMode === 'turno' ? 'default' : 'outline'}
             onClick={() => {
-              setSelectedEvent(null)
-              setSelectedSlot(null)
-              setTurnoModalOpen(true)
+              setCreationMode('turno')
+              toast.info('Modo Turno activo. Hacé clic o arrastrá en la agenda para agendar un turno.')
             }}
-            className="gap-1.5 h-8 text-xs"
+            className={cn(
+              "gap-1.5 h-8 text-xs font-semibold transition-all",
+              creationMode === 'turno' && "bg-emerald-600 hover:bg-emerald-700 text-white border-transparent"
+            )}
           >
             <CalendarPlus className="w-3.5 h-3.5" />
-            <span className="hidden xs:inline">Nuevo</span> turno
+            Turno
           </Button>
           <Button
             size="sm"
-            variant="outline"
+            variant={creationMode === 'bloqueo' ? 'default' : 'outline'}
             onClick={() => {
-              setSelectedEvent(null)
-              setSelectedSlot(null)
-              setBlockModalOpen(true)
+              setCreationMode('bloqueo')
+              toast.info('Modo Bloquear horario activo. Hacé clic o arrastrá en la agenda para bloquear.')
             }}
-            className="gap-1.5 h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
+            className={cn(
+              "gap-1.5 h-8 text-xs font-semibold transition-all",
+              creationMode === 'bloqueo'
+                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90 border-transparent"
+                : "text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
+            )}
           >
             <Ban className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Bloquear horario</span>
-            <span className="sm:hidden">Bloquear</span>
+            Bloquear horario
           </Button>
         </div>
         <Button
