@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Loader2, CalendarPlus, Trash2 } from 'lucide-react'
+import { Loader2, CalendarPlus, Trash2, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
 
@@ -252,7 +253,19 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
               name="paciente_nombre_libre"
               render={({ field }) => (
                 <FormItem className="relative" ref={wrapperRef}>
-                  <FormLabel>Paciente</FormLabel>
+                  <div className="flex items-center justify-between">
+                    <FormLabel>Paciente</FormLabel>
+                    {initialData?.paciente_id && (
+                      <Link
+                        href={`/pacientes/${initialData.paciente_id}/historia`}
+                        className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
+                        target="_blank"
+                      >
+                        <FileText className="h-3 w-3" />
+                        Ver historia clínica
+                      </Link>
+                    )}
+                  </div>
                   <FormControl>
                     <Input 
                       placeholder="Buscar por nombre o ingresá uno libre..." 
