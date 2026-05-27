@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { Users, CalendarDays, TrendingUp, UserPlus } from 'lucide-react'
+import { Users, CalendarDays, TrendingUp, ClipboardList } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 async function getStats() {
@@ -13,7 +13,7 @@ async function getStats() {
     { count: totalPacientes },
     { count: turnosHoy },
     { count: turnosSemana },
-    { count: nuevosMes },
+    { count: consultasMes },
   ] = await Promise.all([
     supabase.from('pacientes').select('*', { count: 'exact', head: true }),
     supabase
@@ -28,7 +28,7 @@ async function getStats() {
       .gte('fecha_inicio', weekStart.toISOString())
       .not('estado', 'eq', 'cancelado'),
     supabase
-      .from('pacientes')
+      .from('consultas')
       .select('*', { count: 'exact', head: true })
       .gte('created_at', monthStart),
   ])
@@ -37,7 +37,7 @@ async function getStats() {
     totalPacientes: totalPacientes ?? 0,
     turnosHoy: turnosHoy ?? 0,
     turnosSemana: turnosSemana ?? 0,
-    nuevosMes: nuevosMes ?? 0,
+    consultasMes: consultasMes ?? 0,
   }
 }
 
@@ -70,10 +70,10 @@ export async function StatsCards() {
       bg: 'bg-teal-50',
     },
     {
-      title: 'Nuevos este mes',
-      value: stats.nuevosMes,
-      icon: UserPlus,
-      description: 'Pacientes nuevos',
+      title: 'Consultas este mes',
+      value: stats.consultasMes,
+      icon: ClipboardList,
+      description: 'Consultas registradas',
       color: 'text-emerald-600',
       bg: 'bg-emerald-50',
     },
