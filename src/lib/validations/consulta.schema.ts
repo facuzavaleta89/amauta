@@ -55,6 +55,15 @@ export const consultaSchema = z
     // Estado
     estado: z.enum(['borrador', 'finalizada']).default('borrador'),
   })
+  .refine((data) => {
+    if (data.proximo_turno_sugerido && data.proximo_turno_sugerido.trim() !== '') {
+      return data.proximo_turno_sugerido.includes('T') && data.proximo_turno_sugerido.includes(':');
+    }
+    return true;
+  }, {
+    message: 'Debés ingresar la fecha y la hora completa para el próximo turno sugerido.',
+    path: ['proximo_turno_sugerido']
+  })
   .transform((data) => ({
     ...data,
     peso_kg:                data.peso_kg === '' ? null : data.peso_kg,

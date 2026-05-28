@@ -419,7 +419,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancelar</AlertDialogCancel>
                       <AlertDialogAction
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        className="bg-destructive text-white hover:bg-destructive/90 hover:text-white"
                         onClick={onDelete}
                       >
                         Sí, eliminar

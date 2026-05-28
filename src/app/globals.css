@@ -28,6 +28,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -77,6 +78,7 @@
 
   /* Destructivo */
   --destructive:        oklch(0.58 0.22 27.3);
+  --destructive-foreground: oklch(0.99 0.004 155);
 
   /* Bordes e inputs */
   --border:             oklch(0.86 0.025 155);   /* Bordes más gruesos/notorios */
@@ -121,6 +123,7 @@
   --accent:             oklch(0.25 0.025 155);
   --accent-foreground:  oklch(0.96 0.008 155);
   --destructive:        oklch(0.70 0.19 22.2);
+  --destructive-foreground: oklch(0.99 0.008 155);
   --border:             oklch(1 0 0 / 10%);
   --input:              oklch(1 0 0 / 12%);
   --ring:               oklch(0.65 0.13 155);
@@ -206,6 +209,8 @@
     --fc-today-bg-color: oklch(0.52 0.13 155 / 5%);
     font-family: inherit;
   }
+
+
 
   /* Botones de navegación */
   .fc .fc-button-group {
@@ -420,3 +425,17 @@
     color: oklch(0.40 0.09 55);
   }
 }
+
+/* ── Overrides FUERA de @layer: máxima especificidad ──────────────
+   FullCalendar aplica --fc-highlight-color con sus propias reglas.
+   Los selectores planos (sin @layer) siempre ganan la cascada.    */
+.calendar-container.mode-bloqueo .fc .fc-highlight {
+  background-color: oklch(0.58 0.15 50 / 22%) !important;
+  border: 1px dashed oklch(0.55 0.12 55 / 55%) !important;
+}
+.calendar-container.mode-turno .fc .fc-highlight {
+  background-color: oklch(0.52 0.13 155 / 18%) !important;
+}
+
+/* Texto blanco garantizado en botones sólidos destructivos */
+.bg-destructive { color: #ffffff !important; }

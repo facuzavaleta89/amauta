@@ -66,6 +66,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Este bloqueo se solapa con turnos ya agendados. Cancele o mueva los turnos primero.' }, { status: 409 })
     }
 
+    // Verificar solapamiento con otros bloqueos existentes
+    const { data: superpuestosBloqueos, error: errB } = await supabase
+      .from('bloqueos_agenda')
+      .select('id')
+      .eq('medico_id', tenantMedicoId)
+      .lt('fecha_inicio', b.fecha_fin)
+      .gt('fecha_fin', b.fecha_inicio)
+
+    if (errB) throw errB
+
+    if (superpuestosBloqueos && superpuestosBloqueos.length > 0) {
+      return NextResponse.json({ error: 'Este bloqueo se solapa con otro bloqueo ya existente en la agenda.' }, { status: 409 })
+    }
+
     const { data: nuevoBloqueo, error: insertError } = await supabase
       .from('bloqueos_agenda')
       .insert({

@@ -30,9 +30,10 @@ function useIsMobile(breakpoint = 768) {
 }
 
 // ── Renderizado custom — vista semana/día ────────────────────
-function TurnoEventContent({ event }: { event: any }) {
+function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 'turno' | 'bloqueo' }) {
   const { type } = event.extendedProps
-  const isBloqueo = type === 'bloqueo'
+  // Si no tiene type, es un mirror de selección. Usamos el creationMode activo.
+  const isBloqueo = type === 'bloqueo' || (!type && creationMode === 'bloqueo')
 
   const fmt = (d: Date | null) =>
     d
@@ -66,9 +67,9 @@ function TurnoEventContent({ event }: { event: any }) {
 }
 
 // ── Renderizado custom — vista mes ───────────────────────────
-function DayGridEventContent({ event }: { event: any }) {
+function DayGridEventContent({ event, creationMode }: { event: any; creationMode: 'turno' | 'bloqueo' }) {
   const { type } = event.extendedProps
-  const isBloqueo = type === 'bloqueo'
+  const isBloqueo = type === 'bloqueo' || (!type && creationMode === 'bloqueo')
   const startTime = event.start
     ? event.start.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })
     : ''
@@ -254,7 +255,7 @@ export function CalendarView() {
             className={cn(
               "gap-1.5 h-8 text-xs font-semibold transition-all",
               creationMode === 'bloqueo'
-                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90 border-transparent"
+                ? "bg-destructive text-white hover:bg-destructive/90 border-transparent hover:text-white"
                 : "text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
             )}
           >
@@ -278,7 +279,7 @@ export function CalendarView() {
         </Button>
       </div>
 
-      <div className="calendar-container h-[calc(100%-3rem)] w-full">
+      <div className={cn("calendar-container h-[calc(100%-3rem)] w-full", creationMode === 'bloqueo' ? 'mode-bloqueo' : 'mode-turno')}>
         <FullCalendar
           ref={calendarRef}
           plugins={[timeGridPlugin, interactionPlugin, dayGridPlugin]}
@@ -318,9 +319,9 @@ export function CalendarView() {
           slotDuration="00:15:00"
           eventContent={(arg) => {
             if (arg.view.type === 'dayGridMonth') {
-              return <DayGridEventContent event={arg.event} />
+              return <DayGridEventContent event={arg.event} creationMode={creationMode} />
             }
-            return <TurnoEventContent event={arg.event} />
+            return <TurnoEventContent event={arg.event} creationMode={creationMode} />
           }}
           viewDidMount={(arg) => setCurrentView(arg.view.type)}
           datesSet={(arg) => setCurrentView(arg.view.type)}
