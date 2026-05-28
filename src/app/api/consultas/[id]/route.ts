@@ -97,6 +97,41 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     const { paciente_id: _pid, ...updates } = result.data
 
+    const nuevoTurno = updates.proximo_turno_sugerido
+    if (nuevoTurno && nuevoTurno !== existing.proximo_turno_sugerido) {
+      const tieneHora = nuevoTurno.includes('T') && nuevoTurno.includes(':');
+      if (!tieneHora) {
+        return NextResponse.json({ error: 'Debés ingresar una fecha y hora completa para el próximo turno sugerido.' }, { status: 400 })
+      }
+
+      const fechaBase = new Date(nuevoTurno)
+      if (isNaN(fechaBase.getTime())) {
+        return NextResponse.json({ error: 'La fecha y hora del próximo turno sugerido no es válida.' }, { status: 400 })
+      }
+
+      const fechaFin = new Date(fechaBase.getTime() + 30 * 60 * 1000)
+
+      const { data: overT } = await supabase
+        .from('turnos')
+        .select('id')
+        .eq('medico_id', ctx.tenantMedicoId)
+        .lt('fecha_inicio', fechaFin.toISOString())
+        .gt('fecha_fin', fechaBase.toISOString())
+
+      const { data: overB } = await supabase
+        .from('bloqueos_agenda')
+        .select('id')
+        .eq('medico_id', ctx.tenantMedicoId)
+        .lt('fecha_inicio', fechaFin.toISOString())
+        .gt('fecha_fin', fechaBase.toISOString())
+
+      if ((overT && overT.length > 0) || (overB && overB.length > 0)) {
+        return NextResponse.json({
+          error: 'El próximo turno sugerido se solapa con otro turno o bloqueo en la agenda. Por favor, seleccioná otro horario.'
+        }, { status: 409 })
+      }
+    }
+
     const { data: updated, error: updateError } = await supabase
       .from('consultas')
       .update(updates)
@@ -106,8 +141,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     if (updateError) throw updateError
 
-    // Si se actualiza proximo_turno_sugerido y es distinto al anterior, crear turno
-    const nuevoTurno = result.data.proximo_turno_sugerido
+    // Si todo salió bien y se actualizó a un nuevo próximo turno sugerido, creamos el turno
     if (nuevoTurno && nuevoTurno !== existing.proximo_turno_sugerido) {
       const pacienteRes = await supabase
         .from('consultas')
@@ -116,8 +150,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .single()
 
       if (pacienteRes.data) {
-        const fechaBase = new Date(`${nuevoTurno}T09:00:00`)
-        const fechaFin  = new Date(`${nuevoTurno}T09:30:00`)
+        const fechaBase = new Date(nuevoTurno)
+        const fechaFin = new Date(fechaBase.getTime() + 30 * 60 * 1000)
+
         await supabase.from('turnos').insert({
           paciente_id:  pacienteRes.data.paciente_id,
           fecha_inicio: fechaBase.toISOString(),

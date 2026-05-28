@@ -82,7 +82,34 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
        }, { status: 403 })
     }
 
-    // 3. Ejecutar actualización con el filtro de ID solamente (para máxima compatibilidad RLS)
+    // 3. Verificar solapamiento si se cambian fechas
+    const inicio = updates.fecha_inicio ?? existing.fecha_inicio
+    const fin    = updates.fecha_fin    ?? existing.fecha_fin
+
+    const { data: overT } = await supabase
+      .from('turnos')
+      .select('id')
+      .eq('medico_id', tenantMedicoId)
+      .lt('fecha_inicio', fin)
+      .gt('fecha_fin', inicio)
+
+    if (overT && overT.length > 0) {
+      return NextResponse.json({ error: 'El bloqueo se solapa con turnos ya agendados.' }, { status: 409 })
+    }
+
+    const { data: overB } = await supabase
+      .from('bloqueos_agenda')
+      .select('id')
+      .eq('medico_id', tenantMedicoId)
+      .neq('id', id)
+      .lt('fecha_inicio', fin)
+      .gt('fecha_fin', inicio)
+
+    if (overB && overB.length > 0) {
+      return NextResponse.json({ error: 'El bloqueo se solapa con otro bloqueo existente.' }, { status: 409 })
+    }
+
+    // 4. Ejecutar actualización
     const { data: updated, error: updateError } = await supabase
       .from('bloqueos_agenda')
       .update(updates)

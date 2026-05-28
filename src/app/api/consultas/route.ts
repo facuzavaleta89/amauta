@@ -93,6 +93,42 @@ export async function POST(request: NextRequest) {
 
     const consulta = result.data
 
+    // ── Validar próximo turno sugerido antes de crear consulta ──
+    if (consulta.proximo_turno_sugerido) {
+      const tieneHora = consulta.proximo_turno_sugerido.includes('T') && consulta.proximo_turno_sugerido.includes(':');
+      if (!tieneHora) {
+        return NextResponse.json({ error: 'Debés ingresar una fecha y hora completa para el próximo turno sugerido.' }, { status: 400 })
+      }
+
+      const fechaBase = new Date(consulta.proximo_turno_sugerido)
+      if (isNaN(fechaBase.getTime())) {
+        return NextResponse.json({ error: 'La fecha y hora del próximo turno sugerido no es válida.' }, { status: 400 })
+      }
+
+      const fechaFin = new Date(fechaBase.getTime() + 30 * 60 * 1000)
+
+      // Verificar solapamiento
+      const { data: overT } = await supabase
+        .from('turnos')
+        .select('id')
+        .eq('medico_id', ctx.tenantMedicoId)
+        .lt('fecha_inicio', fechaFin.toISOString())
+        .gt('fecha_fin', fechaBase.toISOString())
+
+      const { data: overB } = await supabase
+        .from('bloqueos_agenda')
+        .select('id')
+        .eq('medico_id', ctx.tenantMedicoId)
+        .lt('fecha_inicio', fechaFin.toISOString())
+        .gt('fecha_fin', fechaBase.toISOString())
+
+      if ((overT && overT.length > 0) || (overB && overB.length > 0)) {
+        return NextResponse.json({
+          error: 'El próximo turno sugerido se solapa con otro turno o bloqueo en la agenda. Por favor, seleccioná otro horario.'
+        }, { status: 409 })
+      }
+    }
+
     const { data: nueva, error: insertError } = await supabase
       .from('consultas')
       .insert({
@@ -104,10 +140,10 @@ export async function POST(request: NextRequest) {
 
     if (insertError) throw insertError
 
-    // ── Crear turno automático si hay próximo turno sugerido ──
+    // ── Crear turno automático si todo está ok ──
     if (consulta.proximo_turno_sugerido) {
-      const fechaBase = new Date(`${consulta.proximo_turno_sugerido}T09:00:00`)
-      const fechaFin  = new Date(`${consulta.proximo_turno_sugerido}T09:30:00`)
+      const fechaBase = new Date(consulta.proximo_turno_sugerido)
+      const fechaFin = new Date(fechaBase.getTime() + 30 * 60 * 1000)
 
       await supabase.from('turnos').insert({
         paciente_id:  consulta.paciente_id,

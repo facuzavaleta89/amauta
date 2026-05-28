@@ -172,15 +172,29 @@ function ConsultaReadOnly({
       )}
 
       {/* Seguimiento */}
-      {consulta.proximo_turno_sugerido && (
-        <div>
-          <SectionHeader icon={CalendarClock} label="Seguimiento" />
-          <Field
-            label="Próximo control sugerido"
-            value={format(new Date(consulta.proximo_turno_sugerido + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })}
-          />
-        </div>
-      )}
+      {(() => {
+        if (!consulta.proximo_turno_sugerido) return null
+        const tieneHora = consulta.proximo_turno_sugerido.includes('T')
+        const fechaObj = tieneHora
+          ? new Date(consulta.proximo_turno_sugerido)
+          : new Date(consulta.proximo_turno_sugerido + 'T12:00:00')
+
+        if (isNaN(fechaObj.getTime())) return null
+
+        const valorFormateado = tieneHora
+          ? format(fechaObj, "d 'de' MMMM 'de' yyyy 'a las' HH:mm 'hs'", { locale: es })
+          : format(fechaObj, "d 'de' MMMM 'de' yyyy", { locale: es })
+
+        return (
+          <div>
+            <SectionHeader icon={CalendarClock} label="Seguimiento" />
+            <Field
+              label="Próximo control sugerido"
+              value={valorFormateado}
+            />
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -198,6 +212,10 @@ function ConsultaForm({
     const now = new Date()
     now.setSeconds(0, 0)
     return now.toISOString().slice(0, 16)
+  }, [])
+
+  const todayStr = useMemo(() => {
+    return new Date().toISOString().split('T')[0]
   }, [])
 
   const form = useForm<ConsultaFormInput>({
@@ -240,6 +258,32 @@ function ConsultaForm({
     return null
   }, [pesoVal, tallaVal])
 
+  // Extraer valores iniciales para los inputs separados
+  const initialDate = useMemo(() => {
+    if (consulta?.proximo_turno_sugerido && consulta.proximo_turno_sugerido.includes('T')) {
+      return consulta.proximo_turno_sugerido.split('T')[0]
+    }
+    return consulta?.proximo_turno_sugerido || ''
+  }, [consulta])
+
+  const initialTime = useMemo(() => {
+    if (consulta?.proximo_turno_sugerido && consulta.proximo_turno_sugerido.includes('T')) {
+      return consulta.proximo_turno_sugerido.split('T')[1]
+    }
+    return '09:00' // Hora por defecto sugerida
+  }, [consulta])
+
+  const [proximoFecha, setProximoFecha] = useState(initialDate)
+  const [proximoHora, setProximoHora] = useState(initialTime)
+
+  useEffect(() => {
+    if (proximoFecha) {
+      form.setValue('proximo_turno_sugerido', `${proximoFecha}T${proximoHora || '09:00'}`)
+    } else {
+      form.setValue('proximo_turno_sugerido', '')
+    }
+  }, [proximoFecha, proximoHora, form])
+
   async function submitWithEstado(estado: 'borrador' | 'finalizada') {
     const valid = await form.trigger()
     if (!valid) return
@@ -265,8 +309,21 @@ function ConsultaForm({
         throw new Error(err.error || 'Error al guardar')
       }
 
-      const { data } = await res.json()
+      const json = await res.json()
+      const { data, warning } = json
+
       toast.success(estado === 'finalizada' ? 'Consulta finalizada correctamente' : 'Borrador guardado')
+
+      if (warning) {
+        // Mostrar advertencia de solapamiento de turno sin bloquear el flujo
+        setTimeout(() => {
+          toast.warning('Turno no agendado automáticamente', {
+            description: warning,
+            duration: 8000,
+          })
+        }, 400)
+      }
+
       onSaved(data)
     } catch (err: any) {
       toast.error(err.message || 'Ocurrió un error')
@@ -470,18 +527,37 @@ function ConsultaForm({
           {/* ── Sección 6: Seguimiento ── */}
           <div>
             <SectionHeader icon={CalendarClock} label="Seguimiento" />
-            <FormField control={form.control} name="proximo_turno_sugerido" render={({ field }) => (
-              <FormItem className="max-w-xs">
-                <FormLabel>Próximo turno sugerido</FormLabel>
+            <div className="flex flex-wrap items-end gap-3 max-w-md">
+              <FormItem className="flex-1 min-w-[200px]">
+                <FormLabel>Fecha del próximo turno</FormLabel>
                 <FormControl>
-                  <Input type="date" {...field} value={field.value || ''} onChange={(e) => field.onChange(e.target.value)} />
+                  <Input
+                    type="date"
+                    min={todayStr}
+                    value={proximoFecha}
+                    onChange={(e) => setProximoFecha(e.target.value)}
+                  />
                 </FormControl>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Al guardar, se crea automáticamente un turno pendiente en la agenda.
-                </p>
                 <FormMessage />
               </FormItem>
-            )} />
+
+              {proximoFecha && (
+                <FormItem className="w-[120px]">
+                  <FormLabel>Hora sugerida</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="time"
+                      value={proximoHora}
+                      onChange={(e) => setProximoHora(e.target.value)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Si seleccionás una fecha, se creará automáticamente un turno pendiente en la agenda. La hora por defecto es 09:00.
+            </p>
           </div>
 
           {/* ── Acciones ── */}
