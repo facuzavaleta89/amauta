@@ -101,7 +101,10 @@ export async function PATCH(
       .select()
       .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[PATCH /api/difusion/[id]] DB error:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+    }
 
     return NextResponse.json({ data })
   } catch (err) {
@@ -150,7 +153,10 @@ export async function DELETE(
       .eq('id', id)
       .eq('medico_id', tenantMedicoId)
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[DELETE /api/difusion/[id]] DB error:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+    }
 
     return new NextResponse(null, { status: 204 })
   } catch (err) {

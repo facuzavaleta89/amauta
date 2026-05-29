@@ -124,7 +124,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       .select()
       .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[PATCH /api/certificados/[id]] DB error:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+    }
 
     return NextResponse.json({ data })
   } catch (err) {
@@ -166,7 +169,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     const { error } = await supabase.from('certificados').delete().eq('id', id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[DELETE /api/certificados/[id]] DB error:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+    }
 
     return NextResponse.json({ success: true })
   } catch (err) {

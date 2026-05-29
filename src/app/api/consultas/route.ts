@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('[GET /api/consultas]', error)
-    return NextResponse.json({ error: error.message || 'Error del servidor' }, { status: 500 })
+    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }
 
@@ -159,6 +159,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ data: nueva }, { status: 201 })
   } catch (error: any) {
     console.error('[POST /api/consultas]', error)
-    return NextResponse.json({ error: error.message || 'Error del servidor' }, { status: 500 })
+    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }

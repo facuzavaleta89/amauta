@@ -43,7 +43,10 @@ export async function GET(request: NextRequest) {
     if (q) query = query.ilike('titulo', `%${q}%`)
 
     const { data, error } = await query.limit(50)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[difusion] DB error:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+    }
 
     return NextResponse.json({ data })
   } catch (err) {
@@ -80,7 +83,10 @@ export async function POST(request: NextRequest) {
       .select()
       .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[difusion] DB error:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+    }
 
     return NextResponse.json({ data }, { status: 201 })
   } catch (err) {

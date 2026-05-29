@@ -84,6 +84,6 @@ Cuerpo: Hola ${pacienteNombre}, te recordamos que tenés un turno el ${fechaForm
 
   } catch (error: any) {
     console.error('Error cron recordatorios:', error)
-    return NextResponse.json({ error: error.message || 'Error del servidor' }, { status: 500 })
+    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }

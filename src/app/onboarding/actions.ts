@@ -42,48 +42,50 @@ export async function buscarMedicos(query: string): Promise<{
   const trimmed = sanitizedQuery.toLowerCase()
   const isEmailSearch = trimmed.includes('@')
 
-  // Obtener auth users para enriquecer con emails
-  const { data: usersData } = await admin.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  })
+  if (isEmailSearch) {
+    // Búsqueda exacta por email via auth API — no carga todos los usuarios
+    const { data: authUser } = await admin.auth.admin.getUserByEmail(trimmed)
+    if (!authUser?.user) return { data: [], error: null }
 
-  const userEmailMap = new Map(
-    usersData?.users?.map((u) => [u.id, u.email ?? '']) ?? []
-  )
+    const { data: profile } = await admin
+      .from('profiles')
+      .select('id, full_name')
+      .eq('id', authUser.user.id)
+      .eq('role', 'medico')
+      .maybeSingle()
 
-  // Si es búsqueda por email: traemos TODOS los médicos y filtramos en JS
-  // Si es búsqueda por nombre: usamos .ilike() en DB (codifica % correctamente)
-  let profilesQuery = admin
+    if (!profile) return { data: [], error: null }
+
+    return {
+      data: [{ id: profile.id, full_name: profile.full_name, email: authUser.user.email ?? '' }],
+      error: null,
+    }
+  }
+
+  // Búsqueda por nombre: filtra en DB y obtiene emails solo para los resultados
+  const { data: profiles, error } = await admin
     .from('profiles')
     .select('id, full_name')
     .eq('role', 'medico')
+    .ilike('full_name', `%${trimmed}%`)
+    .limit(10)
 
-  if (!isEmailSearch) {
-    profilesQuery = profilesQuery.ilike('full_name', `%${trimmed}%`)
+  if (error || !profiles?.length) {
+    return { data: profiles?.length === 0 ? [] : null, error: error ? 'Error al buscar médicos.' : null }
   }
 
-  const { data, error } = await profilesQuery.limit(isEmailSearch ? 200 : 10)
+  const enriched = await Promise.all(
+    profiles.map(async (p) => {
+      const { data: authUser } = await admin.auth.admin.getUserById(p.id)
+      return {
+        id: p.id,
+        full_name: p.full_name,
+        email: authUser?.user?.email ?? '',
+      }
+    })
+  )
 
-  if (error || !data) {
-    return { data: null, error: 'Error al buscar médicos.' }
-  }
-
-  // Mapear y filtrar
-  const filtered = data
-    .map((p) => ({
-      id: p.id,
-      full_name: p.full_name,
-      email: userEmailMap.get(p.id) ?? '',
-    }))
-    .filter((p) =>
-      isEmailSearch
-        ? p.email.toLowerCase().includes(trimmed)
-        : p.full_name.toLowerCase().includes(trimmed) ||
-          p.email.toLowerCase().includes(trimmed)
-    )
-
-  return { data: filtered, error: null }
+  return { data: enriched, error: null }
 }
 
 // ─────────────────────────────────────────────────────────────
