@@ -5,6 +5,7 @@ import { renderToBuffer } from '@react-pdf/renderer'
 import { PedidoPDFTemplate } from '@/lib/pdf/pedido-template'
 import React from 'react'
 import type { DocumentProps } from '@react-pdf/renderer'
+import { sanitizePdfFilename } from '@/lib/utils'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -48,7 +49,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       }) as React.ReactElement<DocumentProps>
     )
 
-    const nombreArchivo = `pedido_${pedido.paciente_nombre.replace(/\s+/g, '_')}_${pedido.fecha_pedido}.pdf`
+    const rawNombre = `pedido_${pedido.paciente_nombre}_${pedido.fecha_pedido}.pdf`
+    const nombreArchivo = sanitizePdfFilename(rawNombre)
 
     return new NextResponse(buffer as any, {
       status: 200,
