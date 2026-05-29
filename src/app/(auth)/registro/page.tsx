@@ -56,7 +56,7 @@ export default function RegistroPage() {
               id="password"
               name="password"
               type="password"
-              placeholder="Mínimo 6 caracteres"
+              placeholder="Mínimo 12 caracteres"
               required
               disabled={isPending}
               className="h-10"
