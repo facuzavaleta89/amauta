@@ -43,21 +43,21 @@ export async function buscarMedicos(query: string): Promise<{
   const isEmailSearch = trimmed.includes('@')
 
   if (isEmailSearch) {
-    // Búsqueda exacta por email via auth API — no carga todos los usuarios
-    const { data: authUser } = await admin.auth.admin.getUserByEmail(trimmed)
-    if (!authUser?.user) return { data: [], error: null }
+    const { data: listData } = await admin.auth.admin.listUsers({ perPage: 1000 })
+    const foundUser = listData?.users?.find((u) => u.email === trimmed)
+    if (!foundUser) return { data: [], error: null }
 
     const { data: profile } = await admin
       .from('profiles')
       .select('id, full_name')
-      .eq('id', authUser.user.id)
+      .eq('id', foundUser.id)
       .eq('role', 'medico')
       .maybeSingle()
 
     if (!profile) return { data: [], error: null }
 
     return {
-      data: [{ id: profile.id, full_name: profile.full_name, email: authUser.user.email ?? '' }],
+      data: [{ id: profile.id, full_name: profile.full_name, email: foundUser.email ?? '' }],
       error: null,
     }
   }
