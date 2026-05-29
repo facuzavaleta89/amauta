@@ -41,8 +41,10 @@ export async function GET(request: NextRequest) {
 
     for (const t of turnos) {
       // TODO: Reemplazar esta simulación por Resend/Nodemailer
-      // NO loguear datos personales del paciente (Ley 25.326)
+      // NO loguear datos personales del paciente en consola (Ley 25.326)
       console.log(`[CRON] Procesando recordatorio para turno ${t.id}`)
+
+      const pacienteNombre = t.paciente ? (t.paciente as any).nombre_completo : (t.paciente_nombre_libre || 'el paciente')
 
       // 2. Marcar como enviado
       const { error: updateError } = await supabase
