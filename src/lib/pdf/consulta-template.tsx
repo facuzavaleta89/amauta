@@ -9,6 +9,7 @@ import {
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { Consulta } from '@/types/consulta'
+import type { Matricula } from '@/types/roles'
 
 // ── Colores (mismo design system que pedido/certificado) ──────
 const VERDE_PRIMARIO = '#3d7a5c'
@@ -40,6 +41,11 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   logoText: { color: '#ffffff', fontSize: 18, fontFamily: 'Helvetica-Bold' },
+  logoImage: {
+    width: 50,
+    height: 36,
+    objectFit: 'contain',
+  },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerBrand: { marginLeft: 8 },
   brandName: { fontSize: 14, fontFamily: 'Helvetica-Bold', color: VERDE_PRIMARIO, letterSpacing: 1 },
@@ -107,8 +113,10 @@ function calcEdad(dob: string) {
 
 interface MedicoData {
   full_name: string
-  matricula?: string | null
+  titulo?: string | null
+  matriculas?: Matricula[]
   firma_url?: string | null
+  logo_url?: string | null
 }
 
 interface PacienteData {
@@ -218,33 +226,50 @@ function ConsultaBody({ consulta }: { consulta: Consulta }) {
   )
 }
 
+function formatMatriculas(matriculas?: Matricula[]): string | null {
+  if (!matriculas || matriculas.length === 0) return null
+  return matriculas.map((m) => `${m.tipo} ${m.numero}`).join('  |  ')
+}
+
 // ── Membrete + firma reutilizables ────────────────────────────
 
 function Membrete({ medico }: { medico: MedicoData }) {
+  const matriculasStr = formatMatriculas(medico.matriculas)
+  const displayName = medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name
+
   return (
     <View style={s.header}>
       <View style={s.headerLeft}>
-        <View style={s.logoBox}><Text style={s.logoText}>A</Text></View>
+        {medico.logo_url ? (
+          <Image src={medico.logo_url} style={s.logoImage} />
+        ) : (
+          <View style={s.logoBox}>
+            <Text style={s.logoText}>A</Text>
+          </View>
+        )}
         <View style={s.headerBrand}>
           <Text style={s.brandName}>AMAUTA</Text>
           <Text style={s.brandSub}>Sistema de Gestión Médica</Text>
         </View>
       </View>
       <View style={s.headerRight}>
-        <Text style={s.medicoName}>{medico.full_name}</Text>
-        {medico.matricula && <Text style={s.medicoMatricula}>{medico.matricula}</Text>}
+        <Text style={s.medicoName}>{displayName}</Text>
+        {matriculasStr && <Text style={s.medicoMatricula}>{matriculasStr}</Text>}
       </View>
     </View>
   )
 }
 
 function Firma({ medico }: { medico: MedicoData }) {
+  const matriculasStr = formatMatriculas(medico.matriculas)
+  const displayName = medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name
+
   return (
     <View style={s.firmaContainer}>
       {medico.firma_url && <Image src={medico.firma_url} style={s.firmaImage} />}
       <View style={s.firmaLinea} />
-      <Text style={s.firmaNombre}>{medico.full_name}</Text>
-      {medico.matricula && <Text style={s.firmaMatricula}>{medico.matricula}</Text>}
+      <Text style={s.firmaNombre}>{displayName}</Text>
+      {matriculasStr && <Text style={s.firmaMatricula}>{matriculasStr}</Text>}
     </View>
   )
 }
@@ -259,11 +284,12 @@ interface ConsultaPDFProps {
 
 export function ConsultaIndividualPDF({ consulta, paciente, medico }: ConsultaPDFProps) {
   const edad = calcEdad(paciente.fecha_nacimiento)
+  const displayName = medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name
 
   return (
     <Document
       title={`Consulta — ${paciente.nombre_completo} — ${fmtFecha(consulta.fecha_hora)}`}
-      author={medico.full_name}
+      author={displayName}
       creator="Amauta — Gestión Médica"
     >
       <Page size="A4" style={s.page}>
@@ -308,11 +334,12 @@ export function HCCompletaPDF({ consultas, paciente, medico }: HCCompletaPDFProp
   const finalizadas = [...consultas]
     .filter((c) => c.estado === 'finalizada')
     .sort((a, b) => new Date(a.fecha_hora).getTime() - new Date(b.fecha_hora).getTime())
+  const displayName = medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name
 
   return (
     <Document
       title={`Historia Clínica — ${paciente.nombre_completo}`}
-      author={medico.full_name}
+      author={displayName}
       creator="Amauta — Gestión Médica"
     >
       {finalizadas.map((consulta, i) => (

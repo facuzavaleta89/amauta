@@ -21,7 +21,7 @@ export default async function AppLayout({
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('full_name, role, medico_id')
+    .select('full_name, role, medico_id, titulo')
     .eq('id', user.id)
     .single()
 
@@ -29,6 +29,7 @@ export default async function AppLayout({
   const userFullName = profile?.full_name ?? user.email ?? 'Usuario'
   const userEmail = user.email ?? ''
   const medicoId = profile?.medico_id as string | null
+  const userTitulo = (profile?.titulo as string | null) ?? null
 
   // Guard: asistente no vinculado → onboarding obligatorio
   if (userRole === 'asistente' && !medicoId) {
@@ -46,6 +47,7 @@ export default async function AppLayout({
       userEmail={userEmail}
       userId={user.id}
       medicoId={medicoId}
+      userTitulo={userTitulo}
       solicitudesPendientes={solicitudesPendientes ?? []}
     >
       {children}

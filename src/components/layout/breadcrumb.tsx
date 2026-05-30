@@ -19,6 +19,7 @@ const routeLabels: Record<string, string> = {
   historia: 'Historia Clínica',
   estudios: 'Estudios',
   evolucion: 'Evolución',
+  perfil: 'Perfil',
 }
 
 export function Breadcrumb() {

@@ -27,6 +27,8 @@ import type { Consulta } from '@/types/consulta'
 
 // ── Tipos ─────────────────────────────────────────────────────
 
+import type { Matricula } from '@/types/roles'
+
 interface PacienteData {
   nombre_completo: string
   dni: string
@@ -37,8 +39,10 @@ interface PacienteData {
 
 interface MedicoData {
   full_name: string
-  matricula?: string | null
+  titulo?: string | null
+  matriculas?: Matricula[]
   firma_url?: string | null
+  logo_url?: string | null
 }
 
 interface ConsultaDetailProps {

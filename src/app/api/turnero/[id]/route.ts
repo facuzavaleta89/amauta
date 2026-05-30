@@ -107,7 +107,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ data: updated[0] })
   } catch (error: any) {
     console.error('Error updating turno:', error)
-    return NextResponse.json({ error: error.message || 'Error del servidor' }, { status: 500 })
+    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }
 
@@ -171,6 +171,6 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error('Error deleting turno:', error)
-    return NextResponse.json({ error: error.message || 'Error del servidor' }, { status: 500 })
+    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }

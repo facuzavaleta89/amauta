@@ -95,6 +95,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ data: nuevoBloqueo }, { status: 201 })
   } catch (error: any) {
     console.error('Error creating bloqueo:', error)
-    return NextResponse.json({ error: error.message || 'Error del servidor' }, { status: 500 })
+    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }

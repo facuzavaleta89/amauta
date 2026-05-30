@@ -14,12 +14,13 @@ interface SidebarProps {
   userFullName: string
   userRole: UserRole
   userEmail: string
+  userTitulo?: string | null
   /** Controlled open state (used on mobile) */
   open?: boolean
   onClose?: () => void
 }
 
-export function Sidebar({ userFullName, userRole, userEmail, open = false, onClose }: SidebarProps) {
+export function Sidebar({ userFullName, userRole, userEmail, userTitulo, open = false, onClose }: SidebarProps) {
   const pathname = usePathname()
   const items = getNavItemsByRole(userRole)
 
@@ -114,7 +115,9 @@ export function Sidebar({ userFullName, userRole, userEmail, open = false, onClo
             </AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground truncate">{userFullName}</p>
+            <p className="text-sm font-medium text-foreground truncate">
+              {userTitulo ? `${userTitulo} ${userFullName}` : userFullName}
+            </p>
             <p className="text-[11px] text-muted-foreground truncate capitalize">
               {userRole} • {userEmail}
             </p>

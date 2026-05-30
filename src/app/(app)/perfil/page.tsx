@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { PerfilForm } from '@/components/perfil/perfil-form'
+import type { Matricula } from '@/types/roles'
 
 export const metadata = {
   title: 'Mi Perfil — Amauta',
@@ -76,6 +77,11 @@ export default async function PerfilPage() {
     }
   }
 
+  // Normalizar matriculas: la columna puede venir null de Supabase hasta que haya datos
+  const matriculas: Matricula[] = Array.isArray(profile.matriculas)
+    ? profile.matriculas
+    : []
+
   return (
     <div className="py-2">
       <PerfilForm
@@ -83,8 +89,10 @@ export default async function PerfilPage() {
           id: profile.id,
           full_name: profile.full_name,
           role: profile.role,
-          matricula: profile.matricula,
+          matriculas,
+          titulo: profile.titulo ?? null,
           firma_url: profile.firma_url,
+          logo_url: profile.logo_url ?? null,
           puede_ver_historias: profile.puede_ver_historias ?? true,
           puede_editar_agenda: profile.puede_editar_agenda ?? true,
           medico_id: profile.medico_id,

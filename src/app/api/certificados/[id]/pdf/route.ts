@@ -33,7 +33,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const admin = createAdminClient()
     const { data: medico } = await admin
       .from('profiles')
-      .select('full_name, matricula, firma_url')
+      .select('full_name, titulo, matriculas, firma_url, logo_url')
       .eq('id', certificado.firmado_por)
       .single()
 
@@ -42,8 +42,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         certificado,
         medico: {
           full_name: medico?.full_name ?? 'Médico',
-          matricula: medico?.matricula ?? null,
+          titulo: medico?.titulo ?? null,
+          matriculas: Array.isArray(medico?.matriculas) ? medico.matriculas : [],
           firma_url: medico?.firma_url ?? null,
+          logo_url: medico?.logo_url ?? null,
         },
       }) as React.ReactElement<DocumentProps>
     )

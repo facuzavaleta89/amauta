@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error('SUPABASE BUSCAR PACIENTE ERROR:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
     }
 
     return NextResponse.json({ data: pacientes })
@@ -121,7 +121,8 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      console.error('Error insertando paciente:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
     }
 
     // Crear historia clínica vacía para el paciente

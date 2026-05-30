@@ -19,6 +19,7 @@ interface LayoutShellProps {
   userEmail: string
   userId: string
   medicoId: string | null
+  userTitulo: string | null
   solicitudesPendientes: Solicitud[]
   children: React.ReactNode
 }
@@ -29,6 +30,7 @@ export function LayoutShell({
   userEmail,
   userId,
   medicoId,
+  userTitulo,
   solicitudesPendientes,
   children,
 }: LayoutShellProps) {
@@ -53,6 +55,7 @@ export function LayoutShell({
         userFullName={userFullName}
         userRole={userRole}
         userEmail={userEmail}
+        userTitulo={userTitulo}
         open={sidebarOpen}
         onClose={handleClose}
       />
@@ -65,6 +68,7 @@ export function LayoutShell({
           userEmail={userEmail}
           userId={userId}
           medicoId={medicoId}
+          userTitulo={userTitulo}
           solicitudesPendientes={solicitudesPendientes}
           onMenuToggle={handleToggle}
         />

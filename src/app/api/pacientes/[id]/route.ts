@@ -123,7 +123,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           { status: 400 }
         )
       }
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      console.error('Error actualizando paciente:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
     }
 
     return NextResponse.json({ data: paciente })
@@ -177,7 +178,8 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       .eq('creado_por', tenantMedicoId)
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      console.error('Error eliminando paciente:', error)
+      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true })
