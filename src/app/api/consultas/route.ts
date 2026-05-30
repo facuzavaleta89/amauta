@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
+import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    const rl = rateLimit(request, { key: `consultas_get:${user.id}`, limit: 60, windowMs: 60_000 })
+    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id)
     if (!ctx) return NextResponse.json({ error: 'Sin permisos para ver historias clínicas' }, { status: 403 })
@@ -77,6 +81,9 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    const rl = rateLimit(request, { key: `consultas_post:${user.id}`, limit: 20, windowMs: 60_000 })
+    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id)
     if (!ctx) return NextResponse.json({ error: 'Sin permisos para registrar consultas' }, { status: 403 })

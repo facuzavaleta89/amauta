@@ -71,8 +71,8 @@ export async function registerUser(
   if (cleanedEmail.length > 254 || !cleanedEmail.includes('@')) {
     return { error: 'Formato de email inválido.' }
   }
-  if (password.length < 8 || password.length > 128) {
-    return { error: 'La contraseña debe tener entre 8 y 128 caracteres.' }
+  if (password.length < 12 || password.length > 128) {
+    return { error: 'La contraseña debe tener entre 12 y 128 caracteres.' }
   }
   if (cleanedName.length < 3 || cleanedName.length > 100) {
     return { error: 'El nombre completo debe tener entre 3 y 100 caracteres.' }

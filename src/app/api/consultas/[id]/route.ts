@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
+import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -33,6 +34,9 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
+    const rl = rateLimit(_request, { key: `consulta_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
+    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
+
     const ctx = await getTenantContext(supabase, user.id)
     if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
 
@@ -60,6 +64,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    const rl = rateLimit(request, { key: `consulta_patch:${user.id}`, limit: 30, windowMs: 60_000 })
+    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id)
     if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
@@ -181,6 +188,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+    const rl = rateLimit(_request, { key: `consulta_delete:${user.id}`, limit: 10, windowMs: 60_000 })
+    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id)
     if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })

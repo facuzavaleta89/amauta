@@ -5,6 +5,7 @@ import { renderToBuffer } from '@react-pdf/renderer'
 import { CertificadoPDFTemplate } from '@/lib/pdf/certificado-template'
 import React from 'react'
 import type { DocumentProps } from '@react-pdf/renderer'
+import { sanitizePdfFilename } from '@/lib/utils'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -49,7 +50,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       }) as React.ReactElement<DocumentProps>
     )
 
-    const nombreArchivo = `certificado_${certificado.tipo}_${certificado.paciente_nombre.replace(/\s+/g, '_')}_${certificado.fecha_certificado}.pdf`
+    const rawNombre = `certificado_${certificado.tipo}_${certificado.paciente_nombre}_${certificado.fecha_certificado}.pdf`
+    const nombreArchivo = sanitizePdfFilename(rawNombre)
 
     return new NextResponse(buffer as any, {
       status: 200,

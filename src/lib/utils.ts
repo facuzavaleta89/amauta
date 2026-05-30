@@ -28,3 +28,18 @@ export function formatFecha(dateStr: string, fmt = "d MMM yyyy"): string {
 export function formatFechaLarga(dateStr: string): string {
   return formatFecha(dateStr, "d 'de' MMMM 'de' yyyy")
 }
+
+/**
+ * Sanitiza un string para usarlo de forma segura como nombre de archivo
+ * en el header Content-Disposition de respuestas HTTP, previniendo
+ * HTTP Header Injection (Fix A2).
+ */
+export function sanitizePdfFilename(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')   // quitar acentos
+    .replace(/[^\w\s\-\.]/g, '_')      // solo caracteres seguros
+    .replace(/\s+/g, '_')              // espacios a guiones bajos
+    .replace(/_{2,}/g, '_')            // colapsar guiones múltiples
+    .slice(0, 100)
+}

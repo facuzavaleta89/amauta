@@ -40,19 +40,11 @@ export async function GET(request: NextRequest) {
     const resultados = []
 
     for (const t of turnos) {
-      // 1. Simulación de envío de Mail (A reemplazar por Resend/Nodemailer)
-      const pacienteNombre = t.paciente ? t.paciente.nombre_completo : t.paciente_nombre_libre;
-      const pacienteEmail = t.paciente ? t.paciente.email : null; // Asumiendo q paciente libre no tiene mail registrado fácilmente
+      // TODO: Reemplazar esta simulación por Resend/Nodemailer
+      // NO loguear datos personales del paciente en consola (Ley 25.326)
+      console.log(`[CRON] Procesando recordatorio para turno ${t.id}`)
 
-      const fechaFormateada = new Date(t.fecha_inicio).toLocaleString('es-AR', {
-        dateStyle: 'full',
-        timeStyle: 'short'
-      })
-
-      console.log(`\n📧 [EMAIL SIMULADO]
-Para: ${pacienteEmail || 'N/A'} (Paciente: ${pacienteNombre})
-Asunto: Recordatorio de Turno Amauta
-Cuerpo: Hola ${pacienteNombre}, te recordamos que tenés un turno el ${fechaFormateada}. Por favor recordá asistir con anticipación.\n`)
+      const pacienteNombre = t.paciente ? (t.paciente as any).nombre_completo : (t.paciente_nombre_libre || 'el paciente')
 
       // 2. Marcar como enviado
       const { error: updateError } = await supabase
