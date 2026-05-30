@@ -6,8 +6,26 @@
 /** Roles del sistema */
 export type UserRole = 'medico' | 'asistente'
 
+/** Tipos válidos de matrícula médica argentina */
+export type MatriculaTipo = 'MP' | 'MN' | 'ME'
+
 /**
- * Perfil de usuario (extiene auth.users).
+ * Matrícula profesional tipada.
+ * - MP: Matrícula Provincial
+ * - MN: Matrícula Nacional
+ * - ME: Matrícula de Especialidad
+ */
+export interface Matricula {
+  tipo: MatriculaTipo
+  numero: string
+}
+
+/** Títulos / tratamientos disponibles para médicos */
+export const TITULOS_DISPONIBLES = ['Dr.', 'Dra.', 'Lic.', 'Sr.', 'Sra.'] as const
+export type TituloPreset = typeof TITULOS_DISPONIBLES[number]
+
+/**
+ * Perfil de usuario (extiende auth.users).
  * - medico:    id === medico_id (o medico_id NULL). Dueño del tenant.
  * - asistente: medico_id apunta al médico al que pertenece.
  */
@@ -17,6 +35,12 @@ export interface Profile {
   role: UserRole
   avatar_url: string | null
   medico_id: string | null   // null si es médico; uuid del médico si es asistente
+  /** @deprecated Usar matriculas (jsonb) en su lugar */
+  matricula?: string | null
+  matriculas: Matricula[]    // columna jsonb nueva
+  titulo: string | null      // Dr. / Dra. / Lic. / etc.
+  firma_url: string | null
+  logo_url: string | null    // sello / logo institucional (base64)
   created_at: string
   updated_at: string
 }
@@ -28,6 +52,9 @@ export interface ProfileInsert {
   role?: UserRole
   avatar_url?: string
   medico_id?: string
+  matriculas?: Matricula[]
+  titulo?: string
+  logo_url?: string
 }
 
 /** Update de profile propio */
@@ -35,6 +62,9 @@ export interface ProfileUpdate {
   full_name?: string
   avatar_url?: string
   medico_id?: string   // solo el médico lo setea al aprobar una solicitud
+  matriculas?: Matricula[]
+  titulo?: string | null
+  logo_url?: string | null
 }
 
 // ── SOLICITUDES DE VINCULACIÓN ─────────────────────────────

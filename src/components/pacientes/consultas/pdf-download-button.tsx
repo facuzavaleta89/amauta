@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import type { Consulta } from '@/types/consulta'
 
+import type { Matricula } from '@/types/roles'
+
 interface PacienteData {
   nombre_completo: string
   dni: string
@@ -16,8 +18,10 @@ interface PacienteData {
 
 interface MedicoData {
   full_name: string
-  matricula?: string | null
+  titulo?: string | null
+  matriculas?: Matricula[]
   firma_url?: string | null
+  logo_url?: string | null
 }
 
 // ── Botón: PDF de consulta individual ────────────────────────

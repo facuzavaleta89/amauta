@@ -4,19 +4,17 @@ import {
   Text,
   View,
   StyleSheet,
-  Font,
   Image,
 } from '@react-pdf/renderer'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
+import type { Matricula } from '@/types/roles'
 
-// ── Colores del design system ─────────────────────────────────
-const VERDE_PRIMARIO = '#3d7a5c'   // oklch(0.52 0.13 155) aproximado en hex
+const VERDE_PRIMARIO = '#3d7a5c'
 const VERDE_CLARO    = '#e8f4ee'
 const GRIS_TEXTO     = '#1e2d24'
 const GRIS_SUAVE     = '#6b7c72'
 
-// ── Estilos ───────────────────────────────────────────────────
 const s = StyleSheet.create({
   page: {
     fontFamily: 'Helvetica',
@@ -27,7 +25,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 50,
     backgroundColor: '#ffffff',
   },
-  // Membrete
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -46,6 +43,11 @@ const s = StyleSheet.create({
     color: '#ffffff',
     fontSize: 18,
     fontFamily: 'Helvetica-Bold',
+  },
+  logoImage: {
+    width: 50,
+    height: 36,
+    objectFit: 'contain',
   },
   headerLeft: {
     flexDirection: 'row',
@@ -91,7 +93,6 @@ const s = StyleSheet.create({
     backgroundColor: VERDE_CLARO,
     marginVertical: 10,
   },
-  // Título del documento
   docTitle: {
     fontSize: 16,
     fontFamily: 'Helvetica-Bold',
@@ -101,7 +102,6 @@ const s = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 2,
   },
-  // Sección datos paciente
   section: {
     marginBottom: 14,
   },
@@ -133,7 +133,6 @@ const s = StyleSheet.create({
     color: GRIS_TEXTO,
     flex: 1,
   },
-  // Cuerpo clínico
   clinicBox: {
     borderLeft: `3pt solid ${VERDE_PRIMARIO}`,
     paddingLeft: 10,
@@ -158,7 +157,6 @@ const s = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
-  // Firma
   firmaContainer: {
     marginTop: 20,
     alignItems: 'flex-end',
@@ -187,8 +185,8 @@ const s = StyleSheet.create({
     color: GRIS_SUAVE,
     textAlign: 'right',
     width: 180,
+    marginTop: 1,
   },
-  // Footer
   footer: {
     position: 'absolute',
     bottom: 30,
@@ -209,8 +207,6 @@ const s = StyleSheet.create({
   },
 })
 
-// ── Tipos ─────────────────────────────────────────────────────
-
 interface PedidoPDFProps {
   pedido: {
     id: string
@@ -226,43 +222,44 @@ interface PedidoPDFProps {
   }
   medico: {
     full_name: string
-    matricula?: string | null
+    titulo?: string | null
+    matriculas?: Matricula[]
     firma_url?: string | null
+    logo_url?: string | null
   }
 }
-
-// ── Helpers ───────────────────────────────────────────────────
 
 function formatFecha(dateStr: string) {
   try {
     return format(new Date(dateStr + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })
-  } catch {
-    return dateStr
-  }
+  } catch { return dateStr }
 }
 
 function calcEdad(dob: string): string {
   try {
     const birth = new Date(dob + 'T12:00:00')
     const ageDiff = Date.now() - birth.getTime()
-    const ageDate = new Date(ageDiff)
-    return Math.abs(ageDate.getUTCFullYear() - 1970) + ' años'
-  } catch {
-    return ''
-  }
+    return Math.abs(new Date(ageDiff).getUTCFullYear() - 1970) + ' años'
+  } catch { return '' }
 }
 
-// ── Componente PDF ────────────────────────────────────────────
+/** Formatea la lista de matrículas como "MN 123456 | MP 98765" */
+function formatMatriculas(matriculas?: Matricula[]): string | null {
+  if (!matriculas || matriculas.length === 0) return null
+  return matriculas.map((m) => `${m.tipo} ${m.numero}`).join('  |  ')
+}
 
 export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
   const edad = calcEdad(pedido.paciente_dob)
   const fechaFormateada = formatFecha(pedido.fecha_pedido)
   const nacFormateado = formatFecha(pedido.paciente_dob)
+  const matriculasStr = formatMatriculas(medico.matriculas)
+  const displayName = medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name
 
   return (
     <Document
       title={`Pedido de Estudios — ${pedido.paciente_nombre}`}
-      author={medico.full_name}
+      author={displayName}
       creator="Amauta — Gestión Médica"
     >
       <Page size="A4" style={s.page}>
@@ -270,26 +267,28 @@ export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
         {/* Membrete */}
         <View style={s.header}>
           <View style={s.headerLeft}>
-            <View style={s.logoBox}>
-              <Text style={s.logoText}>A</Text>
-            </View>
+            {medico.logo_url ? (
+              <Image src={medico.logo_url} style={s.logoImage} />
+            ) : (
+              <View style={s.logoBox}>
+                <Text style={s.logoText}>A</Text>
+              </View>
+            )}
             <View style={s.headerBrand}>
               <Text style={s.brandName}>AMAUTA</Text>
               <Text style={s.brandSub}>Sistema de Gestión Médica</Text>
             </View>
           </View>
           <View style={s.headerRight}>
-            <Text style={s.medicoName}>{medico.full_name}</Text>
-            {medico.matricula && (
-              <Text style={s.medicoMatricula}>{medico.matricula}</Text>
+            <Text style={s.medicoName}>{displayName}</Text>
+            {matriculasStr && (
+              <Text style={s.medicoMatricula}>{matriculasStr}</Text>
             )}
           </View>
         </View>
 
-        {/* Línea verde */}
         <View style={s.divider} />
 
-        {/* Título */}
         <Text style={s.docTitle}>Pedido de Estudios</Text>
 
         {/* Datos del paciente */}
@@ -341,10 +340,9 @@ export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
           </View>
         </View>
 
-        {/* Indicaciones (opcional) */}
         {pedido.indicaciones && (
           <View style={s.indicacionesBox}>
-            <Text style={s.indicacionesTitle}>⚠ Indicaciones para el Paciente</Text>
+            <Text style={s.indicacionesTitle}>Indicaciones para el Paciente</Text>
             <Text style={s.bodyText}>{pedido.indicaciones}</Text>
           </View>
         )}
@@ -355,21 +353,17 @@ export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
             <Image src={medico.firma_url} style={s.firmaImage} />
           )}
           <View style={s.firmaLinea} />
-          <Text style={s.firmaNombre}>{medico.full_name}</Text>
-          {medico.matricula && (
-            <Text style={s.firmaMatricula}>{medico.matricula}</Text>
+          <Text style={s.firmaNombre}>{displayName}</Text>
+          {matriculasStr && (
+            <Text style={s.firmaMatricula}>{matriculasStr}</Text>
           )}
         </View>
 
         {/* Footer */}
         <View style={s.footer} fixed>
-          <Text style={s.footerText}>
-            Fecha: {fechaFormateada}
-          </Text>
+          <Text style={s.footerText}>Fecha: {fechaFormateada}</Text>
           <Text style={s.footerBrand}>AMAUTA</Text>
-          <Text style={s.footerText}>
-            Doc. ID: {pedido.id.slice(0, 8).toUpperCase()}
-          </Text>
+          <Text style={s.footerText}>Doc. ID: {pedido.id.slice(0, 8).toUpperCase()}</Text>
         </View>
 
       </Page>

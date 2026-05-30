@@ -3,7 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { PedidoDocView } from '@/components/pedidos/pedido-pdf'
 import type { Metadata } from 'next'
-import type { UserRole } from '@/types/roles'
+import type { UserRole, Matricula } from '@/types/roles'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -41,7 +41,7 @@ export default async function PedidoDetailPage({ params }: Props) {
   const admin = createAdminClient()
   const { data: medico } = await admin
     .from('profiles')
-    .select('full_name, matricula, firma_url')
+    .select('full_name, titulo, matriculas, firma_url, logo_url')
     .eq('id', pedido.firmado_por)
     .single()
 
@@ -55,12 +55,21 @@ export default async function PedidoDetailPage({ params }: Props) {
 
   const userRole = (profile?.role ?? 'asistente') as UserRole
 
+  const matriculas: Matricula[] = Array.isArray(medico?.matriculas) ? medico.matriculas : []
+  const matriculaFormatted = matriculas.length > 0
+    ? matriculas.map((m) => `${m.tipo} ${m.numero}`).join('  |  ')
+    : null
+  const displayName = medico
+    ? (medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name)
+    : 'Médico'
+
   return (
     <PedidoDocView
       pedido={pedido}
-      medicoNombre={medico?.full_name ?? 'Médico'}
-      medicoMatricula={medico?.matricula ?? null}
+      medicoNombre={displayName}
+      medicoMatricula={matriculaFormatted}
       medicoFirma={medico?.firma_url ?? null}
+      medicoLogo={medico?.logo_url ?? null}
       userRole={userRole}
     />
   )

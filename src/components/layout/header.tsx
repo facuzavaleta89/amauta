@@ -30,6 +30,7 @@ interface HeaderProps {
   userEmail: string
   userId: string
   medicoId: string | null
+  userTitulo?: string | null
   solicitudesPendientes?: Solicitud[]
   onMenuToggle?: () => void
 }
@@ -40,9 +41,11 @@ export function Header({
   userEmail,
   userId,
   medicoId,
+  userTitulo,
   solicitudesPendientes = [],
   onMenuToggle,
 }: HeaderProps) {
+  const displayName = userTitulo ? `${userTitulo} ${userFullName}` : userFullName
   const initials = userFullName
     .split(' ')
     .map((n) => n[0])
@@ -50,8 +53,7 @@ export function Header({
     .join('')
     .toUpperCase()
 
-  const roleLabel =
-    userRole === 'medico' ? 'Médico' : 'Asistente'
+  const roleLabel = userRole === 'medico' ? 'Médico' : 'Asistente'
 
   return (
     <header className="h-14 border-b border-border bg-card/80 backdrop-blur-sm flex items-center gap-3 px-3 sm:px-4 md:px-6 shrink-0">
@@ -89,7 +91,7 @@ export function Header({
             >
               <div className="hidden sm:block text-right">
                 <p className="text-sm font-medium text-foreground leading-none">
-                  {userFullName}
+                  {displayName}
                 </p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
                   {roleLabel}
@@ -106,7 +108,7 @@ export function Header({
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>
               <div>
-                <p className="font-medium text-sm">{userFullName}</p>
+                <p className="font-medium text-sm">{displayName}</p>
                 <p className="text-xs text-muted-foreground font-normal">{userEmail}</p>
                 <p className="text-xs text-primary font-normal mt-0.5">{roleLabel}</p>
               </div>

@@ -30,6 +30,7 @@ interface PedidoDocViewProps {
   medicoNombre: string
   medicoMatricula?: string | null
   medicoFirma?: string | null
+  medicoLogo?: string | null
   userRole: 'medico' | 'asistente'
 }
 
@@ -39,6 +40,7 @@ export function PedidoDocView({
   medicoNombre,
   medicoMatricula,
   medicoFirma,
+  medicoLogo,
   userRole,
 }: PedidoDocViewProps) {
   const router = useRouter()
@@ -152,9 +154,13 @@ export function PedidoDocView({
         <div className="bg-gradient-to-r from-primary/5 to-primary/10 border-b border-primary/20 px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center shrink-0">
-                <span className="text-primary-foreground font-bold text-base">A</span>
-              </div>
+              {medicoLogo ? (
+                <img src={medicoLogo} alt="Logo" className="w-12 h-10 object-contain select-none pointer-events-none" />
+              ) : (
+                <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center shrink-0">
+                  <span className="text-primary-foreground font-bold text-base">A</span>
+                </div>
+              )}
               <div>
                 <p className="font-bold text-primary text-sm tracking-wider">AMAUTA</p>
                 <p className="text-[11px] text-muted-foreground">Sistema de Gestión Médica</p>

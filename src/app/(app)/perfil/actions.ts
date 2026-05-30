@@ -3,19 +3,24 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { Matricula } from '@/types/roles'
+
+const TIPOS_VALIDOS = ['MP', 'MN', 'ME'] as const
 
 // ─────────────────────────────────────────────────────────────
-// Actualizar datos básicos (Nombre y Matrícula)
+// Actualizar datos básicos (Nombre, Matrículas y Título)
 // ─────────────────────────────────────────────────────────────
 export async function actualizarPerfil(
   fullName: string,
-  matricula?: string | null
+  matriculas?: Matricula[],
+  titulo?: string | null
 ): Promise<{ error: string | null }> {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { error: 'No autenticado.' }
 
+    // Validar nombre
     const cleanedName = fullName.trim()
     if (cleanedName.length < 3) {
       return { error: 'El nombre debe tener al menos 3 caracteres.' }
@@ -27,21 +32,42 @@ export async function actualizarPerfil(
       return { error: 'El nombre contiene caracteres no válidos.' }
     }
 
-    const cleanedMatricula = matricula?.trim() || null
-    if (cleanedMatricula) {
-      if (cleanedMatricula.length > 20) {
-        return { error: 'La matrícula no puede superar los 20 caracteres.' }
+    // Validar matrículas
+    const cleanedMatriculas: Matricula[] = []
+    if (matriculas && matriculas.length > 0) {
+      if (matriculas.length > 5) {
+        return { error: 'Se permiten como máximo 5 matrículas.' }
       }
-      if (!/^[a-zA-Z0-9\s\-\/\.]+$/.test(cleanedMatricula)) {
-        return { error: 'La matrícula contiene caracteres no válidos.' }
+      for (const m of matriculas) {
+        if (!TIPOS_VALIDOS.includes(m.tipo as any)) {
+          return { error: `Tipo de matrícula inválido: ${m.tipo}. Use MP, MN o ME.` }
+        }
+        const num = m.numero.trim()
+        if (!num) {
+          return { error: 'El número de matrícula no puede estar vacío.' }
+        }
+        if (num.length > 15) {
+          return { error: 'El número de matrícula no puede superar los 15 caracteres.' }
+        }
+        if (!/^[a-zA-Z0-9\-\/\.]+$/.test(num)) {
+          return { error: 'El número de matrícula contiene caracteres no válidos.' }
+        }
+        cleanedMatriculas.push({ tipo: m.tipo, numero: num })
       }
+    }
+
+    // Validar título
+    const cleanedTitulo = titulo?.trim() || null
+    if (cleanedTitulo && cleanedTitulo.length > 30) {
+      return { error: 'El título no puede superar los 30 caracteres.' }
     }
 
     const { error } = await supabase
       .from('profiles')
       .update({
         full_name: cleanedName,
-        matricula: cleanedMatricula,
+        matriculas: cleanedMatriculas,
+        titulo: cleanedTitulo,
       })
       .eq('id', user.id)
 
@@ -66,7 +92,6 @@ export async function guardarFirma(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { error: 'No autenticado.' }
 
-    // Verificar que sea un médico
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
@@ -88,9 +113,7 @@ export async function guardarFirma(
 
     const { error } = await supabase
       .from('profiles')
-      .update({
-        firma_url: base64Image,
-      })
+      .update({ firma_url: base64Image })
       .eq('id', user.id)
 
     if (error) throw error
@@ -100,6 +123,51 @@ export async function guardarFirma(
   } catch (err: any) {
     console.error('[guardarFirma]', err)
     return { error: err.message || 'Error al guardar la firma.' }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Guardar logo / sello institucional (como base64 string)
+// ─────────────────────────────────────────────────────────────
+export async function guardarLogo(
+  base64Image: string | null
+): Promise<{ error: string | null }> {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { error: 'No autenticado.' }
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    if (profile?.role !== 'medico') {
+      return { error: 'Solo los médicos pueden registrar un logo institucional.' }
+    }
+
+    if (base64Image) {
+      if (base64Image.length > 1400000) {
+        return { error: 'El logo es demasiado pesado (máximo 1 MB).' }
+      }
+      if (!/^data:image\/(png|jpeg|jpg|svg\+xml|webp);base64,/.test(base64Image)) {
+        return { error: 'Formato de imagen inválido (solo PNG, JPG, SVG o WebP en base64).' }
+      }
+    }
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ logo_url: base64Image })
+      .eq('id', user.id)
+
+    if (error) throw error
+
+    revalidatePath('/perfil')
+    return { error: null }
+  } catch (err: any) {
+    console.error('[guardarLogo]', err)
+    return { error: err.message || 'Error al guardar el logo.' }
   }
 }
 
@@ -122,7 +190,6 @@ export async function obtenerAsistentes(): Promise<{
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { data: null, error: 'No autenticado.' }
 
-    // Obtener asistentes vinculados a este médico
     const { data: asistentes, error } = await supabase
       .from('profiles')
       .select('id, full_name, puede_ver_historias, puede_editar_agenda, created_at')
@@ -133,7 +200,6 @@ export async function obtenerAsistentes(): Promise<{
     if (error) throw error
     if (!asistentes?.length) return { data: [], error: null }
 
-    // Enriquecer con emails usando el admin client (bypassea RLS y lectura de correos)
     const admin = createAdminClient()
     const enriched = await Promise.all(
       asistentes.map(async (a) => {
@@ -169,7 +235,6 @@ export async function actualizarPermisoAsistente(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { error: 'No autenticado.' }
 
-    // Verificar que el asistente realmente pertenezca a este médico (chequeo app-level)
     const { data: asistente } = await supabase
       .from('profiles')
       .select('medico_id')
@@ -180,8 +245,6 @@ export async function actualizarPermisoAsistente(
       return { error: 'No tenés permisos sobre este asistente.' }
     }
 
-    // Usar admin client porque RLS solo permite update del propio perfil (auth.uid() = id)
-    // La validación de pertenencia ya se hizo arriba a nivel de aplicación
     const admin = createAdminClient()
     const { error } = await admin
       .from('profiles')
@@ -209,7 +272,6 @@ export async function desvincularAsistente(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { error: 'No autenticado.' }
 
-    // Verificar pertenencia (chequeo app-level antes de usar admin client)
     const { data: asistente } = await supabase
       .from('profiles')
       .select('medico_id')
@@ -220,7 +282,6 @@ export async function desvincularAsistente(
       return { error: 'No tenés permisos para desvincular a este asistente.' }
     }
 
-    // Usar admin client para bypasear RLS al desvincular
     const admin = createAdminClient()
     const { error } = await admin
       .from('profiles')

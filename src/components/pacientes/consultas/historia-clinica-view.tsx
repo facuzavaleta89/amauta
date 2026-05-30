@@ -9,6 +9,8 @@ import { ConsultaDetail } from './consulta-detail'
 import { HCCompletaPDFButton } from './pdf-download-button'
 import type { Consulta } from '@/types/consulta'
 
+import type { Matricula } from '@/types/roles'
+
 interface PacienteData {
   nombre_completo: string
   dni: string
@@ -19,8 +21,10 @@ interface PacienteData {
 
 interface MedicoData {
   full_name: string
-  matricula?: string | null
+  titulo?: string | null
+  matriculas?: Matricula[]
   firma_url?: string | null
+  logo_url?: string | null
 }
 
 interface HistoriaClinicaViewProps {
