@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { Button } from '@/components/ui/button'
 import { PlusCircle, Award, Calendar } from 'lucide-react'
 import Link from 'next/link'
@@ -26,6 +27,9 @@ interface Props {
 }
 
 export default async function CertificadosPage({ searchParams }: Props) {
+  // Guard: redirige a /sin-acceso si el asistente no tiene ver_certificados
+  await verificarPermiso('ver_certificados')
+
   const params = await searchParams
   const q = params?.q?.trim() ?? ''
   const tipoFiltro = params?.tipo ?? ''

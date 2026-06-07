@@ -2,7 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { PerfilForm } from '@/components/perfil/perfil-form'
-import type { Matricula } from '@/types/roles'
+import type { Matricula, PermisosAsistente } from '@/types/roles'
+import { PERMISOS_DEFAULT } from '@/types/roles'
 
 export const metadata = {
   title: 'Mi Perfil — Amauta',
@@ -34,7 +35,15 @@ export default async function PerfilPage() {
   if (profile.role === 'medico') {
     const { data: rawAsistentes } = await supabase
       .from('profiles')
-      .select('id, full_name, puede_ver_historias, puede_editar_agenda, created_at')
+      .select(`
+        id, full_name, created_at,
+        ver_pacientes, editar_pacientes,
+        ver_historia_clinica, crear_consultas, finalizar_consultas,
+        ver_turnos, gestionar_turnos,
+        ver_pedidos, crear_pedidos,
+        ver_certificados, crear_certificados,
+        acceso_mensajeria
+      `)
       .eq('role', 'asistente')
       .eq('medico_id', user.id)
       .order('full_name')
@@ -49,9 +58,21 @@ export default async function PerfilPage() {
             id: a.id,
             full_name: a.full_name,
             email: authData?.user?.email ?? 'Sin email',
-            puede_ver_historias: a.puede_ver_historias ?? true,
-            puede_editar_agenda: a.puede_editar_agenda ?? true,
             created_at: a.created_at,
+            permisos: {
+              ver_pacientes:        a.ver_pacientes        ?? PERMISOS_DEFAULT.ver_pacientes,
+              editar_pacientes:     a.editar_pacientes     ?? PERMISOS_DEFAULT.editar_pacientes,
+              ver_historia_clinica: a.ver_historia_clinica ?? PERMISOS_DEFAULT.ver_historia_clinica,
+              crear_consultas:      a.crear_consultas      ?? PERMISOS_DEFAULT.crear_consultas,
+              finalizar_consultas:  a.finalizar_consultas  ?? PERMISOS_DEFAULT.finalizar_consultas,
+              ver_turnos:           a.ver_turnos           ?? PERMISOS_DEFAULT.ver_turnos,
+              gestionar_turnos:     a.gestionar_turnos     ?? PERMISOS_DEFAULT.gestionar_turnos,
+              ver_pedidos:          a.ver_pedidos          ?? PERMISOS_DEFAULT.ver_pedidos,
+              crear_pedidos:        a.crear_pedidos        ?? PERMISOS_DEFAULT.crear_pedidos,
+              ver_certificados:     a.ver_certificados     ?? PERMISOS_DEFAULT.ver_certificados,
+              crear_certificados:   a.crear_certificados   ?? PERMISOS_DEFAULT.crear_certificados,
+              acceso_mensajeria:    a.acceso_mensajeria    ?? PERMISOS_DEFAULT.acceso_mensajeria,
+            } satisfies PermisosAsistente,
           }
         })
       )
@@ -82,6 +103,22 @@ export default async function PerfilPage() {
     ? profile.matriculas
     : []
 
+  // Permisos del perfil de usuario (solo relevante si es asistente)
+  const permisos: PermisosAsistente = {
+    ver_pacientes:        profile.ver_pacientes        ?? PERMISOS_DEFAULT.ver_pacientes,
+    editar_pacientes:     profile.editar_pacientes     ?? PERMISOS_DEFAULT.editar_pacientes,
+    ver_historia_clinica: profile.ver_historia_clinica ?? PERMISOS_DEFAULT.ver_historia_clinica,
+    crear_consultas:      profile.crear_consultas      ?? PERMISOS_DEFAULT.crear_consultas,
+    finalizar_consultas:  profile.finalizar_consultas  ?? PERMISOS_DEFAULT.finalizar_consultas,
+    ver_turnos:           profile.ver_turnos           ?? PERMISOS_DEFAULT.ver_turnos,
+    gestionar_turnos:     profile.gestionar_turnos     ?? PERMISOS_DEFAULT.gestionar_turnos,
+    ver_pedidos:          profile.ver_pedidos          ?? PERMISOS_DEFAULT.ver_pedidos,
+    crear_pedidos:        profile.crear_pedidos        ?? PERMISOS_DEFAULT.crear_pedidos,
+    ver_certificados:     profile.ver_certificados     ?? PERMISOS_DEFAULT.ver_certificados,
+    crear_certificados:   profile.crear_certificados   ?? PERMISOS_DEFAULT.crear_certificados,
+    acceso_mensajeria:    profile.acceso_mensajeria    ?? PERMISOS_DEFAULT.acceso_mensajeria,
+  }
+
   return (
     <div className="py-2">
       <PerfilForm
@@ -93,9 +130,8 @@ export default async function PerfilPage() {
           titulo: profile.titulo ?? null,
           firma_url: profile.firma_url,
           logo_url: profile.logo_url ?? null,
-          puede_ver_historias: profile.puede_ver_historias ?? true,
-          puede_editar_agenda: profile.puede_editar_agenda ?? true,
           medico_id: profile.medico_id,
+          permisos,
         }}
         userEmail={user.email ?? ''}
         medicoVinculado={medicoVinculado}

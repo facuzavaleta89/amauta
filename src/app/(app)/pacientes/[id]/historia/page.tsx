@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { notFound, redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { HistoriaClinicaView } from '@/components/pacientes/consultas/historia-clinica-view'
@@ -14,6 +15,9 @@ export const metadata: Metadata = {
 }
 
 export default async function HistoriaClinicaPage({ params }: Props) {
+  // Guard: redirecciona a /sin-acceso si es asistente sin permiso ver_historia_clinica
+  await verificarPermiso('ver_historia_clinica')
+
   const { id } = await params
   const supabase = await createClient()
 
@@ -24,13 +28,10 @@ export default async function HistoriaClinicaPage({ params }: Props) {
   // Perfil y permisos
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, medico_id, puede_ver_historias')
+    .select('role, medico_id')
     .eq('id', user.id)
     .single()
 
-  if (profile?.role === 'asistente' && !profile?.puede_ver_historias) {
-    redirect('/dashboard')
-  }
 
   const tenantMedicoId =
     profile?.role === 'medico'    ? user.id :

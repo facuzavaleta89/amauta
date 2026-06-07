@@ -7,15 +7,19 @@ interface RouteContext {
   params: Promise<{ id: string }>
 }
 
-async function getTenantContext(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
+async function getTenantContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  permisoRequerido: string
+) {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, medico_id, puede_ver_historias')
+    .select('role, medico_id, ver_pacientes, gestionar_pacientes, ver_historia_clinica, crear_consultas, finalizar_consultas, ver_turnos, gestionar_turnos, ver_pedidos, gestionar_pedidos, ver_difusion, gestionar_difusion')
     .eq('id', userId)
     .single()
 
   if (!profile) return null
-  if (profile.role === 'asistente' && !profile.puede_ver_historias) return null
+  if (profile.role === 'asistente' && !(profile as any)[permisoRequerido]) return null
 
   const tenantMedicoId =
     profile.role === 'medico'    ? userId :
@@ -37,7 +41,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     const rl = rateLimit(_request, { key: `consulta_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
+    const ctx = await getTenantContext(supabase, user.id, 'ver_historia_clinica')
     if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
 
     const { data, error } = await supabase
@@ -68,7 +72,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const rl = rateLimit(request, { key: `consulta_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
+    const body = await request.json()
+    const requiereFinalizar = body.estado === 'finalizada'
+    const permiso = requiereFinalizar ? 'finalizar_consultas' : 'crear_consultas'
+
+    const ctx = await getTenantContext(supabase, user.id, permiso)
     if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
 
     // Verificar que la consulta existe y pertenece al tenant
@@ -89,8 +97,6 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         { status: 403 }
       )
     }
-
-    const body = await request.json()
 
     // Para PATCH no requerimos paciente_id (ya existe)
     const result = consultaSchema.safeParse({ ...body, paciente_id: body.paciente_id || 'placeholder-will-not-insert' })
@@ -192,7 +198,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
     const rl = rateLimit(_request, { key: `consulta_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
+    const ctx = await getTenantContext(supabase, user.id, 'crear_consultas')
     if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
 
     const { data: existing } = await supabase

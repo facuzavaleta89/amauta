@@ -3,6 +3,97 @@
 // Tipos de roles y profiles del sistema multi-tenant
 // ============================================================
 
+// ── PERMISOS GRANULARES ────────────────────────────────────
+
+/**
+ * Conjunto completo de permisos booleanos para asistentes.
+ * Todos default = false (principio de mínimo privilegio).
+ * Si el usuario es médico, tienePermiso() siempre retorna true.
+ */
+export interface PermisosAsistente {
+  // Pacientes
+  ver_pacientes: boolean
+  editar_pacientes: boolean
+  // Historia clínica
+  ver_historia_clinica: boolean
+  crear_consultas: boolean
+  finalizar_consultas: boolean
+  // Turnero
+  ver_turnos: boolean
+  gestionar_turnos: boolean
+  // Pedidos
+  ver_pedidos: boolean
+  crear_pedidos: boolean
+  // Certificados
+  ver_certificados: boolean
+  crear_certificados: boolean
+  // Mensajería (preparado para uso futuro)
+  acceso_mensajeria: boolean
+}
+
+/** Nombres válidos de permisos (para type-safe checks) */
+export type PermisoKey = keyof PermisosAsistente
+
+/** Todos los permisos en false — base para nuevos asistentes */
+export const PERMISOS_DEFAULT: PermisosAsistente = {
+  ver_pacientes: false,
+  editar_pacientes: false,
+  ver_historia_clinica: false,
+  crear_consultas: false,
+  finalizar_consultas: false,
+  ver_turnos: false,
+  gestionar_turnos: false,
+  ver_pedidos: false,
+  crear_pedidos: false,
+  ver_certificados: false,
+  crear_certificados: false,
+  acceso_mensajeria: false,
+}
+
+/** Labels legibles para cada permiso */
+export const PERMISO_LABELS: Record<PermisoKey, string> = {
+  ver_pacientes: 'Ver pacientes',
+  editar_pacientes: 'Crear y editar pacientes',
+  ver_historia_clinica: 'Ver historia clínica',
+  crear_consultas: 'Crear consultas (borrador)',
+  finalizar_consultas: 'Finalizar consultas',
+  ver_turnos: 'Ver agenda de turnos',
+  gestionar_turnos: 'Gestionar turnos',
+  ver_pedidos: 'Ver pedidos de estudios',
+  crear_pedidos: 'Crear pedidos de estudios',
+  ver_certificados: 'Ver certificados',
+  crear_certificados: 'Crear certificados',
+  acceso_mensajeria: 'Acceso a mensajería',
+}
+
+/** Agrupación de permisos para el panel de configuración */
+export const PERMISOS_GRUPOS: { titulo: string; permisos: PermisoKey[] }[] = [
+  {
+    titulo: 'Pacientes',
+    permisos: ['ver_pacientes', 'editar_pacientes'],
+  },
+  {
+    titulo: 'Historia Clínica',
+    permisos: ['ver_historia_clinica', 'crear_consultas', 'finalizar_consultas'],
+  },
+  {
+    titulo: 'Turnero',
+    permisos: ['ver_turnos', 'gestionar_turnos'],
+  },
+  {
+    titulo: 'Pedidos de Estudios',
+    permisos: ['ver_pedidos', 'crear_pedidos'],
+  },
+  {
+    titulo: 'Certificados',
+    permisos: ['ver_certificados', 'crear_certificados'],
+  },
+  {
+    titulo: 'Mensajería',
+    permisos: ['acceso_mensajeria'],
+  },
+]
+
 /** Roles del sistema */
 export type UserRole = 'medico' | 'asistente'
 
@@ -29,7 +120,7 @@ export type TituloPreset = typeof TITULOS_DISPONIBLES[number]
  * - medico:    id === medico_id (o medico_id NULL). Dueño del tenant.
  * - asistente: medico_id apunta al médico al que pertenece.
  */
-export interface Profile {
+export interface Profile extends PermisosAsistente {
   id: string
   full_name: string
   role: UserRole

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PlusCircle, ClipboardList, FileText, Calendar, Search, X } from 'lucide-react'
@@ -14,6 +15,9 @@ interface Props {
 }
 
 export default async function PedidosPage({ searchParams }: Props) {
+  // Guard: redirige a /sin-acceso si el asistente no tiene ver_pedidos
+  await verificarPermiso('ver_pedidos')
+
   const params = await searchParams
   const q = params?.q?.trim() ?? ''
 

@@ -1,1 +1,306 @@
-@AGENTS.md
+# CLAUDE.md
+
+## Descripción del proyecto
+
+App web de gestión médica para un diabetólogo. Desarrollada con Next.js 16 + Supabase.
+Permite gestionar pacientes, historia clínica, turnos, pedidos médicos, certificados y
+difusión. Soporta dos roles: médico titular y asistentes, con sistema de permisos granular.
+Orientada a un consultorio unipersonal donde el médico puede tener uno o más asistentes
+vinculados.
+
+---
+
+## Stack tecnológico
+
+| Capa | Tecnología |
+|---|---|
+| Framework | Next.js 16.2.1 (App Router) |
+| Lenguaje | TypeScript 5 |
+| Runtime | Node.js (versión LTS recomendada) |
+| UI Components | shadcn/ui (Radix UI) + Tailwind CSS v4 |
+| Base de datos | Supabase (PostgreSQL) |
+| Auth | Supabase Auth (`@supabase/ssr` v0.9) |
+| Formularios | React Hook Form + Zod v4 |
+| Calendarios | FullCalendar v6 |
+| PDF | @react-pdf/renderer v4 + jsPDF v4 |
+| Email | Resend v6 |
+| Tablas | TanStack Table v8 |
+| Animaciones | tw-animate-css |
+| Toasts | Sonner v2 |
+| Build | Babel React Compiler habilitado |
+
+---
+
+## Base de datos
+
+- **Proveedor:** Supabase (PostgreSQL)
+- **RLS habilitado en todas las tablas de datos de usuario**
+- **Tenant key:** `pacientes.creado_por = get_medico_id()` — el médico es el dueño del tenant; los asistentes acceden vía la función helper que resuelve su `medico_id`
+
+### Tablas existentes
+
+| Tabla | Descripción | Tenant key |
+|---|---|---|
+| `profiles` | Extiende `auth.users`. Campos: `id`, `full_name`, `role` ('medico'/'asistente'), `avatar_url`, `medico_id` (UUID del médico para asistentes), `matricula` (deprecated), `matriculas` (JSONB), `titulo`, `firma_url`, `logo_url` y 13 permisos individuales booleanos (`ver_pacientes`, `gestionar_pacientes`, etc.) | — |
+| `obras_sociales` | Catálogo de obras sociales (OSDE, PAMI, etc.). Lectura pública para autenticados | — |
+| `pacientes` | Pacientes con DNI único, datos de contacto y obra social. `creado_por` = UUID del médico | `creado_por` |
+| `historia_clinica` | Una por paciente (1:1). Antecedentes, examen físico, laboratorio, conducta. RLS via `pacientes.creado_por` | via `pacientes` |
+| `consultas` | Consultas cronológicas del nuevo modelo de HC (Bloque 1). Campos: motivo, anamnesis, examen físico, parámetros metabólicos, diagnóstico, plan, estado ('borrador'/'finalizada'). `medico_id` = tenant key | `medico_id` |
+| `estudios` | Archivos de estudios complementarios adjuntos a pacientes | via `pacientes` |
+| `evoluciones` | Evoluciones de historia clínica (modelo legacy) | via `pacientes` |
+| `turnos` | Agenda de turnos. Estados: pendiente/confirmado/presente/ausente/cancelado/reprogramado. `medico_id` = tenant key | `medico_id` |
+| `bloqueos_agenda` | Bloqueos de horarios en la agenda (vacaciones, almuerzo, etc.) | `medico_id` |
+| `turnos_audit_log` | Log automático de cambios en turnos (trigger) | via `turnos` |
+| `pedidos` | Pedidos de estudios complementarios con generación de PDF. `firmado_por` = UUID del médico | via `pacientes` |
+| `certificados` | Certificados médicos (aptitud, reposo, diagnóstico, etc.) con PDF. Tipo enum definido | via `pacientes` |
+| `difusion_posts` | Posts de difusión con estados borrador/publicado. `medico_id` = tenant key | `medico_id` |
+| `recetas` | Módulo de recetas (esquema existente, UI pendiente de implementación completa) | — |
+| `solicitudes_asistente` | Workflow de vinculación asistente ↔ médico. Estados: pendiente/aprobada/rechazada | — |
+
+### Funciones SQL relevantes
+
+- `get_medico_id()` — Resuelve el tenant key según el rol del usuario actual (SECURITY DEFINER)
+- `get_user_role(user_id)` — Retorna el rol de un usuario evitando recursión RLS
+- `get_user_medico_id(user_id)` — Retorna el `medico_id` de un usuario
+- `check_asistente_ver_hc(user_id)` — Verifica el permiso `puede_ver_historias` (SECURITY DEFINER)
+- `check_asistente_editar_agenda(user_id)` — Verifica el permiso `puede_editar_agenda` (SECURITY DEFINER)
+- `set_updated_at()` — Trigger genérico para `updated_at`
+- `handle_new_user()` — Trigger en `auth.users` para crear el perfil automáticamente
+- `log_turno_cambio()` — Trigger que registra cambios en turnos en el audit log
+
+---
+
+## Estructura de carpetas
+
+```
+/src
+  /app
+    /(auth)         → Login, registro, forgot password (Server Actions en actions.ts)
+    /(app)          → Layout principal con sidebar + header (requiere autenticación)
+      /dashboard    → Panel principal
+      /pacientes    → CRUD de pacientes
+      /turnero      → Agenda con FullCalendar
+      /pedidos      → Pedidos médicos con PDF
+      /certificados → Certificados médicos con PDF
+      /difusion     → Posts de difusión / comunicación
+      /recetas      → Módulo de recetas (parcial)
+      /perfil       → Perfil del médico/asistente
+      /notificaciones
+      layout.tsx    → Guard de autenticación + carga de profile + LayoutShell
+    /api            → API Routes (cron, webhook WhatsApp, etc.)
+    /onboarding     → Flujo de vinculación para asistentes nuevos
+    layout.tsx      → Layout raíz (HTML, metadata global)
+    page.tsx        → Página raíz (redirect a /dashboard o /login)
+  /components
+    /layout         → layout-shell, sidebar, header, breadcrumb, notificaciones-medico
+    /perfil         → perfil-form, signature-pad
+    /pacientes      → Componentes de la sección pacientes
+    /turnero        → Componentes del turnero
+    /pedidos        → Formularios y vistas de pedidos
+    /certificados   → Formularios y vistas de certificados
+    /difusion       → Componentes de difusión
+    /recetas        → Componentes de recetas
+    /dashboard      → Widgets del dashboard
+    /shared         → Componentes reutilizables (PageHeader, etc.)
+    /ui             → shadcn/ui components (button, card, input, tabs, etc.)
+    /notificaciones
+  /constants
+    nav-items.ts    → Items de navegación por rol
+    obra-sociales.ts
+  /hooks
+    use-auth.ts, use-pacientes.ts, use-role.ts, use-turnos.ts (stubs — contenido mínimo)
+  /lib
+    /supabase
+      client.ts     → createBrowserClient (para Client Components)
+      server.ts     → createServerClient async (para Server Components/Actions)
+      admin.ts      → createAdminClient con SERVICE_ROLE_KEY (bypass RLS)
+    /email          → Templates de email (Resend)
+    /pdf            → Generadores de PDF
+    /utils          → cn(), formatters, etc.
+    /validations    → Schemas Zod
+    /whatsapp       → Integración WhatsApp
+    rate-limit.ts   → Rate limiting para endpoints
+    utils.ts        → Utilidades generales
+  /types
+    consulta.ts     → Tipos del módulo de consultas
+    difusion.ts     → Tipos de difusión
+    paciente.ts     → Tipos de paciente
+    pedido.ts       → Tipos de pedidos
+    roles.ts        → Profile, Matricula, SolicitudAsistente, helpers esMedico(), etc.
+    supabase.ts     → Tipos generados de Supabase DB
+    turno.ts        → Tipos de turno
+  proxy.ts          → Configuración de proxy (WA / email)
+```
+
+---
+
+## Sistema de autenticación y roles
+
+### Flujo de autenticación
+
+1. `@supabase/ssr` maneja las cookies de sesión vía middleware (no visible en el código, pero implícito)
+2. En `src/app/(app)/layout.tsx` (Server Component): se llama `supabase.auth.getUser()`, si no hay usuario → redirect `/login`
+3. Se carga el `profile` desde `profiles` con `role`, `medico_id`, `titulo`
+4. Si es asistente sin `medico_id` → redirect `/onboarding` (vinculación obligatoria)
+5. Se pasa todo al `LayoutShell` (Client Component) que maneja el sidebar y header
+
+### Determinación del rol
+
+- `profiles.role`: `'medico'` | `'asistente'`
+- **Médico:** `role = 'medico'`, `medico_id = NULL` (es dueño del tenant, su propio `id` es el tenant key)
+- **Asistente:** `role = 'asistente'`, `medico_id = UUID del médico` al que está vinculado
+
+### Acceso al usuario actual en el código
+
+- **Server Components / Server Actions:** `await createClient()` → `supabase.auth.getUser()`
+- **Client Components:** se recibe el `profile` como prop desde el Server Component padre
+- **RLS automático:** `auth.uid()` está disponible en todas las políticas RLS de Supabase
+
+### Permisos para asistentes (implementado en Bloque 3)
+
+Los permisos se almacenan como **13 columnas booleanas en `profiles`** (todas por defecto en `FALSE`):
+- Pacientes: `ver_pacientes`, `gestionar_pacientes`
+- Historia clínica: `ver_historia_clinica`, `crear_consultas`, `finalizar_consultas`
+- Agenda y turnos: `ver_turnos`, `gestionar_turnos`
+- Pedidos médicos: `ver_pedidos`, `gestionar_pedidos`
+- Certificados: `ver_certificados`, `gestionar_certificados`
+- Difusión: `ver_difusion`, `gestionar_difusion`
+
+El RLS en Supabase y las API Routes validan estos permisos directamente consultando la fila de perfil del usuario asistente.
+
+---
+
+## Estado de desarrollo
+
+### Completado
+
+#### Bloque 1 — Historia clínica (modelo de consultas)
+- Tabla `consultas` con campos completos (motivo, anamnesis, examen físico, parámetros metabólicos específicos para diabetología, diagnóstico, plan, medicación, observaciones, próximo turno sugerido)
+- Estados: `borrador` (editable) y `finalizada` (inmutable)
+- RLS en `consultas`: asistentes solo acceden si `puede_ver_historias = true`
+- UI: línea de tiempo cronológica, formulario de nueva consulta, botón "Finalizar consulta"
+- PDF individual y completo de historia clínica
+
+#### Bloque 2 — Perfil del médico
+- Tipos de matrícula: MP (provincial), MN (nacional), ME (especialidad) — columna `matriculas` JSONB
+- Campo `titulo` / tratamiento: Dr., Dra., Lic., Sr., Sra., personalizado
+- Carga de `logo_url` (sello/logo institucional, base64)
+- Firma digitalizada: `firma_url` (pad de firma o imagen cargada, base64)
+- Panel de asistentes en `/perfil` con toggles de permisos (solo 2 permisos por ahora)
+
+#### Secciones base existentes
+- Dashboard, turnero (FullCalendar), CRUD de pacientes, pedidos médicos, certificados, difusión
+- Sistema de solicitudes de vinculación asistente ↔ médico (onboarding)
+- Notificaciones en tiempo real para solicitudes pendientes
+
+### En progreso
+
+**Bloque 3 — Permisos granulares para asistentes** (implementación en esta sesión)
+
+### Pendiente
+
+- Bloque 4: ajustes del turnero (sáb/dom, intervalos 10 min, recordatorios 24hs, categorías de turno, integración HC)
+- Bloque 5: mejoras en documentos PDF (QR de verificación, template mejorado)
+- Bloque 6: obra social libre, dashboard mejorado, notas internas, mensajería interna
+- Recetas (requiere firma digital y certificación ANMAT — bloqueado)
+
+---
+
+## Convenciones de código
+
+### Naming
+
+- **Archivos de componentes:** kebab-case (`perfil-form.tsx`, `layout-shell.tsx`)
+- **Componentes React:** PascalCase (`PerfilForm`, `LayoutShell`)
+- **Server Actions:** camelCase en archivos `actions.ts` dentro de la carpeta de la ruta
+- **Tipos/interfaces:** PascalCase (`Profile`, `Consulta`, `Asistente`)
+- **Funciones helper:** camelCase (`esMedico()`, `getMedicoId()`)
+
+### Patrón de datos
+
+- **Server Components** hacen el fetch de datos y los pasan como props a Client Components
+- **Server Actions** (`'use server'`) para todas las mutaciones — retornan `{ error: string | null }`
+- **Cliente Supabase:**
+  - `createClient()` de `@/lib/supabase/server` → Server Components y Server Actions (usa cookies)
+  - `createClient()` de `@/lib/supabase/client` → Client Components (browser)
+  - `createAdminClient()` de `@/lib/supabase/admin` → bypass RLS, solo en server, solo cuando es necesario
+- **No hay stores globales de cliente** (Zustand, Redux, etc.) — el estado se maneja con `useState` local
+
+### TypeScript
+
+- Strict mode habilitado (`tsconfig.json`)
+- Tipos explícitos en todas las funciones públicas
+- `any` usado de forma puntual con comentarios donde el tipo es dinámico
+
+### Imports
+
+- Alias `@/` apunta a `src/`
+- Imports agrupados: externas → componentes → lib → types
+
+### Formularios
+
+- React Hook Form + Zod para validación client-side
+- Validación también en Server Actions (nunca confiar solo en el cliente)
+
+---
+
+## Variables de entorno requeridas
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=       # URL pública del proyecto Supabase
+NEXT_PUBLIC_SUPABASE_ANON_KEY=  # Clave anon/public (segura para exponer)
+SUPABASE_SERVICE_ROLE_KEY=      # Clave service role (⚠️ SECRETA — bypass RLS)
+CRON_SECRET=                    # Secret para proteger /api/cron/recordatorios
+# Opcionales:
+# RESEND_API_KEY=
+# WHATSAPP_API_TOKEN=
+# WHATSAPP_PHONE_NUMBER_ID=
+```
+
+---
+
+## Comandos útiles
+
+```bash
+npm run dev      # Servidor de desarrollo (Next.js)
+npm run build    # Build de producción
+npm run start    # Servidor de producción
+npm run lint     # ESLint
+```
+
+---
+
+## Reglas de negocio importantes
+
+1. **Historia clínica inmutable:** Una consulta en estado `finalizada` no puede editarse desde la UI. Solo el médico puede finalizar una consulta (el asistente puede crearla en borrador).
+2. **Médico = acceso total:** El médico titular tiene acceso irrestricto a todos sus datos. Los asistentes solo acceden a lo que el médico habilitó explícitamente.
+3. **Tipos de matrícula:** MP (provincial), MN (nacional), ME (especialidad). Un médico puede tener más de una. Se almacenan en `profiles.matriculas` (JSONB array de `{tipo, numero}`).
+4. **Documentos con encabezado médico:** Pedidos y certificados llevan logo institucional, matrícula(s) y título del médico en el encabezado del PDF.
+5. **Tenant aislado:** Toda la data de pacientes, turnos y documentos está aislada por médico. No hay data compartida entre médicos distintos.
+6. **Asistente sin vínculo:** Un asistente sin `medico_id` es redirigido al onboarding y no puede usar la app hasta vincularse.
+7. **Firma digital:** Solo el médico tiene `firma_url`. Se estampa en PDFs. Los asistentes no pueden tener firma propia.
+8. **Recetas:** Solo el médico puede ver recetas. La creación está bloqueada (requiere certificación ANMAT pendiente).
+
+---
+
+## Observaciones y deuda técnica
+
+1. **Hooks vacíos:** Los archivos en `src/hooks/` (`use-auth.ts`, `use-pacientes.ts`, `use-role.ts`, `use-turnos.ts`) tienen solo 11 bytes — son stubs vacíos. La lógica real está en Server Components y Server Actions, no en hooks de cliente.
+
+2. **Permisos mezclados (problema del Bloque 3):** `puede_ver_historias` mezcla "ver" y "editar" historia clínica en un solo permiso. El Bloque 3 los separa y agrega permisos para todas las secciones.
+
+3. **`puede_editar_agenda` con nombre confuso:** El campo actual controla tanto turnos como bloqueos de agenda, pero el label en la UI dice "Modificar Agenda". En el Bloque 3 se reemplaza con permisos más específicos.
+
+4. **Columna `matricula` deprecada:** `profiles.matricula` (TEXT simple) fue reemplazada por `profiles.matriculas` (JSONB array). La columna vieja sigue en la tabla. El código usa `matriculas` (array).
+
+5. **Admin client para permisos:** `actualizarPermisoAsistente` usa el admin client (bypass RLS) para actualizar permisos en `profiles`. Esto es necesario porque la política `profiles_update_own` solo permite que cada usuario actualice su propio perfil, y el médico necesita actualizar el perfil del asistente.
+
+6. **`puede_ver_historias` default TRUE en código pero FALSE en DB:** En `perfil/page.tsx` se hace `?? true` como fallback, pero la migración 013 cambió el default a FALSE. Hay que ser consistente: el default real en DB es FALSE.
+
+7. **Migración `20260326204733_fix_rls_recursion.sql`** tiene nombre de timestamp (convención diferente al resto que usa numeración secuencial). Posiblemente fue aplicada con Supabase CLI en un momento distinto.
+
+8. **No hay middleware explícito:** No se encontró `middleware.ts` en la raíz o en `src/`. La protección de rutas se hace dentro de cada `layout.tsx` con redirects. Puede ser un punto de entrada si alguien bypasea el layout.
+
+9. **`difusion_posts.medico_id`** fue agregado en la migración 010 como comentario (ya ejecutado). Si la tabla existía antes, puede haber registros sin `medico_id` si la migración de backfill no se completó correctamente.
+
+10. **Permisos de asistentes en RLS vs UI:** Actualmente el RLS usa `puede_ver_historias` para restringir acceso a `historia_clinica` y `consultas`. Con el Bloque 3, se necesitan nuevas funciones helper y políticas para los nuevos permisos granulares.

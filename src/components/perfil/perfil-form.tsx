@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import {
   User, Shield, FileSignature, Users, Loader2, Trash2, Upload, AlertCircle, FileImage, Plus, Building2,
@@ -17,27 +18,18 @@ import { cn } from '@/lib/utils/cn'
 import { SignaturePad } from './signature-pad'
 import {
   actualizarPerfil, guardarFirma, guardarLogo,
-  actualizarPermisoAsistente, desvincularAsistente,
+  actualizarPermisosAsistente, desvincularAsistente,
 } from '@/app/(app)/perfil/actions'
-import type { Matricula, MatriculaTipo } from '@/types/roles'
-import { TITULOS_DISPONIBLES } from '@/types/roles'
-
-// ── Switch custom ────────────────────────────────────────────
-function Switch({ checked, onCheckedChange, disabled }: { checked: boolean; onCheckedChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <button type="button" role="switch" aria-checked={checked} disabled={disabled}
-      onClick={() => onCheckedChange(!checked)}
-      className={cn('relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none',
-        checked ? 'bg-primary' : 'bg-muted-foreground/30', disabled && 'opacity-50 cursor-not-allowed')}>
-      <span aria-hidden="true" className={cn('pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out', checked ? 'translate-x-4' : 'translate-x-0')} />
-    </button>
-  )
-}
+import type { Matricula, MatriculaTipo, PermisosAsistente, PermisoKey } from '@/types/roles'
+import { TITULOS_DISPONIBLES, PERMISO_LABELS, PERMISOS_GRUPOS } from '@/types/roles'
 
 // ── Tipos ────────────────────────────────────────────────────
 interface Asistente {
-  id: string; full_name: string; email: string
-  puede_ver_historias: boolean; puede_editar_agenda: boolean; created_at: string
+  id: string
+  full_name: string
+  email: string
+  permisos: PermisosAsistente
+  created_at: string
 }
 
 interface PerfilFormProps {
@@ -45,7 +37,8 @@ interface PerfilFormProps {
     id: string; full_name: string; role: 'medico' | 'asistente'
     matriculas: Matricula[]; titulo: string | null
     firma_url: string | null; logo_url: string | null
-    puede_ver_historias: boolean; puede_editar_agenda: boolean; medico_id: string | null
+    medico_id: string | null
+    permisos: PermisosAsistente
   }
   userEmail: string
   medicoVinculado?: { full_name: string; email: string } | null
@@ -218,6 +211,153 @@ function ImageUploader({
   )
 }
 
+// ── Tarjeta de Asistente con Permisos Expandibles ──────────────
+function AsistenteCard({
+  asistente,
+  onDesvincular,
+  isPendingGlobal,
+}: {
+  asistente: Asistente
+  onDesvincular: (id: string) => void
+  isPendingGlobal: boolean
+}) {
+  const [permisos, setPermisos] = useState<PermisosAsistente>(asistente.permisos)
+  const [isSaving, startSaving] = useTransition()
+  const [isOpen, setIsOpen] = useState(false)
+  const router = useRouter()
+
+  const handleToggle = (key: PermisoKey, value: boolean) => {
+    setPermisos((prev) => {
+      const next = { ...prev, [key]: value }
+      // Dependencia lógica: si ver_historia_clinica = false, se apagan crear_consultas y finalizar_consultas
+      if (key === 'ver_historia_clinica' && !value) {
+        next.crear_consultas = false
+        next.finalizar_consultas = false
+      }
+      return next
+    })
+  }
+
+  const hasChanges = JSON.stringify(permisos) !== JSON.stringify(asistente.permisos)
+
+  const handleSave = async () => {
+    startSaving(async () => {
+      const res = await actualizarPermisosAsistente(asistente.id, permisos)
+      if (res.error) {
+        toast.error(res.error)
+      } else {
+        toast.success('Permisos actualizados')
+        asistente.permisos = permisos
+        router.refresh()
+      }
+    })
+  }
+
+  const initials = asistente.full_name
+    .split(' ')
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+
+  return (
+    <Card className="border border-border/60 bg-card overflow-hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-4">
+        <div className="flex items-center gap-3">
+          <Avatar className="h-10 w-10">
+            <AvatarFallback className="bg-primary/10 text-primary font-bold">{initials}</AvatarFallback>
+          </Avatar>
+          <div>
+            <p className="font-semibold text-sm text-foreground leading-tight">{asistente.full_name}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{asistente.email}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setIsOpen(!isOpen)}
+            className="text-xs"
+          >
+            {isOpen ? 'Ocultar permisos' : 'Ver y editar permisos'}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onDesvincular(asistente.id)}
+            disabled={isPendingGlobal || isSaving}
+            className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 text-xs px-2"
+          >
+            <Trash2 className="h-3.5 w-3.5" />Desvincular
+          </Button>
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className="border-t border-border bg-muted/10 p-4 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {PERMISOS_GRUPOS.map((grupo) => (
+              <div key={grupo.titulo} className="space-y-3 p-3 rounded-lg bg-background border border-border/50">
+                <p className="text-xs font-bold text-foreground/80 tracking-wide border-b border-border/60 pb-1">
+                  {grupo.titulo}
+                </p>
+                <div className="space-y-2.5">
+                  {grupo.permisos.map((perm) => {
+                    const isDependentDisabled =
+                      (perm === 'crear_consultas' || perm === 'finalizar_consultas') &&
+                      !permisos.ver_historia_clinica
+
+                    const isChecked = permisos[perm]
+
+                    return (
+                      <div key={perm} className="flex items-center justify-between text-xs py-0.5">
+                        <div className="space-y-0.5 pr-2">
+                          <p className="font-medium text-foreground">{PERMISO_LABELS[perm]}</p>
+                        </div>
+                        <Switch
+                          checked={isChecked}
+                          disabled={isSaving || isDependentDisabled}
+                          onCheckedChange={(v) => handleToggle(perm, v)}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-2 border-t border-border/60 pt-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!hasChanges || isSaving}
+              onClick={() => setPermisos(asistente.permisos)}
+              className="text-xs"
+            >
+              Deshacer
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!hasChanges || isSaving}
+              onClick={handleSave}
+              className="text-xs gap-1.5"
+            >
+              {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Guardar permisos
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 // ── Componente principal ─────────────────────────────────────
 export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesIniciales }: PerfilFormProps) {
   const router = useRouter()
@@ -274,15 +414,6 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
     })
   }
 
-  // Asistentes
-  const handleTogglePermiso = async (id: string, permiso: 'puede_ver_historias' | 'puede_editar_agenda', valor: boolean) => {
-    setAsistentes((prev) => prev.map((a) => a.id === id ? { ...a, [permiso]: valor } : a))
-    const res = await actualizarPermisoAsistente(id, permiso, valor)
-    if (res.error) {
-      toast.error(res.error)
-      setAsistentes((prev) => prev.map((a) => a.id === id ? { ...a, [permiso]: !valor } : a))
-    } else { toast.success('Permiso actualizado'); router.refresh() }
-  }
   const handleDesvincular = async (id: string) => {
     startTransition(async () => {
       const res = await desvincularAsistente(id)
@@ -320,7 +451,7 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
           <Card className="border-border/60">
             <CardHeader>
               <CardTitle className="text-lg">Datos Personales</CardTitle>
-              <CardDescription>Información de contacto y acreditación del profesional.</CardDescription>
+              <CardDescription>Información de contacto y Acreditación del profesional.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSaveDatos} className="space-y-6">
@@ -389,14 +520,33 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
 
                 {/* Permisos asistente */}
                 {!isMedico && medicoVinculado && (
-                  <div className="p-3 bg-primary/5 rounded-lg border border-primary/10 flex items-start gap-2.5">
-                    <AlertCircle className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-xs font-bold text-primary uppercase tracking-wide">Tus permisos activos</p>
-                      <ul className="text-xs text-muted-foreground list-disc list-inside mt-1.5 space-y-1">
-                        <li>Historias clínicas: <strong className={profile.puede_ver_historias ? 'text-emerald-600' : 'text-rose-500'}>{profile.puede_ver_historias ? 'Habilitado' : 'Desactivado'}</strong></li>
-                        <li>Modificar agenda: <strong className={profile.puede_editar_agenda ? 'text-emerald-600' : 'text-rose-500'}>{profile.puede_editar_agenda ? 'Habilitado' : 'Desactivado'}</strong></li>
-                      </ul>
+                  <div className="p-4 bg-muted/40 rounded-xl border border-border">
+                    <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                      <Shield className="h-4 w-4 text-primary" />
+                      Tus permisos activos
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {PERMISOS_GRUPOS.map((grupo) => (
+                        <div key={grupo.titulo} className="space-y-1.5 p-3 rounded-lg bg-background border border-border/60">
+                          <p className="text-xs font-bold text-foreground/85">{grupo.titulo}</p>
+                          <ul className="text-xs space-y-1.5 text-muted-foreground mt-1">
+                            {grupo.permisos.map((perm) => {
+                              const habilitado = profile.permisos[perm] === true
+                              return (
+                                <li key={perm} className="flex items-center justify-between">
+                                  <span>{PERMISO_LABELS[perm]}</span>
+                                  <span className={cn(
+                                    "px-1.5 py-0.5 rounded text-[10px] font-semibold",
+                                    habilitado ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-500"
+                                  )}>
+                                    {habilitado ? 'Habilitado' : 'Desactivado'}
+                                  </span>
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -478,36 +628,12 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
               ) : (
                 <div className="space-y-4">
                   {asistentes.map((a) => (
-                    <div key={a.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 rounded-xl border border-border bg-card/60 gap-4">
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-10 w-10">
-                          <AvatarFallback className="bg-primary/10 text-primary font-bold">{a.full_name.charAt(0).toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="font-semibold text-sm text-foreground leading-tight">{a.full_name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{a.email}</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                        {(['puede_ver_historias', 'puede_editar_agenda'] as const).map((permiso) => (
-                          <div key={permiso} className="flex items-center gap-2">
-                            <Switch checked={a[permiso]} onCheckedChange={(v) => handleTogglePermiso(a.id, permiso, v)} />
-                            <div className="text-left">
-                              <p className="text-[11px] font-medium text-foreground leading-none">
-                                {permiso === 'puede_ver_historias' ? 'Historias Clínicas' : 'Modificar Agenda'}
-                              </p>
-                              <p className="text-[9px] text-muted-foreground mt-0.5">
-                                {permiso === 'puede_ver_historias' ? 'Ver y editar' : 'Agenda y turnos'}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                        <Button type="button" variant="ghost" size="sm" onClick={() => handleDesvincular(a.id)} disabled={isPending}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1 h-8 text-xs px-2">
-                          <Trash2 className="h-3.5 w-3.5" />Desvincular
-                        </Button>
-                      </div>
-                    </div>
+                    <AsistenteCard
+                      key={a.id}
+                      asistente={a}
+                      onDesvincular={handleDesvincular}
+                      isPendingGlobal={isPending}
+                    />
                   ))}
                 </div>
               )}
