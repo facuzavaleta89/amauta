@@ -24,7 +24,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('role, medico_id, puede_ver_historias')
+    .select('role, medico_id, ver_historia_clinica')
     .eq('id', user.id)
     .single()
 
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   }
 
   // Asistentes necesitan permiso explícito para modificar historias clínicas
-  if (profile.role === 'asistente' && !profile.puede_ver_historias) {
+  if (profile.role === 'asistente' && !profile.ver_historia_clinica) {
     return NextResponse.json({ error: 'Sin permisos para modificar historias clínicas' }, { status: 403 })
   }
 

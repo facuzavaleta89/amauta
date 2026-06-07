@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { Matricula } from '@/types/roles'
+import type { Matricula, PermisosAsistente } from '@/types/roles'
+import { PERMISOS_DEFAULT } from '@/types/roles'
 
 const TIPOS_VALIDOS = ['MP', 'MN', 'ME'] as const
 
@@ -179,8 +180,7 @@ export async function obtenerAsistentes(): Promise<{
     id: string
     full_name: string
     email: string
-    puede_ver_historias: boolean
-    puede_editar_agenda: boolean
+    permisos: PermisosAsistente
     created_at: string
   }[] | null
   error: string | null
@@ -192,7 +192,15 @@ export async function obtenerAsistentes(): Promise<{
 
     const { data: asistentes, error } = await supabase
       .from('profiles')
-      .select('id, full_name, puede_ver_historias, puede_editar_agenda, created_at')
+      .select(`
+        id, full_name, created_at,
+        ver_pacientes, editar_pacientes,
+        ver_historia_clinica, crear_consultas, finalizar_consultas,
+        ver_turnos, gestionar_turnos,
+        ver_pedidos, crear_pedidos,
+        ver_certificados, crear_certificados,
+        acceso_mensajeria
+      `)
       .eq('role', 'asistente')
       .eq('medico_id', user.id)
       .order('full_name')
@@ -208,9 +216,21 @@ export async function obtenerAsistentes(): Promise<{
           id: a.id,
           full_name: a.full_name,
           email: authData?.user?.email ?? 'Sin email',
-          puede_ver_historias: a.puede_ver_historias ?? true,
-          puede_editar_agenda: a.puede_editar_agenda ?? true,
           created_at: a.created_at,
+          permisos: {
+            ver_pacientes:        a.ver_pacientes        ?? PERMISOS_DEFAULT.ver_pacientes,
+            editar_pacientes:     a.editar_pacientes     ?? PERMISOS_DEFAULT.editar_pacientes,
+            ver_historia_clinica: a.ver_historia_clinica ?? PERMISOS_DEFAULT.ver_historia_clinica,
+            crear_consultas:      a.crear_consultas      ?? PERMISOS_DEFAULT.crear_consultas,
+            finalizar_consultas:  a.finalizar_consultas  ?? PERMISOS_DEFAULT.finalizar_consultas,
+            ver_turnos:           a.ver_turnos           ?? PERMISOS_DEFAULT.ver_turnos,
+            gestionar_turnos:     a.gestionar_turnos     ?? PERMISOS_DEFAULT.gestionar_turnos,
+            ver_pedidos:          a.ver_pedidos          ?? PERMISOS_DEFAULT.ver_pedidos,
+            crear_pedidos:        a.crear_pedidos        ?? PERMISOS_DEFAULT.crear_pedidos,
+            ver_certificados:     a.ver_certificados     ?? PERMISOS_DEFAULT.ver_certificados,
+            crear_certificados:   a.crear_certificados   ?? PERMISOS_DEFAULT.crear_certificados,
+            acceso_mensajeria:    a.acceso_mensajeria    ?? PERMISOS_DEFAULT.acceso_mensajeria,
+          } satisfies PermisosAsistente,
         }
       })
     )
@@ -223,17 +243,28 @@ export async function obtenerAsistentes(): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────
-// Actualizar permisos de un asistente
+// Actualizar TODOS los permisos de un asistente (operación atómica)
+// El médico envía el objeto completo de 12 permisos de una vez.
 // ─────────────────────────────────────────────────────────────
-export async function actualizarPermisoAsistente(
+export async function actualizarPermisosAsistente(
   asistenteId: string,
-  permiso: 'puede_ver_historias' | 'puede_editar_agenda',
-  valor: boolean
+  permisos: PermisosAsistente
 ): Promise<{ error: string | null }> {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { error: 'No autenticado.' }
+
+    // Verificar que el médico es dueño del asistente
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    if (profile?.role !== 'medico') {
+      return { error: 'Solo un médico puede modificar permisos de asistentes.' }
+    }
 
     const { data: asistente } = await supabase
       .from('profiles')
@@ -245,10 +276,31 @@ export async function actualizarPermisoAsistente(
       return { error: 'No tenés permisos sobre este asistente.' }
     }
 
+    // Validar que todos los valores son booleanos
+    const camposPermitidos: (keyof PermisosAsistente)[] = [
+      'ver_pacientes', 'editar_pacientes',
+      'ver_historia_clinica', 'crear_consultas', 'finalizar_consultas',
+      'ver_turnos', 'gestionar_turnos',
+      'ver_pedidos', 'crear_pedidos',
+      'ver_certificados', 'crear_certificados',
+      'acceso_mensajeria',
+    ]
+
+    const updatePayload: Record<string, boolean> = {}
+    for (const campo of camposPermitidos) {
+      const valor = permisos[campo]
+      if (typeof valor !== 'boolean') {
+        return { error: `El valor de '${campo}' debe ser booleano.` }
+      }
+      updatePayload[campo] = valor
+    }
+
+    // Usar admin client para actualizar el perfil del asistente
+    // (RLS no permite al médico actualizar el perfil ajeno)
     const admin = createAdminClient()
     const { error } = await admin
       .from('profiles')
-      .update({ [permiso]: valor })
+      .update(updatePayload)
       .eq('id', asistenteId)
 
     if (error) throw error
@@ -256,7 +308,7 @@ export async function actualizarPermisoAsistente(
     revalidatePath('/perfil')
     return { error: null }
   } catch (err: any) {
-    console.error('[actualizarPermisoAsistente]', err)
+    console.error('[actualizarPermisosAsistente]', err)
     return { error: err.message || 'Error al actualizar permisos del asistente.' }
   }
 }

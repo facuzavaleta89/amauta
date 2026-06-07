@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { PatientTable } from '@/components/pacientes/patient-table'
 import { PatientFilters } from '@/components/pacientes/patient-filters'
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,11 @@ interface PacientesPageProps {
 }
 
 export default async function PacientesPage({ searchParams }: PacientesPageProps) {
+  // Guard: redirige a /sin-acceso si el asistente no tiene ver_pacientes
+  await verificarPermiso('ver_pacientes')
+
   const supabase = await createClient()
+
 
   const resolvedParams = await searchParams
   const q = typeof resolvedParams.q === 'string' ? resolvedParams.q : ''

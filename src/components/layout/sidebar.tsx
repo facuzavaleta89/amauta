@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getNavItemsByRole } from '@/constants/nav-items'
 import type { UserRole } from '@/types/roles'
+import { usePermisos } from '@/contexts/permisos-context'
 
 interface SidebarProps {
   userFullName: string
@@ -22,7 +23,15 @@ interface SidebarProps {
 
 export function Sidebar({ userFullName, userRole, userEmail, userTitulo, open = false, onClose }: SidebarProps) {
   const pathname = usePathname()
-  const items = getNavItemsByRole(userRole)
+  const { tienePermiso, esMedico } = usePermisos()
+
+  // Filtrar items: primero por rol, luego por permiso (asistentes)
+  const allItems = getNavItemsByRole(userRole)
+  const items = allItems.filter((item) => {
+    if (esMedico) return true           // Médico ve todo
+    if (!item.permiso) return true      // Sin permiso requerido = siempre visible
+    return tienePermiso(item.permiso)   // Verificar permiso del asistente
+  })
 
   const initials = userFullName
     .split(' ')
@@ -127,3 +136,4 @@ export function Sidebar({ userFullName, userRole, userEmail, userTitulo, open = 
     </aside>
   )
 }
+

@@ -1,13 +1,15 @@
-import { createClient } from '@/lib/supabase/server'
+import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { CalendarView } from '@/components/turnero/calendar-view'
 import PageHeader from '@/components/shared/page-header'
-import { NotificacionesMedico } from '@/components/layout/notificaciones-medico'
 
 export const metadata = {
   title: 'Mi Agenda',
 }
 
 export default async function TurnosPage() {
+  // Guard: redirige a /sin-acceso si el asistente no tiene ver_turnos
+  await verificarPermiso('ver_turnos')
+
   return (
     <div className="flex flex-col h-[calc(100vh-theme(spacing.16))] gap-4">
       <PageHeader

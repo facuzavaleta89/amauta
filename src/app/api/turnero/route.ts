@@ -19,9 +19,13 @@ export async function GET(request: NextRequest) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, medico_id')
+      .select('role, medico_id, ver_turnos')
       .eq('id', user.id)
       .single()
+
+    if (profile?.role === 'asistente' && profile?.ver_turnos === false) {
+      return NextResponse.json({ error: 'No tenés permisos para ver los turnos.' }, { status: 403 })
+    }
 
     const tenantMedicoId =
       profile?.role === 'medico' ? user.id :
@@ -87,11 +91,11 @@ export async function POST(request: NextRequest) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, medico_id, puede_editar_agenda')
+      .select('role, medico_id, gestionar_turnos')
       .eq('id', user.id)
       .single()
 
-    if (profile?.role === 'asistente' && profile?.puede_editar_agenda === false) {
+    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
       return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
     }
 

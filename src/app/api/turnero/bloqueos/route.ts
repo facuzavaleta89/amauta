@@ -23,11 +23,11 @@ export async function POST(request: NextRequest) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, medico_id, puede_editar_agenda')
+      .select('role, medico_id, gestionar_turnos')
       .eq('id', user.id)
       .single()
 
-    if (profile?.role === 'asistente' && profile?.puede_editar_agenda === false) {
+    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
       return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
     }
 

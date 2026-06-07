@@ -7,17 +7,21 @@ export const dynamic = 'force-dynamic'
 
 // ── Helpers ────────────────────────────────────────────────────
 
-async function getTenantContext(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
+async function getTenantContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  permisoRequerido: string
+) {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, medico_id, puede_ver_historias')
+    .select('role, medico_id, ver_pacientes, gestionar_pacientes, ver_historia_clinica, crear_consultas, finalizar_consultas, ver_turnos, gestionar_turnos, ver_pedidos, gestionar_pedidos, ver_difusion, gestionar_difusion')
     .eq('id', userId)
     .single()
 
   if (!profile) return null
 
-  // Asistentes no tienen permiso a HC por defecto
-  if (profile.role === 'asistente' && !profile.puede_ver_historias) {
+  // Si es asistente y no tiene el permiso requerido
+  if (profile.role === 'asistente' && !(profile as any)[permisoRequerido]) {
     return null
   }
 
@@ -40,7 +44,7 @@ export async function GET(request: NextRequest) {
     const rl = rateLimit(request, { key: `consultas_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
+    const ctx = await getTenantContext(supabase, user.id, 'ver_historia_clinica')
     if (!ctx) return NextResponse.json({ error: 'Sin permisos para ver historias clínicas' }, { status: 403 })
 
     const { searchParams } = new URL(request.url)
@@ -85,7 +89,7 @@ export async function POST(request: NextRequest) {
     const rl = rateLimit(request, { key: `consultas_post:${user.id}`, limit: 20, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
+    const ctx = await getTenantContext(supabase, user.id, 'crear_consultas')
     if (!ctx) return NextResponse.json({ error: 'Sin permisos para registrar consultas' }, { status: 403 })
 
     const body = await request.json()
