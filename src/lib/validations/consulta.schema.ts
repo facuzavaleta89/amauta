@@ -49,20 +49,19 @@ export const consultaSchema = z
     medicacion_actual: z.string().max(10000).optional().nullable(),
     observaciones:    z.string().max(10000).optional().nullable(),
 
-    // Seguimiento
-    proximo_turno_sugerido: z.string().optional().nullable(),
+    // Seguimiento — acepta fecha simple (YYYY-MM-DD) o datetime completo
+    proximo_turno_sugerido: z
+      .string()
+      .optional()
+      .nullable()
+      .refine((v) => {
+        if (!v || v.trim() === '') return true
+        // Acepta YYYY-MM-DD o ISO datetime completo
+        return /^\d{4}-\d{2}-\d{2}/.test(v)
+      }, 'La fecha del próximo turno no tiene un formato válido.'),
 
     // Estado
     estado: z.enum(['borrador', 'finalizada']).default('borrador'),
-  })
-  .refine((data) => {
-    if (data.proximo_turno_sugerido && data.proximo_turno_sugerido.trim() !== '') {
-      return data.proximo_turno_sugerido.includes('T') && data.proximo_turno_sugerido.includes(':');
-    }
-    return true;
-  }, {
-    message: 'Debés ingresar la fecha y la hora completa para el próximo turno sugerido.',
-    path: ['proximo_turno_sugerido']
   })
   .transform((data) => ({
     ...data,

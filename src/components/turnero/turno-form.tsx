@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Loader2, CalendarPlus, Trash2, FileText } from 'lucide-react'
+import { Loader2, CalendarPlus, Trash2, FileText, Stethoscope, GraduationCap, User, Clipboard, Bell } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
 
@@ -46,13 +47,24 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
+// ── Configuración visual de estados ──────────────────────────
 const ESTADO_CONFIG: Record<string, { label: string; className: string }> = {
-  pendiente:    { label: 'Pendiente',    className: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
-  confirmado:   { label: 'Confirmado',   className: 'bg-blue-100 text-blue-800 border-blue-200' },
-  presente:     { label: 'Presente',     className: 'bg-green-100 text-green-800 border-green-200' },
-  ausente:      { label: 'Ausente',      className: 'bg-red-100 text-red-800 border-red-200' },
-  cancelado:    { label: 'Cancelado',    className: 'bg-gray-100 text-gray-600 border-gray-200' },
-  reprogramado: { label: 'Reprogramado', className: 'bg-purple-100 text-purple-800 border-purple-200' },
+  pendiente:            { label: 'Pendiente',             className: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+  confirmado:           { label: 'Confirmado',            className: 'bg-blue-100 text-blue-800 border-blue-200' },
+  presente:             { label: 'Presente',              className: 'bg-green-100 text-green-800 border-green-200' },
+  ausente:              { label: 'Ausente',               className: 'bg-red-100 text-red-800 border-red-200' },
+  cancelado:            { label: 'Cancelado',             className: 'bg-gray-100 text-gray-600 border-gray-200' },
+  reprogramado:         { label: 'Reprogramado',          className: 'bg-purple-100 text-purple-800 border-purple-200' },
+  pendiente_confirmar:  { label: 'Pendiente de confirmar', className: 'bg-orange-100 text-orange-800 border-orange-200' },
+}
+
+// ── Configuración de categorías ─────────────────────────────
+const CATEGORIA_CONFIG: Record<string, { label: string; icon: LucideIcon }> = {
+  turno_medico:    { label: 'Turno médico',   icon: Stethoscope },
+  curso:           { label: 'Curso',          icon: GraduationCap },
+  personal:        { label: 'Personal',       icon: User },
+  administrativo:  { label: 'Administrativo', icon: Clipboard },
+  recordatorio:    { label: 'Recordatorio',   icon: Bell },
 }
 
 interface TurnoFormModalProps {
@@ -87,6 +99,9 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
       motivo: '',
       notas: '',
       estado: 'pendiente',
+      categoria: 'turno_medico',
+      origen: 'manual',
+      consulta_id: undefined,
       color: undefined
     }
   })
@@ -96,6 +111,10 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
   const [searching, setSearching] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
+
+  // Watch categoria to drive conditional fields
+  const categoriaActual = form.watch('categoria')
+  const esTurnoMedico = categoriaActual === 'turno_medico'
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -142,8 +161,15 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
           motivo: initialData.motivo || '',
           notas: initialData.notas || '',
           estado: initialData.estado || 'pendiente',
+          categoria: initialData.categoria || 'turno_medico',
+          origen: initialData.origen || 'manual',
+          consulta_id: initialData.consulta_id || undefined,
           color: initialData.color
         })
+        // Pre-fill search term if patient name exists
+        if (initialData.paciente_nombre_libre) {
+          setSearchTerm(initialData.paciente_nombre_libre)
+        }
       } else if (initialDates) {
         form.reset({
           paciente_id: undefined,
@@ -153,6 +179,9 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
           motivo: '',
           notas: '',
           estado: 'pendiente',
+          categoria: 'turno_medico',
+          origen: 'manual',
+          consulta_id: undefined,
           color: undefined
         })
       }
@@ -163,6 +192,17 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
       setShowDropdown(false)
     }
   }, [initialDates, initialData, open, form])
+
+  // When category changes away from turno_medico, clear patient fields
+  useEffect(() => {
+    if (!esTurnoMedico) {
+      form.setValue('paciente_id', undefined)
+      form.setValue('paciente_nombre_libre', '')
+      setSearchTerm('')
+      setPacientes([])
+      setShowDropdown(false)
+    }
+  }, [esTurnoMedico, form])
 
   async function onDelete() {
       if (!initialData) return
@@ -220,18 +260,18 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-[480px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-              <CalendarPlus className="w-4 h-4 text-primary" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+              <CalendarPlus className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <DialogTitle>{initialData ? 'Editar Turno' : 'Agendar Nuevo Turno'}</DialogTitle>
+              <DialogTitle>{initialData ? 'Editar Evento' : 'Nuevo Evento'}</DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
                 {initialData
-                  ? 'Modificá los detalles del turno.'
-                  : 'Completá los datos del turno. Podés asignar un paciente o usar nombre libre.'}
+                  ? 'Modificá los detalles del evento.'
+                  : 'Completá los datos del evento.'}
               </DialogDescription>
             </div>
           </div>
@@ -247,73 +287,110 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            
+
+            {/* ── Categoría ──────────────────────────────── */}
             <FormField
               control={form.control}
-              name="paciente_nombre_libre"
+              name="categoria"
               render={({ field }) => (
-                <FormItem className="relative" ref={wrapperRef}>
-                  <div className="flex items-center justify-between">
-                    <FormLabel>Paciente</FormLabel>
-                    {initialData?.paciente_id && (
-                      <Link
-                        href={`/pacientes/${initialData.paciente_id}/historia`}
-                        className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
-                        target="_blank"
-                      >
-                        <FileText className="h-3 w-3" />
-                        Ver historia clínica
-                      </Link>
-                    )}
-                  </div>
-                  <FormControl>
-                    <Input 
-                      placeholder="Buscar por nombre o ingresá uno libre..." 
-                      {...field} 
-                      value={field.value || ''}
-                      onChange={(e) => {
-                          field.onChange(e)
-                          form.setValue('paciente_id', undefined)
-                          setSearchTerm(e.target.value)
-                      }}
-                      onFocus={() => { if(pacientes.length > 0 || searchTerm.trim().length >= 3) setShowDropdown(true) }}
-                    />
-                  </FormControl>
-                  {showDropdown && (
-                    <div className="absolute top-[4.2rem] left-0 w-full bg-popover text-popover-foreground border rounded-lg shadow-lg z-50 max-h-56 overflow-y-auto">
-                       {searching ? (
-                          <div className="p-3 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Buscando...</div>
-                       ) : pacientes.length > 0 ? (
-                          <ul className="py-1">
-                             {pacientes.map(p => (
-                               <li 
-                                 key={p.id} 
-                                 className="px-3 py-2 text-sm hover:bg-muted cursor-pointer flex justify-between items-center"
-                                 onClick={() => {
-                                    form.setValue('paciente_id', p.id)
-                                    form.setValue('paciente_nombre_libre', p.nombre_completo)
-                                    form.clearErrors('paciente_nombre_libre')
-                                    setSearchTerm('')
-                                    setShowDropdown(false)
-                                 }}
-                               >
-                                  <span className="font-medium">{p.nombre_completo}</span>
-                                  <span className="text-xs text-muted-foreground">DNI: {p.dni || 'S/N'}</span>
-                               </li>
-                             ))}
-                          </ul>
-                       ) : (
-                          <div className="p-3 text-sm text-muted-foreground">
-                            No se encontraron pacientes. Se agendará como nombre libre.
-                          </div>
-                       )}
-                    </div>
-                  )}
+                <FormItem>
+                  <FormLabel>Tipo de evento</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccioná una categoría" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {Object.entries(CATEGORIA_CONFIG).map(([value, config]) => {
+                        const Icon = config.icon
+                        return (
+                          <SelectItem key={value} value={value}>
+                            <span className="flex items-center gap-2">
+                              <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                              <span>{config.label}</span>
+                            </span>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
+            {/* ── Paciente (solo turno_medico) ───────────────────── */}
+            {esTurnoMedico && (
+              <FormField
+                control={form.control}
+                name="paciente_nombre_libre"
+                render={({ field }) => (
+                  <FormItem className="relative" ref={wrapperRef}>
+                    <div className="flex items-center justify-between">
+                      <FormLabel>Paciente <span className="text-destructive">*</span></FormLabel>
+                      {initialData?.paciente_id && (
+                        <Link
+                          href={`/pacientes/${initialData.paciente_id}/historia`}
+                          className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
+                          target="_blank"
+                        >
+                          <FileText className="h-3 w-3" />
+                          Ver historia clínica
+                        </Link>
+                      )}
+                    </div>
+                    <FormControl>
+                      <Input
+                        placeholder="Buscar por nombre..."
+                        {...field}
+                        value={field.value || ''}
+                        onChange={(e) => {
+                            field.onChange(e)
+                            form.setValue('paciente_id', undefined)
+                            setSearchTerm(e.target.value)
+                        }}
+                        onFocus={() => { if(pacientes.length > 0 || searchTerm.trim().length >= 3) setShowDropdown(true) }}
+                      />
+                    </FormControl>
+                    {showDropdown && (
+                      <div className="absolute top-[4.2rem] left-0 w-full bg-popover text-popover-foreground border rounded-lg shadow-lg z-50 max-h-56 overflow-y-auto">
+                         {searching ? (
+                            <div className="p-3 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Buscando...</div>
+                         ) : pacientes.length > 0 ? (
+                            <ul className="py-1">
+                               {pacientes.map(p => (
+                                 <li
+                                   key={p.id}
+                                   className="px-3 py-2 text-sm hover:bg-muted cursor-pointer flex justify-between items-center"
+                                   onClick={() => {
+                                      form.setValue('paciente_id', p.id)
+                                      form.setValue('paciente_nombre_libre', p.nombre_completo)
+                                      form.clearErrors('paciente_id')
+                                      form.clearErrors('paciente_nombre_libre')
+                                      setSearchTerm('')
+                                      setShowDropdown(false)
+                                   }}
+                                 >
+                                    <span className="font-medium">{p.nombre_completo}</span>
+                                    <span className="text-xs text-muted-foreground">DNI: {p.dni || 'S/N'}</span>
+                                 </li>
+                               ))}
+                            </ul>
+                         ) : (
+                            <div className="p-3 text-sm text-muted-foreground">
+                              No se encontraron pacientes.
+                            </div>
+                         )}
+                      </div>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {/* ── Fechas ─────────────────────────────────────────── */}
             <div className="grid grid-cols-2 gap-4">
                <FormField
                   control={form.control}
@@ -322,7 +399,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                     <FormItem>
                       <FormLabel>Inicio</FormLabel>
                       <FormControl>
-                        <Input type="datetime-local" {...field} />
+                        <Input type="datetime-local" step={600} {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -335,7 +412,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                     <FormItem>
                       <FormLabel>Fin</FormLabel>
                       <FormControl>
-                        <Input type="datetime-local" {...field} />
+                        <Input type="datetime-local" step={600} {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -343,27 +420,41 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                 />
             </div>
 
+            {/* ── Motivo / Título ──────────────────────────────────── */}
             <FormField
               control={form.control}
               name="motivo"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Motivo de Consulta <span className="text-muted-foreground font-normal">(opcional)</span></FormLabel>
+                  <FormLabel>
+                    {esTurnoMedico
+                      ? <>Motivo de consulta <span className="text-muted-foreground font-normal">(opcional)</span></>
+                      : <>Título / descripción <span className="text-destructive">*</span></>
+                    }
+                  </FormLabel>
                   <FormControl>
-                     <Input placeholder="Control general, guardia, seguimiento..." {...field} value={field.value || ''} />
+                     <Input
+                       placeholder={esTurnoMedico
+                         ? 'Control general, guardia, seguimiento...'
+                         : 'Ej: Congreso de cardiología, Reunión administrativa...'
+                       }
+                       {...field}
+                       value={field.value || ''}
+                     />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
+            {/* ── Estado (solo edición) ────────────────────────────── */}
             {initialData && (
               <FormField
                 control={form.control}
                 name="estado"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Estado del Turno</FormLabel>
+                    <FormLabel>Estado</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -435,7 +526,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                   Cancelar
                 </Button>
                 <Button type="submit" disabled={isLoading} className="min-w-32">
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : (initialData ? 'Guardar Cambios' : 'Confirmar Turno')}
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : (initialData ? 'Guardar Cambios' : 'Guardar Evento')}
                 </Button>
               </div>
             </DialogFooter>

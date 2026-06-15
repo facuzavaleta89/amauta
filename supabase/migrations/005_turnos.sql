@@ -152,17 +152,18 @@ BEGIN
     INSERT INTO public.turnos_audit_log (turno_id, usuario_id, accion, detalle)
     VALUES (NEW.id, NEW.agendado_por, 'creado', to_jsonb(NEW));
   ELSIF TG_OP = 'UPDATE' THEN
+    -- COALESCE: si no hay sesión (ej: migraciones DDL), usa agendado_por como fallback
     INSERT INTO public.turnos_audit_log (turno_id, usuario_id, accion, detalle)
     VALUES (
       NEW.id,
-      auth.uid(),
+      COALESCE(auth.uid(), NEW.agendado_por),
       CASE
-        WHEN NEW.estado = 'cancelado' THEN 'cancelado'
+        WHEN NEW.estado = 'cancelado'             THEN 'cancelado'
         WHEN OLD.fecha_inicio <> NEW.fecha_inicio THEN 'reprogramado'
         ELSE 'modificado'
       END,
       jsonb_build_object(
-        'antes', to_jsonb(OLD),
+        'antes',   to_jsonb(OLD),
         'despues', to_jsonb(NEW)
       )
     );

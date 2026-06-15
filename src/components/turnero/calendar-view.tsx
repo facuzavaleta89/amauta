@@ -7,12 +7,26 @@ import interactionPlugin from '@fullcalendar/interaction'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import esLocale from '@fullcalendar/core/locales/es'
 import { toast } from 'sonner'
-import { Loader2, CalendarPlus, Ban, RefreshCw } from 'lucide-react'
+import { Loader2, CalendarPlus, Ban, RefreshCw, Tag, Stethoscope, GraduationCap, User, Clipboard, Bell } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 import { TurnoFormModal } from './turno-form'
 import { BlockSlotModal } from './block-slot-modal'
+
+// ── Categorías: mapa de estilos ─────────────────────────────
+import type { LucideIcon } from 'lucide-react'
+
+export const CATEGORIA_STYLES: Record<string, { accentClass: string; label: string; icon: LucideIcon }> = {
+  turno_medico:   { accentClass: 'categoria-turno-medico',   label: 'Turno médico',   icon: Stethoscope },
+  curso:          { accentClass: 'categoria-curso',          label: 'Curso',          icon: GraduationCap },
+  personal:       { accentClass: 'categoria-personal',       label: 'Personal',       icon: User },
+  administrativo: { accentClass: 'categoria-administrativo', label: 'Administrativo', icon: Clipboard },
+  recordatorio:   { accentClass: 'categoria-recordatorio',   label: 'Recordatorio',   icon: Bell },
+}
+
+const ALL_CATEGORIES = Object.keys(CATEGORIA_STYLES)
+const LS_FILTER_KEY = 'turnero_categoria_filter'
 
 // ── Hook: detecta si es móvil ────────────────────────────────
 function useIsMobile(breakpoint = 768) {
@@ -31,8 +45,7 @@ function useIsMobile(breakpoint = 768) {
 
 // ── Renderizado custom — vista semana/día ────────────────────
 function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 'turno' | 'bloqueo' }) {
-  const { type } = event.extendedProps
-  // Si no tiene type, es un mirror de selección. Usamos el creationMode activo.
+  const { type, raw } = event.extendedProps
   const isBloqueo = type === 'bloqueo' || (!type && creationMode === 'bloqueo')
 
   const fmt = (d: Date | null) =>
@@ -55,12 +68,23 @@ function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 
     )
   }
 
+  const categoria = raw?.categoria || 'turno_medico'
+  const catStyle = CATEGORIA_STYLES[categoria] || CATEGORIA_STYLES.turno_medico
+  const isPendienteConfirmar = raw?.estado === 'pendiente_confirmar'
+  const CatIcon = catStyle.icon
+
   return (
-    <div className="fc-event-custom fc-event-turno">
+    <div className={cn('fc-event-custom fc-event-turno', catStyle.accentClass, isPendienteConfirmar && 'fc-event-pendiente-confirmar')}>
       <div className="fc-event-accent" />
       <div className="fc-event-body">
         <span className="fc-event-time-label">{startTime} – {endTime}</span>
-        <span className="fc-event-title-label">{event.title}</span>
+        <span className="fc-event-title-label">
+          {categoria !== 'turno_medico' && <CatIcon className="fc-event-cat-icon" />}
+          {event.title}
+        </span>
+        {isPendienteConfirmar && (
+          <span className="fc-event-badge">Sin hora confirmada</span>
+        )}
       </div>
     </div>
   )
@@ -68,17 +92,27 @@ function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 
 
 // ── Renderizado custom — vista mes ───────────────────────────
 function DayGridEventContent({ event, creationMode }: { event: any; creationMode: 'turno' | 'bloqueo' }) {
-  const { type } = event.extendedProps
+  const { type, raw } = event.extendedProps
   const isBloqueo = type === 'bloqueo' || (!type && creationMode === 'bloqueo')
   const startTime = event.start
     ? event.start.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })
     : ''
 
+  const categoria = raw?.categoria || 'turno_medico'
+  const catStyle = CATEGORIA_STYLES[categoria] || CATEGORIA_STYLES.turno_medico
+  const CatIcon = catStyle.icon
+
   return (
-    <div className={`fc-daygrid-event-custom ${isBloqueo ? 'fc-daygrid-bloqueo' : 'fc-daygrid-turno'}`}>
+    <div className={cn(
+      `fc-daygrid-event-custom`,
+      isBloqueo ? 'fc-daygrid-bloqueo' : `fc-daygrid-turno ${catStyle.accentClass}`
+    )}>
       <span className="fc-daygrid-dot-custom" />
       <span className="fc-daygrid-time-custom">{startTime}</span>
-      <span className="fc-daygrid-title-custom">{event.title}</span>
+      <span className="fc-daygrid-title-custom">
+        {!isBloqueo && categoria !== 'turno_medico' && <CatIcon className="inline-block w-3 h-3 mr-0.5 opacity-70" />}
+        {event.title}
+      </span>
     </div>
   )
 }
@@ -94,6 +128,44 @@ export function CalendarView() {
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null)
   const [currentView, setCurrentView] = useState('timeGridWeek')
   const [creationMode, setCreationMode] = useState<'turno' | 'bloqueo'>('turno')
+  const [showFilterPanel, setShowFilterPanel] = useState(false)
+  const filterPanelRef = useRef<HTMLDivElement>(null)
+
+  // ── Filtros de categoría (persistidos en localStorage) ──
+  const [activeCategories, setActiveCategories] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set(ALL_CATEGORIES)
+    try {
+      const saved = localStorage.getItem(LS_FILTER_KEY)
+      if (saved) return new Set(JSON.parse(saved))
+    } catch {}
+    return new Set(ALL_CATEGORIES)
+  })
+
+  const toggleCategory = (cat: string) => {
+    setActiveCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) {
+        if (next.size === 1) return prev // siempre al menos una activa
+        next.delete(cat)
+      } else {
+        next.add(cat)
+      }
+      try { localStorage.setItem(LS_FILTER_KEY, JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }
+
+  // Cerrar panel al hacer click fuera
+  useEffect(() => {
+    if (!showFilterPanel) return
+    const handler = (e: MouseEvent) => {
+      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) {
+        setShowFilterPanel(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showFilterPanel])
 
   // Cambiar vista al detectar cambio de tamaño
   useEffect(() => {
@@ -114,15 +186,23 @@ export function CalendarView() {
 
         if (!res.ok) throw new Error(data.error)
 
-        const turnosMap = data.turnos.map((t: any) => ({
-          id: t.id,
-          title: t.paciente
-            ? t.paciente.nombre_completo
-            : t.paciente_nombre_libre || 'Turno Libre',
-          start: t.fecha_inicio,
-          end: t.fecha_fin,
-          extendedProps: { type: 'turno', raw: t },
-        }))
+        const savedCategories = activeCategories
+
+        const turnosMap = data.turnos
+          .filter((t: any) => {
+            const cat = t.categoria || 'turno_medico'
+            return savedCategories.has(cat)
+          })
+          .map((t: any) => ({
+            id: t.id,
+            title: t.paciente
+              ? t.paciente.nombre_completo
+              : t.motivo || t.paciente_nombre_libre || 'Turno Libre',
+            start: t.fecha_inicio,
+            end: t.fecha_fin,
+            allDay: t.estado === 'pendiente_confirmar',
+            extendedProps: { type: 'turno', raw: t },
+          }))
 
         const bloqueosMap = data.bloqueos.map((b: any) => ({
           id: `block-${b.id}`,
@@ -140,8 +220,13 @@ export function CalendarView() {
         setLoading(false)
       }
     },
-    [],
+    [activeCategories],
   )
+
+  // Refetch cuando cambian los filtros
+  useEffect(() => {
+    calendarRef.current?.getApi().refetchEvents()
+  }, [activeCategories])
 
   const handleDateSelect = (selectInfo: any) => {
     setSelectedEvent(null)
@@ -169,16 +254,26 @@ export function CalendarView() {
       return toast.error('No se puede arrastrar un bloqueo. Editalo desde el menú.')
     }
     try {
+      // Si se arrastra desde allDay a un slot con hora → confirmar el turno
+      const wasAllDay = dropInfo.oldEvent.allDay
+      const isNowTimed = !event.allDay
+      const newEstado = (wasAllDay && isNowTimed) ? 'confirmado' : undefined
+
       const res = await fetch(`/api/turnero/${event.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fecha_inicio: event.startStr, fecha_fin: event.endStr }),
+        body: JSON.stringify({
+          fecha_inicio: event.startStr,
+          fecha_fin: event.endStr,
+          ...(newEstado ? { estado: newEstado } : {}),
+        }),
       })
       if (!res.ok) {
         const err = await res.json()
         throw new Error(err.error)
       }
-      toast.success('Turno reprogramado')
+      toast.success(newEstado ? 'Turno confirmado y reprogramado' : 'Turno reprogramado')
+      calendarRef.current?.getApi().refetchEvents()
     } catch (error: any) {
       toast.error('Error al reprogramar', { description: error.message })
       dropInfo.revert()
@@ -225,6 +320,8 @@ export function CalendarView() {
         right: 'dayGridMonth,timeGridWeek,timeGridDay',
       }
 
+  const allCatsActive = ALL_CATEGORIES.every(c => activeCategories.has(c))
+
   return (
     <>
       {/* ── Toolbar de acciones ───────────────────────────── */}
@@ -262,6 +359,69 @@ export function CalendarView() {
             <Ban className="w-3.5 h-3.5" />
             Bloquear horario
           </Button>
+
+          {/* ── Filtro de categorías ──────────────────── */}
+          <div className="relative" ref={filterPanelRef}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowFilterPanel(p => !p)}
+              className={cn(
+                "gap-1.5 h-8 text-xs font-semibold transition-all",
+                !allCatsActive && "border-primary text-primary"
+              )}
+            >
+              <Tag className="w-3.5 h-3.5" />
+              Categorías
+              {!allCatsActive && (
+                <span className="ml-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold w-4 h-4 flex items-center justify-center">
+                  {activeCategories.size}
+                </span>
+              )}
+            </Button>
+            {showFilterPanel && (
+              <div className="absolute top-10 left-0 z-50 bg-popover border rounded-lg shadow-lg p-3 min-w-[200px]">
+                <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Filtrar por tipo</p>
+                <div className="space-y-1">
+                  {Object.entries(CATEGORIA_STYLES).map(([cat, style]) => {
+                    const Icon = style.icon
+                    const isActive = activeCategories.has(cat)
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => toggleCategory(cat)}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-colors",
+                          isActive
+                            ? "bg-primary/10 text-primary font-medium"
+                            : "text-muted-foreground hover:bg-muted"
+                        )}
+                      >
+                        <Icon className="w-3.5 h-3.5 shrink-0" />
+                        <span>{style.label}</span>
+                        {isActive && (
+                          <span className="ml-auto text-primary text-xs">✓</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+                {!allCatsActive && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveCategories(new Set(ALL_CATEGORIES))
+                      try { localStorage.setItem(LS_FILTER_KEY, JSON.stringify(ALL_CATEGORIES)) } catch {}
+                    }}
+                    className="mt-2 w-full text-xs text-center text-primary hover:underline"
+                  >
+                    Ver todas
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <Button
           size="sm"
@@ -295,10 +455,21 @@ export function CalendarView() {
             prev: '‹',
             next: '›',
           }}
-          slotMinTime="08:00:00"
-          slotMaxTime="20:00:00"
-          hiddenDays={[0, 6]}
-          allDaySlot={false}
+          // ── Grupo A: Vista 24h, 7 días, slots de 10 min ──
+          slotMinTime="00:00:00"
+          slotMaxTime="24:00:00"
+          scrollTime="07:00:00"
+          scrollTimeReset={false}
+          slotDuration="00:10:00"
+          slotLabelInterval="01:00:00"
+          slotLabelContent={(arg) => {
+            const h = arg.date.getHours()
+            return `${String(h).padStart(2, '0')}:00 hs`
+          }}
+          allDaySlot={true}
+          allDayText="Sin hora"
+          // ── Sin días ocultos — 7 días de la semana ────────
+          allDayMaintainDuration={false}
           selectable={true}
           editable={!isMobile}
           selectMirror={true}
@@ -316,7 +487,6 @@ export function CalendarView() {
             hour12: false,
           }}
           height="100%"
-          slotDuration="00:15:00"
           eventContent={(arg) => {
             if (arg.view.type === 'dayGridMonth') {
               return <DayGridEventContent event={arg.event} creationMode={creationMode} />

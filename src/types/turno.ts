@@ -10,6 +10,7 @@ export type TurnoEstado =
   | 'ausente'
   | 'cancelado'
   | 'reprogramado'
+  | 'pendiente_confirmar'
 
 // ── TURNOS ────────────────────────────────────────────────────
 
@@ -26,19 +27,25 @@ export interface Turno {
   recordatorio_enviado: boolean
   medico_id: string                      // tenant key — agenda del médico
   agendado_por: string                   // quien creó el turno (médico o asistente)
+  categoria: 'turno_medico' | 'curso' | 'personal' | 'administrativo' | 'recordatorio'
+  origen: 'manual' | 'desde_hc'
+  consulta_id: string | null
   created_at: string
   updated_at: string
 }
 
 export interface TurnoInsert {
-  paciente_id?: string
-  paciente_nombre_libre?: string
+  paciente_id?: string | null
+  paciente_nombre_libre?: string | null
   fecha_inicio: string
   fecha_fin: string
-  motivo?: string
-  notas?: string
+  motivo?: string | null
+  notas?: string | null
   estado?: TurnoEstado
-  color?: string
+  color?: string | null
+  categoria?: 'turno_medico' | 'curso' | 'personal' | 'administrativo' | 'recordatorio'
+  origen?: 'manual' | 'desde_hc'
+  consulta_id?: string | null
   medico_id: string                      // debe ser get_medico_id() del usuario actual
   agendado_por: string
 }
