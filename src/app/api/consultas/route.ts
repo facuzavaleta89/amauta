@@ -14,7 +14,7 @@ async function getTenantContext(
 ) {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, medico_id, ver_pacientes, gestionar_pacientes, ver_historia_clinica, crear_consultas, finalizar_consultas, ver_turnos, gestionar_turnos, ver_pedidos, gestionar_pedidos, ver_difusion, gestionar_difusion')
+    .select('role, medico_id, ver_pacientes, editar_pacientes, ver_historia_clinica, crear_consultas, finalizar_consultas, ver_turnos, gestionar_turnos, ver_pedidos, crear_pedidos, ver_certificados, crear_certificados')
     .eq('id', userId)
     .single()
 
@@ -104,42 +104,7 @@ export async function POST(request: NextRequest) {
 
     const consulta = result.data
 
-    // ── Validar próximo turno sugerido antes de crear consulta ──
-    if (consulta.proximo_turno_sugerido) {
-      const tieneHora = consulta.proximo_turno_sugerido.includes('T') && consulta.proximo_turno_sugerido.includes(':');
-      if (!tieneHora) {
-        return NextResponse.json({ error: 'Debés ingresar una fecha y hora completa para el próximo turno sugerido.' }, { status: 400 })
-      }
-
-      const fechaBase = new Date(consulta.proximo_turno_sugerido)
-      if (isNaN(fechaBase.getTime())) {
-        return NextResponse.json({ error: 'La fecha y hora del próximo turno sugerido no es válida.' }, { status: 400 })
-      }
-
-      const fechaFin = new Date(fechaBase.getTime() + 30 * 60 * 1000)
-
-      // Verificar solapamiento
-      const { data: overT } = await supabase
-        .from('turnos')
-        .select('id')
-        .eq('medico_id', ctx.tenantMedicoId)
-        .lt('fecha_inicio', fechaFin.toISOString())
-        .gt('fecha_fin', fechaBase.toISOString())
-
-      const { data: overB } = await supabase
-        .from('bloqueos_agenda')
-        .select('id')
-        .eq('medico_id', ctx.tenantMedicoId)
-        .lt('fecha_inicio', fechaFin.toISOString())
-        .gt('fecha_fin', fechaBase.toISOString())
-
-      if ((overT && overT.length > 0) || (overB && overB.length > 0)) {
-        return NextResponse.json({
-          error: 'El próximo turno sugerido se solapa con otro turno o bloqueo en la agenda. Por favor, seleccioná otro horario.'
-        }, { status: 409 })
-      }
-    }
-
+    // ── Insertar la consulta ──────────────────────────────────
     const { data: nueva, error: insertError } = await supabase
       .from('consultas')
       .insert({
@@ -151,20 +116,37 @@ export async function POST(request: NextRequest) {
 
     if (insertError) throw insertError
 
-    // ── Crear turno automático si todo está ok ──
+    // ── Crear turno automático si se sugirió próximo control ──
     if (consulta.proximo_turno_sugerido) {
-      const fechaBase = new Date(consulta.proximo_turno_sugerido)
-      const fechaFin = new Date(fechaBase.getTime() + 30 * 60 * 1000)
+      // Normalizar: si es YYYY-MM-DD, se usa como fecha en UTC
+      const fechaStr = consulta.proximo_turno_sugerido.slice(0, 10)
+      const fechaBase = new Date(`${fechaStr}T00:00:00.000Z`)
+      const fechaFin  = new Date(`${fechaStr}T00:10:00.000Z`)
 
-      await supabase.from('turnos').insert({
-        paciente_id:  consulta.paciente_id,
-        fecha_inicio: fechaBase.toISOString(),
-        fecha_fin:    fechaFin.toISOString(),
-        motivo:       'Control médico programado (generado desde HC)',
-        estado:       'pendiente',
-        medico_id:    ctx.tenantMedicoId,
-        agendado_por: user.id,
-      })
+      // Evitar duplicado: si ya existe un turno pendiente_confirmar desde HC para esta consulta
+      const { data: existente } = await supabase
+        .from('turnos')
+        .select('id')
+        .eq('consulta_id', nueva.id)
+        .eq('estado', 'pendiente_confirmar')
+        .maybeSingle()
+
+      if (!existente) {
+        const fechaConsulta = new Date(consulta.fecha_hora).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        await supabase.from('turnos').insert({
+          paciente_id:  consulta.paciente_id,
+          fecha_inicio: fechaBase.toISOString(),
+          fecha_fin:    fechaFin.toISOString(),
+          motivo:       'Control médico programado',
+          notas:        `Turno generado desde historia clínica — Consulta del ${fechaConsulta}`,
+          estado:       'pendiente_confirmar',
+          categoria:    'turno_medico',
+          origen:       'desde_hc',
+          consulta_id:  nueva.id,
+          medico_id:    ctx.tenantMedicoId,
+          agendado_por: user.id,
+        })
+      }
     }
 
     return NextResponse.json({ data: nueva }, { status: 201 })

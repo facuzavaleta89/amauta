@@ -120,21 +120,26 @@ export async function POST(request: NextRequest) {
 
     const t = result.data
 
-    // Check for overlaps in Turnos
-    const { data: superpuestosTurnos, error: errT } = await supabase
-      .from('turnos')
-      .select('id')
-      .eq('medico_id', tenantMedicoId)
-      .lt('fecha_inicio', t.fecha_fin)
-      .gt('fecha_fin', t.fecha_inicio)
+    // ── Verificación de solapamiento según categoría ──────────
+    // turno_medico: verifica contra otros turno_medico activos (excluye pendiente_confirmar y cancelado)
+    // otras categorías: solo verifica contra bloqueos de agenda
+    if (t.categoria === 'turno_medico') {
+      const { data: superpuestosTurnos, error: errT } = await supabase
+        .from('turnos')
+        .select('id')
+        .eq('medico_id', tenantMedicoId)
+        .eq('categoria', 'turno_medico')
+        .not('estado', 'in', '(pendiente_confirmar,cancelado)')
+        .lt('fecha_inicio', t.fecha_fin)
+        .gt('fecha_fin', t.fecha_inicio)
 
-    if (errT) throw errT
-
-    if (superpuestosTurnos && superpuestosTurnos.length > 0) {
-      return NextResponse.json({ error: 'El horario seleccionado se solapa con otro turno.' }, { status: 409 })
+      if (errT) throw errT
+      if (superpuestosTurnos && superpuestosTurnos.length > 0) {
+        return NextResponse.json({ error: 'El horario seleccionado se solapa con otro turno médico.' }, { status: 409 })
+      }
     }
 
-    // Check overlaps with Bloqueos
+    // Todos verifican contra bloqueos
     const { data: superpuestosBloques, error: errB } = await supabase
       .from('bloqueos_agenda')
       .select('id')
@@ -143,7 +148,6 @@ export async function POST(request: NextRequest) {
       .gt('fecha_fin', t.fecha_inicio)
 
     if (errB) throw errB
-
     if (superpuestosBloques && superpuestosBloques.length > 0) {
       return NextResponse.json({ error: 'El horario coincide con un bloqueo de la agenda del médico.' }, { status: 409 })
     }
@@ -151,9 +155,19 @@ export async function POST(request: NextRequest) {
     const { data: nuevoTurno, error: insertError } = await supabase
       .from('turnos')
       .insert({
-        ...t,
-        medico_id: tenantMedicoId,
-        agendado_por: user.id
+        paciente_id:          t.paciente_id ?? null,
+        paciente_nombre_libre: t.paciente_nombre_libre ?? null,
+        fecha_inicio:         t.fecha_inicio,
+        fecha_fin:            t.fecha_fin,
+        motivo:               t.motivo ?? null,
+        notas:                t.notas ?? null,
+        estado:               t.estado ?? 'pendiente',
+        categoria:            t.categoria ?? 'turno_medico',
+        origen:               t.origen ?? 'manual',
+        consulta_id:          t.consulta_id ?? null,
+        color:                t.color ?? null,
+        medico_id:            tenantMedicoId,
+        agendado_por:         user.id,
       })
       .select()
       .single()

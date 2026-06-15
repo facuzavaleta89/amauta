@@ -41,7 +41,7 @@ vinculados.
 
 | Tabla | Descripción | Tenant key |
 |---|---|---|
-| `profiles` | Extiende `auth.users`. Campos: `id`, `full_name`, `role` ('medico'/'asistente'), `avatar_url`, `medico_id` (UUID del médico para asistentes), `matricula` (deprecated), `matriculas` (JSONB), `titulo`, `firma_url`, `logo_url` y 13 permisos individuales booleanos (`ver_pacientes`, `gestionar_pacientes`, etc.) | — |
+| `profiles` | Extiende `auth.users`. Campos: `id`, `full_name`, `role` ('medico'/'asistente'), `avatar_url`, `medico_id` (UUID del médico para asistentes), `matricula` (deprecated), `matriculas` (JSONB), `titulo`, `firma_url`, `logo_url` y 12 permisos booleanos: `ver_pacientes`, `editar_pacientes`, `ver_historia_clinica`, `crear_consultas`, `finalizar_consultas`, `ver_turnos`, `gestionar_turnos`, `ver_pedidos`, `crear_pedidos`, `ver_certificados`, `crear_certificados`, `acceso_mensajeria` | — |
 | `obras_sociales` | Catálogo de obras sociales (OSDE, PAMI, etc.). Lectura pública para autenticados | — |
 | `pacientes` | Pacientes con DNI único, datos de contacto y obra social. `creado_por` = UUID del médico | `creado_por` |
 | `historia_clinica` | Una por paciente (1:1). Antecedentes, examen físico, laboratorio, conducta. RLS via `pacientes.creado_por` | via `pacientes` |
@@ -158,15 +158,17 @@ vinculados.
 
 ### Permisos para asistentes (implementado en Bloque 3)
 
-Los permisos se almacenan como **13 columnas booleanas en `profiles`** (todas por defecto en `FALSE`):
-- Pacientes: `ver_pacientes`, `gestionar_pacientes`
+Los permisos se almacenan como **12 columnas booleanas en `profiles`** (todas por defecto en `FALSE`):
+- Pacientes: `ver_pacientes`, `editar_pacientes`
 - Historia clínica: `ver_historia_clinica`, `crear_consultas`, `finalizar_consultas`
 - Agenda y turnos: `ver_turnos`, `gestionar_turnos`
-- Pedidos médicos: `ver_pedidos`, `gestionar_pedidos`
-- Certificados: `ver_certificados`, `gestionar_certificados`
-- Difusión: `ver_difusion`, `gestionar_difusion`
+- Pedidos médicos: `ver_pedidos`, `crear_pedidos`
+- Certificados: `ver_certificados`, `crear_certificados`
+- Mensajería: `acceso_mensajeria`
 
-El RLS en Supabase y las API Routes validan estos permisos directamente consultando la fila de perfil del usuario asistente.
+> ⚠️ **Importante:** la columna se llama `editar_pacientes` (NO `gestionar_pacientes`). Siempre consultar la migración `015_permisos_granulares.sql` para los nombres exactos.
+
+El RLS en Supabase y las API Routes validan estos permisos directamente consultando la fila de perfil del usuario asistente. **Los médicos siempre tienen acceso total** — el RLS usa `check_permiso()` que retorna `TRUE` para `role='medico'`.
 
 ---
 
@@ -188,18 +190,26 @@ El RLS en Supabase y las API Routes validan estos permisos directamente consulta
 - Firma digitalizada: `firma_url` (pad de firma o imagen cargada, base64)
 - Panel de asistentes en `/perfil` con toggles de permisos (solo 2 permisos por ahora)
 
+#### Bloque 3 — Permisos granulares para asistentes ✅
+- 12 columnas booleanas en `profiles` (migración 015)
+- Función `check_permiso(user_id, permiso)` en SQL (SECURITY DEFINER)
+- RLS actualizado en todas las tablas
+- UI de toggles en `/perfil` para cada permiso
+- **Los médicos siempre tienen acceso total** (los permisos solo aplican a asistentes)
+
+#### Bloque 4 — Ajustes del turnero ✅
+- Vista de 24/7, intervalos de 10 min
+- Categorías de turno: turno_medico, curso, personal, administrativo, recordatorio
+- Integración con HC (turno automático desde próximo control sugerido)
+- Validación de solapamiento diferenciada por categoría
+
 #### Secciones base existentes
 - Dashboard, turnero (FullCalendar), CRUD de pacientes, pedidos médicos, certificados, difusión
 - Sistema de solicitudes de vinculación asistente ↔ médico (onboarding)
 - Notificaciones en tiempo real para solicitudes pendientes
 
-### En progreso
-
-**Bloque 3 — Permisos granulares para asistentes** (implementación en esta sesión)
-
 ### Pendiente
 
-- Bloque 4: ajustes del turnero (sáb/dom, intervalos 10 min, recordatorios 24hs, categorías de turno, integración HC)
 - Bloque 5: mejoras en documentos PDF (QR de verificación, template mejorado)
 - Bloque 6: obra social libre, dashboard mejorado, notas internas, mensajería interna
 - Recetas (requiere firma digital y certificación ANMAT — bloqueado)

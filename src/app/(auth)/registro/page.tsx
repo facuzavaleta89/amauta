@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import Link from 'next/link'
 import { registerUser } from '../actions'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
@@ -12,6 +12,12 @@ import { AlertCircle, Loader2, UserPlus } from 'lucide-react'
 
 export default function RegistroPage() {
   const [state, action, isPending] = useActionState(registerUser, undefined)
+
+  // Estado controlado para preservar valores tras error del Server Action
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [role, setRole] = useState('asistente')
 
   return (
     <Card className="shadow-sm border-border/60 animate-fade-in">
@@ -34,6 +40,8 @@ export default function RegistroPage() {
               required
               disabled={isPending}
               className="h-10"
+              value={fullName}
+              onChange={e => setFullName(e.target.value)}
             />
           </div>
 
@@ -47,6 +55,8 @@ export default function RegistroPage() {
               required
               disabled={isPending}
               className="h-10"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
             />
           </div>
 
@@ -60,12 +70,20 @@ export default function RegistroPage() {
               required
               disabled={isPending}
               className="h-10"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="role">Rol</Label>
-            <Select name="role" required disabled={isPending} defaultValue="asistente">
+            {/* input hidden garantiza que el valor llega al FormData */}
+            <input type="hidden" name="role" value={role} />
+            <Select
+              value={role}
+              onValueChange={setRole}
+              disabled={isPending}
+            >
               <SelectTrigger className="h-10">
                 <SelectValue placeholder="Seleccioná tu rol" />
               </SelectTrigger>

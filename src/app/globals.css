@@ -439,3 +439,86 @@
 
 /* Texto blanco garantizado en botones sólidos destructivos */
 .bg-destructive { color: #ffffff !important; }
+
+/* ── Colores de categoría — TimeGrid ───────────────────────────────────────────
+   Paleta OKLCH: alta consistencia perceptual entre hue, chroma y lightness.
+   Cada categoría tiene: accent bar color, bg tint, text color.              */
+
+/* turno_medico — azul índigo */
+.categoria-turno-medico { background-color: oklch(0.56 0.18 260 / 10%); }
+.categoria-turno-medico .fc-event-accent { background-color: oklch(0.56 0.18 260); }
+.categoria-turno-medico .fc-event-time-label,
+.categoria-turno-medico .fc-event-title-label { color: oklch(0.34 0.14 260); }
+
+/* curso — violeta */
+.categoria-curso { background-color: oklch(0.54 0.20 295 / 10%); }
+.categoria-curso .fc-event-accent { background-color: oklch(0.54 0.20 295); }
+.categoria-curso .fc-event-time-label,
+.categoria-curso .fc-event-title-label { color: oklch(0.34 0.16 295); }
+
+/* personal — verde esmeralda */
+.categoria-personal { background-color: oklch(0.52 0.16 155 / 10%); }
+.categoria-personal .fc-event-accent { background-color: oklch(0.52 0.16 155); }
+.categoria-personal .fc-event-time-label,
+.categoria-personal .fc-event-title-label { color: oklch(0.32 0.12 155); }
+
+/* administrativo — ámbar */
+.categoria-administrativo { background-color: oklch(0.72 0.16 70 / 14%); }
+.categoria-administrativo .fc-event-accent { background-color: oklch(0.68 0.18 70); }
+.categoria-administrativo .fc-event-time-label,
+.categoria-administrativo .fc-event-title-label { color: oklch(0.42 0.14 70); }
+
+/* recordatorio — coral/rojo suave */
+.categoria-recordatorio { background-color: oklch(0.60 0.18 25 / 10%); }
+.categoria-recordatorio .fc-event-accent { background-color: oklch(0.58 0.20 25); }
+.categoria-recordatorio .fc-event-time-label,
+.categoria-recordatorio .fc-event-title-label { color: oklch(0.38 0.16 25); }
+
+/* ── Colores de categoría — DayGrid ─────────────────────────────────────────── */
+.fc-daygrid-turno.categoria-turno-medico { background-color: oklch(0.56 0.18 260 / 12%); }
+.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-dot-custom { background-color: oklch(0.56 0.18 260); }
+.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-time-custom,
+.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-title-custom { color: oklch(0.34 0.14 260); }
+
+.fc-daygrid-turno.categoria-curso { background-color: oklch(0.54 0.20 295 / 12%); }
+.fc-daygrid-turno.categoria-curso .fc-daygrid-dot-custom { background-color: oklch(0.54 0.20 295); }
+.fc-daygrid-turno.categoria-curso .fc-daygrid-time-custom,
+.fc-daygrid-turno.categoria-curso .fc-daygrid-title-custom { color: oklch(0.34 0.16 295); }
+
+.fc-daygrid-turno.categoria-personal { background-color: oklch(0.52 0.16 155 / 12%); }
+.fc-daygrid-turno.categoria-personal .fc-daygrid-dot-custom { background-color: oklch(0.52 0.16 155); }
+.fc-daygrid-turno.categoria-personal .fc-daygrid-time-custom,
+.fc-daygrid-turno.categoria-personal .fc-daygrid-title-custom { color: oklch(0.32 0.12 155); }
+
+.fc-daygrid-turno.categoria-administrativo { background-color: oklch(0.72 0.16 70 / 14%); }
+.fc-daygrid-turno.categoria-administrativo .fc-daygrid-dot-custom { background-color: oklch(0.68 0.18 70); }
+.fc-daygrid-turno.categoria-administrativo .fc-daygrid-time-custom,
+.fc-daygrid-turno.categoria-administrativo .fc-daygrid-title-custom { color: oklch(0.42 0.14 70); }
+
+.fc-daygrid-turno.categoria-recordatorio { background-color: oklch(0.60 0.18 25 / 12%); }
+.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-dot-custom { background-color: oklch(0.58 0.20 25); }
+.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-time-custom,
+.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-title-custom { color: oklch(0.38 0.16 25); }
+
+/* ── Evento pendiente de confirmar (sin hora) ─────────────────────────────── */
+.fc-event-pendiente-confirmar {
+  opacity: 0.82;
+  border-style: dashed !important;
+  border-width: 1px !important;
+}
+.fc-event-pendiente-confirmar .fc-event-accent {
+  background-image: repeating-linear-gradient(
+    -45deg, transparent, transparent 3px,
+    rgba(0,0,0,0.15) 3px, rgba(0,0,0,0.15) 4px
+  );
+}
+.fc-event-badge {
+  font-size: 0.6rem;
+  font-weight: 600;
+  opacity: 0.65;
+  letter-spacing: 0.02em;
+  margin-top: 1px;
+}
+.fc-event-emoji {
+  font-size: 0.7rem;
+}
