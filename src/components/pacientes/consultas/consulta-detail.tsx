@@ -314,19 +314,9 @@ function ConsultaForm({
       }
 
       const json = await res.json()
-      const { data, warning } = json
+      const { data } = json
 
       toast.success(estado === 'finalizada' ? 'Consulta finalizada correctamente' : 'Borrador guardado')
-
-      if (warning) {
-        // Mostrar advertencia de solapamiento de turno sin bloquear el flujo
-        setTimeout(() => {
-          toast.warning('Turno no agendado automáticamente', {
-            description: warning,
-            duration: 8000,
-          })
-        }, 400)
-      }
 
       onSaved(data)
     } catch (err: any) {

@@ -338,23 +338,23 @@
     color: oklch(0.32 0.10 155);
   }
 
-  /* ── BLOQUEO — ámbar/neutral ──────────────────────────────── */
+  /* ── BLOQUEO — rojo coral ──────────────────────────────── */
   .fc-event-bloqueo {
-    background-color: oklch(0.55 0.12 55 / 8%);
+    background-color: oklch(0.60 0.18 25 / 8%);
     background-image: repeating-linear-gradient(
       -45deg,
       transparent,
       transparent 4px,
-      oklch(0.55 0.12 55 / 10%) 4px,
-      oklch(0.55 0.12 55 / 10%) 5px
+      oklch(0.60 0.18 25 / 10%) 4px,
+      oklch(0.60 0.18 25 / 10%) 5px
     );
   }
   .fc-event-bloqueo .fc-event-accent {
-    background-color: oklch(0.55 0.12 55);
+    background-color: oklch(0.58 0.20 25);
   }
   .fc-event-bloqueo .fc-event-time-label,
   .fc-event-bloqueo .fc-event-title-label {
-    color: oklch(0.40 0.09 55);
+    color: oklch(0.38 0.16 25);
   }
 
   /* ── Vista de Mes — pill compacto ─────────────────────────── */
@@ -385,10 +385,10 @@
   }
 
   .fc-daygrid-turno {
-    background-color: oklch(0.52 0.13 155 / 12%);
+    background-color: oklch(0.52 0.16 155 / 12%);
   }
   .fc-daygrid-bloqueo {
-    background-color: oklch(0.55 0.12 55 / 10%);
+    background-color: oklch(0.60 0.18 25 / 10%);
   }
 
   .fc-daygrid-dot-custom {
@@ -398,10 +398,10 @@
     flex-shrink: 0;
   }
   .fc-daygrid-turno .fc-daygrid-dot-custom {
-    background-color: oklch(0.52 0.13 155);
+    background-color: oklch(0.52 0.16 155);
   }
   .fc-daygrid-bloqueo .fc-daygrid-dot-custom {
-    background-color: oklch(0.55 0.12 55);
+    background-color: oklch(0.58 0.20 25);
   }
 
   .fc-daygrid-time-custom {
@@ -422,7 +422,7 @@
   }
   .fc-daygrid-bloqueo .fc-daygrid-time-custom,
   .fc-daygrid-bloqueo .fc-daygrid-title-custom {
-    color: oklch(0.40 0.09 55);
+    color: oklch(0.38 0.16 25);
   }
 }
 
@@ -430,8 +430,8 @@
    FullCalendar aplica --fc-highlight-color con sus propias reglas.
    Los selectores planos (sin @layer) siempre ganan la cascada.    */
 .calendar-container.mode-bloqueo .fc .fc-highlight {
-  background-color: oklch(0.58 0.15 50 / 22%) !important;
-  border: 1px dashed oklch(0.55 0.12 55 / 55%) !important;
+  background-color: oklch(0.60 0.18 25 / 18%) !important;
+  border: 1px dashed oklch(0.58 0.20 25 / 55%) !important;
 }
 .calendar-container.mode-turno .fc .fc-highlight {
   background-color: oklch(0.52 0.13 155 / 18%) !important;
@@ -444,61 +444,61 @@
    Paleta OKLCH: alta consistencia perceptual entre hue, chroma y lightness.
    Cada categoría tiene: accent bar color, bg tint, text color.              */
 
-/* turno_medico — azul índigo */
-.categoria-turno-medico { background-color: oklch(0.56 0.18 260 / 10%); }
-.categoria-turno-medico .fc-event-accent { background-color: oklch(0.56 0.18 260); }
+/* turno_medico — verde */
+.categoria-turno-medico { background-color: oklch(0.52 0.16 155 / 10%); }
+.categoria-turno-medico .fc-event-accent { background-color: oklch(0.52 0.16 155); }
 .categoria-turno-medico .fc-event-time-label,
-.categoria-turno-medico .fc-event-title-label { color: oklch(0.34 0.14 260); }
+.categoria-turno-medico .fc-event-title-label { color: oklch(0.32 0.12 155); }
 
-/* curso — violeta */
-.categoria-curso { background-color: oklch(0.54 0.20 295 / 10%); }
-.categoria-curso .fc-event-accent { background-color: oklch(0.54 0.20 295); }
+/* curso — azul */
+.categoria-curso { background-color: oklch(0.56 0.18 220 / 10%); }
+.categoria-curso .fc-event-accent { background-color: oklch(0.56 0.18 220); }
 .categoria-curso .fc-event-time-label,
-.categoria-curso .fc-event-title-label { color: oklch(0.34 0.16 295); }
+.categoria-curso .fc-event-title-label { color: oklch(0.34 0.14 220); }
 
-/* personal — verde esmeralda */
-.categoria-personal { background-color: oklch(0.52 0.16 155 / 10%); }
-.categoria-personal .fc-event-accent { background-color: oklch(0.52 0.16 155); }
+/* personal — morado */
+.categoria-personal { background-color: oklch(0.54 0.20 285 / 10%); }
+.categoria-personal .fc-event-accent { background-color: oklch(0.54 0.20 285); }
 .categoria-personal .fc-event-time-label,
-.categoria-personal .fc-event-title-label { color: oklch(0.32 0.12 155); }
+.categoria-personal .fc-event-title-label { color: oklch(0.34 0.16 285); }
 
-/* administrativo — ámbar */
-.categoria-administrativo { background-color: oklch(0.72 0.16 70 / 14%); }
-.categoria-administrativo .fc-event-accent { background-color: oklch(0.68 0.18 70); }
+/* administrativo — marrón (ex-bloqueo) */
+.categoria-administrativo { background-color: oklch(0.55 0.12 55 / 10%); }
+.categoria-administrativo .fc-event-accent { background-color: oklch(0.55 0.12 55); }
 .categoria-administrativo .fc-event-time-label,
-.categoria-administrativo .fc-event-title-label { color: oklch(0.42 0.14 70); }
+.categoria-administrativo .fc-event-title-label { color: oklch(0.38 0.09 55); }
 
-/* recordatorio — coral/rojo suave */
-.categoria-recordatorio { background-color: oklch(0.60 0.18 25 / 10%); }
-.categoria-recordatorio .fc-event-accent { background-color: oklch(0.58 0.20 25); }
+/* recordatorio — amarillo */
+.categoria-recordatorio { background-color: oklch(0.78 0.16 80 / 12%); }
+.categoria-recordatorio .fc-event-accent { background-color: oklch(0.72 0.18 80); }
 .categoria-recordatorio .fc-event-time-label,
-.categoria-recordatorio .fc-event-title-label { color: oklch(0.38 0.16 25); }
+.categoria-recordatorio .fc-event-title-label { color: oklch(0.44 0.16 80); }
 
 /* ── Colores de categoría — DayGrid ─────────────────────────────────────────── */
-.fc-daygrid-turno.categoria-turno-medico { background-color: oklch(0.56 0.18 260 / 12%); }
-.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-dot-custom { background-color: oklch(0.56 0.18 260); }
+.fc-daygrid-turno.categoria-turno-medico { background-color: oklch(0.52 0.16 155 / 12%); }
+.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-dot-custom { background-color: oklch(0.52 0.16 155); }
 .fc-daygrid-turno.categoria-turno-medico .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-title-custom { color: oklch(0.34 0.14 260); }
+.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-title-custom { color: oklch(0.32 0.12 155); }
 
-.fc-daygrid-turno.categoria-curso { background-color: oklch(0.54 0.20 295 / 12%); }
-.fc-daygrid-turno.categoria-curso .fc-daygrid-dot-custom { background-color: oklch(0.54 0.20 295); }
+.fc-daygrid-turno.categoria-curso { background-color: oklch(0.56 0.18 220 / 12%); }
+.fc-daygrid-turno.categoria-curso .fc-daygrid-dot-custom { background-color: oklch(0.56 0.18 220); }
 .fc-daygrid-turno.categoria-curso .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-curso .fc-daygrid-title-custom { color: oklch(0.34 0.16 295); }
+.fc-daygrid-turno.categoria-curso .fc-daygrid-title-custom { color: oklch(0.34 0.14 220); }
 
-.fc-daygrid-turno.categoria-personal { background-color: oklch(0.52 0.16 155 / 12%); }
-.fc-daygrid-turno.categoria-personal .fc-daygrid-dot-custom { background-color: oklch(0.52 0.16 155); }
+.fc-daygrid-turno.categoria-personal { background-color: oklch(0.54 0.20 285 / 12%); }
+.fc-daygrid-turno.categoria-personal .fc-daygrid-dot-custom { background-color: oklch(0.54 0.20 285); }
 .fc-daygrid-turno.categoria-personal .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-personal .fc-daygrid-title-custom { color: oklch(0.32 0.12 155); }
+.fc-daygrid-turno.categoria-personal .fc-daygrid-title-custom { color: oklch(0.34 0.16 285); }
 
-.fc-daygrid-turno.categoria-administrativo { background-color: oklch(0.72 0.16 70 / 14%); }
-.fc-daygrid-turno.categoria-administrativo .fc-daygrid-dot-custom { background-color: oklch(0.68 0.18 70); }
+.fc-daygrid-turno.categoria-administrativo { background-color: oklch(0.55 0.12 55 / 12%); }
+.fc-daygrid-turno.categoria-administrativo .fc-daygrid-dot-custom { background-color: oklch(0.55 0.12 55); }
 .fc-daygrid-turno.categoria-administrativo .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-administrativo .fc-daygrid-title-custom { color: oklch(0.42 0.14 70); }
+.fc-daygrid-turno.categoria-administrativo .fc-daygrid-title-custom { color: oklch(0.38 0.09 55); }
 
-.fc-daygrid-turno.categoria-recordatorio { background-color: oklch(0.60 0.18 25 / 12%); }
-.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-dot-custom { background-color: oklch(0.58 0.20 25); }
+.fc-daygrid-turno.categoria-recordatorio { background-color: oklch(0.78 0.16 80 / 14%); }
+.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-dot-custom { background-color: oklch(0.72 0.18 80); }
 .fc-daygrid-turno.categoria-recordatorio .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-title-custom { color: oklch(0.38 0.16 25); }
+.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-title-custom { color: oklch(0.44 0.16 80); }
 
 /* ── Evento pendiente de confirmar (sin hora) ─────────────────────────────── */
 .fc-event-pendiente-confirmar {

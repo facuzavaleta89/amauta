@@ -110,8 +110,40 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     const { paciente_id: _pid, ...updates } = result.data
 
-    const nuevoTurno = updates.proximo_turno_sugerido
+    const nuevoTurno      = updates.proximo_turno_sugerido
     const turnoHaCambiado = nuevoTurno && nuevoTurno !== existing.proximo_turno_sugerido
+
+    // ── Validar solapamiento del próximo control ANTES de actualizar ──
+    if (turnoHaCambiado) {
+      const fechaBase      = new Date(nuevoTurno!)
+      const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
+      const fechaIsoInicio = fechaBase.toISOString()
+      const fechaIsoFin    = fechaFin.toISOString()
+
+      const [{ data: bloquesSolapados }, { data: turnosSolapados }] = await Promise.all([
+        supabase
+          .from('bloqueos_agenda')
+          .select('id')
+          .eq('medico_id', ctx.tenantMedicoId)
+          .lt('fecha_inicio', fechaIsoFin)
+          .gt('fecha_fin', fechaIsoInicio),
+        supabase
+          .from('turnos')
+          .select('id')
+          .eq('medico_id', ctx.tenantMedicoId)
+          .eq('categoria', 'turno_medico')
+          .not('estado', 'in', '(cancelado)')
+          .lt('fecha_inicio', fechaIsoFin)
+          .gt('fecha_fin', fechaIsoInicio),
+      ])
+
+      if ((bloquesSolapados && bloquesSolapados.length > 0) || (turnosSolapados && turnosSolapados.length > 0)) {
+        return NextResponse.json(
+          { error: 'El horario del próximo control se solapa con un bloqueo o turno existente. Elegí otro horario o dejá el campo vacío.' },
+          { status: 409 }
+        )
+      }
+    }
 
     const { data: updated, error: updateError } = await supabase
       .from('consultas')
@@ -122,11 +154,12 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     if (updateError) throw updateError
 
-    // Si cambió el próximo turno sugerido → crear turno pendiente_confirmar
+    // ── Crear turno automático si el próximo turno cambió ──
     if (turnoHaCambiado) {
-      const fechaStr = nuevoTurno!.slice(0, 10)
-      const fechaBase = new Date(`${fechaStr}T00:00:00.000Z`)
-      const fechaFin  = new Date(`${fechaStr}T00:10:00.000Z`)
+      const fechaBase      = new Date(nuevoTurno!)
+      const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
+      const fechaIsoInicio = fechaBase.toISOString()
+      const fechaIsoFin    = fechaFin.toISOString()
 
       const pacienteRes = await supabase
         .from('consultas')
@@ -140,18 +173,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           .from('turnos')
           .select('id')
           .eq('consulta_id', id)
-          .eq('estado', 'pendiente_confirmar')
           .maybeSingle()
 
         if (!existente) {
           const fechaConsulta = new Date(pacienteRes.data.fecha_hora).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
           await supabase.from('turnos').insert({
             paciente_id:  pacienteRes.data.paciente_id,
-            fecha_inicio: fechaBase.toISOString(),
-            fecha_fin:    fechaFin.toISOString(),
+            fecha_inicio: fechaIsoInicio,
+            fecha_fin:    fechaIsoFin,
             motivo:       'Control médico programado',
             notas:        `Turno generado desde historia clínica — Consulta del ${fechaConsulta}`,
-            estado:       'pendiente_confirmar',
+            estado:       'confirmado',
             categoria:    'turno_medico',
             origen:       'desde_hc',
             consulta_id:  id,
