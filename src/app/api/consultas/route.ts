@@ -104,6 +104,38 @@ export async function POST(request: NextRequest) {
 
     const consulta = result.data
 
+    // ── Validar solapamiento del próximo control ANTES de guardar ──
+    if (consulta.proximo_turno_sugerido) {
+      const fechaBase      = new Date(consulta.proximo_turno_sugerido)
+      const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
+      const fechaIsoInicio = fechaBase.toISOString()
+      const fechaIsoFin    = fechaFin.toISOString()
+
+      const [{ data: bloquesSolapados }, { data: turnosSolapados }] = await Promise.all([
+        supabase
+          .from('bloqueos_agenda')
+          .select('id')
+          .eq('medico_id', ctx.tenantMedicoId)
+          .lt('fecha_inicio', fechaIsoFin)
+          .gt('fecha_fin', fechaIsoInicio),
+        supabase
+          .from('turnos')
+          .select('id')
+          .eq('medico_id', ctx.tenantMedicoId)
+          .eq('categoria', 'turno_medico')
+          .not('estado', 'in', '(cancelado)')
+          .lt('fecha_inicio', fechaIsoFin)
+          .gt('fecha_fin', fechaIsoInicio),
+      ])
+
+      if ((bloquesSolapados && bloquesSolapados.length > 0) || (turnosSolapados && turnosSolapados.length > 0)) {
+        return NextResponse.json(
+          { error: 'El horario del próximo control se solapa con un bloqueo o turno existente. Elegí otro horario o dejá el campo vacío.' },
+          { status: 409 }
+        )
+      }
+    }
+
     // ── Insertar la consulta ──────────────────────────────────
     const { data: nueva, error: insertError } = await supabase
       .from('consultas')
@@ -118,28 +150,27 @@ export async function POST(request: NextRequest) {
 
     // ── Crear turno automático si se sugirió próximo control ──
     if (consulta.proximo_turno_sugerido) {
-      // Normalizar: si es YYYY-MM-DD, se usa como fecha en UTC
-      const fechaStr = consulta.proximo_turno_sugerido.slice(0, 10)
-      const fechaBase = new Date(`${fechaStr}T00:00:00.000Z`)
-      const fechaFin  = new Date(`${fechaStr}T00:10:00.000Z`)
+      const fechaBase      = new Date(consulta.proximo_turno_sugerido)
+      const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
+      const fechaIsoInicio = fechaBase.toISOString()
+      const fechaIsoFin    = fechaFin.toISOString()
 
-      // Evitar duplicado: si ya existe un turno pendiente_confirmar desde HC para esta consulta
+      // Evitar duplicado: si ya existe un turno desde HC para esta consulta
       const { data: existente } = await supabase
         .from('turnos')
         .select('id')
         .eq('consulta_id', nueva.id)
-        .eq('estado', 'pendiente_confirmar')
         .maybeSingle()
 
       if (!existente) {
         const fechaConsulta = new Date(consulta.fecha_hora).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
         await supabase.from('turnos').insert({
           paciente_id:  consulta.paciente_id,
-          fecha_inicio: fechaBase.toISOString(),
-          fecha_fin:    fechaFin.toISOString(),
+          fecha_inicio: fechaIsoInicio,
+          fecha_fin:    fechaIsoFin,
           motivo:       'Control médico programado',
           notas:        `Turno generado desde historia clínica — Consulta del ${fechaConsulta}`,
-          estado:       'pendiente_confirmar',
+          estado:       'confirmado',
           categoria:    'turno_medico',
           origen:       'desde_hc',
           consulta_id:  nueva.id,

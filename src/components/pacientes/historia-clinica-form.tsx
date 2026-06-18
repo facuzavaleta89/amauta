@@ -29,6 +29,13 @@ interface HistoriaClinicaFormProps {
   initialData?: any | null
 }
 
+const formatForDateTimeLocal = (dateStr?: string | null) => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return ''
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
+
 export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }: HistoriaClinicaFormProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
@@ -47,7 +54,7 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
       laboratorio: initialData?.laboratorio || '',
       estudios_complementarios: initialData?.estudios_complementarios || '',
       conducta: initialData?.conducta || '',
-      proximo_control: initialData?.proximo_control || '',
+      proximo_control: formatForDateTimeLocal(initialData?.proximo_control),
       peso_inicial: initialData?.peso_inicial ?? '',
       talla: initialData?.talla ?? '',
       perimetro_cintura: initialData?.perimetro_cintura ?? '',
@@ -69,9 +76,21 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
         throw new Error('Error al guardar la historia clínica')
       }
 
+      const resData = await response.json()
       toast.success('Historia clínica guardada exitosamente')
-      // Update form state directly with the saved values (especially null transformations)
-      form.reset(data)
+      
+      if (resData.data) {
+        form.reset({
+          ...resData.data,
+          proximo_control: formatForDateTimeLocal(resData.data.proximo_control),
+          peso_inicial: resData.data.peso_inicial ?? '',
+          talla: resData.data.talla ?? '',
+          perimetro_cintura: resData.data.perimetro_cintura ?? '',
+        })
+      } else {
+        form.reset(data)
+      }
+      
       // Request server to refresh its data
       router.refresh()
       
@@ -341,7 +360,7 @@ export function HistoriaClinicaForm({ pacienteId, pacienteNombre, initialData }:
                       <FormLabel>Próximo Control (Opcional)</FormLabel>
                       <FormControl>
                         <Input 
-                          type="date" 
+                          type="datetime-local" 
                           {...field} 
                           value={field.value || ''} 
                           onChange={(e) => field.onChange(e.target.value)} 

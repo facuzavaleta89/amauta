@@ -70,11 +70,10 @@ function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 
 
   const categoria = raw?.categoria || 'turno_medico'
   const catStyle = CATEGORIA_STYLES[categoria] || CATEGORIA_STYLES.turno_medico
-  const isPendienteConfirmar = raw?.estado === 'pendiente_confirmar'
   const CatIcon = catStyle.icon
 
   return (
-    <div className={cn('fc-event-custom fc-event-turno', catStyle.accentClass, isPendienteConfirmar && 'fc-event-pendiente-confirmar')}>
+    <div className={cn('fc-event-custom fc-event-turno', catStyle.accentClass)}>
       <div className="fc-event-accent" />
       <div className="fc-event-body">
         <span className="fc-event-time-label">{startTime} – {endTime}</span>
@@ -82,9 +81,6 @@ function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 
           {categoria !== 'turno_medico' && <CatIcon className="fc-event-cat-icon" />}
           {event.title}
         </span>
-        {isPendienteConfirmar && (
-          <span className="fc-event-badge">Sin hora confirmada</span>
-        )}
       </div>
     </div>
   )
@@ -200,7 +196,7 @@ export function CalendarView() {
               : t.motivo || t.paciente_nombre_libre || 'Turno Libre',
             start: t.fecha_inicio,
             end: t.fecha_fin,
-            allDay: t.estado === 'pendiente_confirmar',
+            allDay: false,
             extendedProps: { type: 'turno', raw: t },
           }))
 
@@ -466,10 +462,7 @@ export function CalendarView() {
             const h = arg.date.getHours()
             return `${String(h).padStart(2, '0')}:00 hs`
           }}
-          allDaySlot={true}
-          allDayText="Sin hora"
-          // ── Sin días ocultos — 7 días de la semana ────────
-          allDayMaintainDuration={false}
+          allDaySlot={false}
           selectable={true}
           editable={!isMobile}
           selectMirror={true}
