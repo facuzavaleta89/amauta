@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { bloqueoAgendaSchema } from '@/lib/validations/turno.schema'
+import { bloqueoAgendaUpdateSchema } from '@/lib/validations/turno.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 interface RouteContext {
@@ -47,7 +47,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     const body = await request.json()
-    const result = bloqueoAgendaSchema.partial().safeParse(body)
+    const result = bloqueoAgendaUpdateSchema.safeParse(body)
     
     if (!result.success) {
       return NextResponse.json(
