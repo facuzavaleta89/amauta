@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { differenceInYears } from 'date-fns'
 import {
   Download, Loader2, Trash2, ArrowLeft,
-  User, Calendar, Award, Clock,
+  User, Calendar, Award, Clock, Ban,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatFecha, formatFechaLarga } from '@/lib/utils'
@@ -25,7 +25,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import Link from 'next/link'
 import type { Certificado } from '@/types/pedido'
-import { CERTIFICADO_TIPO_LABELS } from '@/lib/validations/pedido.schema'
 
 interface CertificadoDocViewProps {
   certificado: Certificado
@@ -36,14 +35,6 @@ interface CertificadoDocViewProps {
   userRole: 'medico' | 'asistente'
 }
 
-
-const TIPO_BADGE_COLORS: Record<string, { bg: string; text: string; ring: string }> = {
-  aptitud_fisica: { bg: 'bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', ring: 'ring-emerald-500/30' },
-  reposo:         { bg: 'bg-blue-500/10',    text: 'text-blue-700 dark:text-blue-400',       ring: 'ring-blue-500/30'    },
-  diagnostico:    { bg: 'bg-violet-500/10',  text: 'text-violet-700 dark:text-violet-400',   ring: 'ring-violet-500/30'  },
-  libre_deuda:    { bg: 'bg-amber-500/10',   text: 'text-amber-700 dark:text-amber-400',     ring: 'ring-amber-500/30'   },
-  otro:           { bg: 'bg-muted',          text: 'text-muted-foreground',                  ring: 'ring-border'         },
-}
 
 export function CertificadoDocView({
   certificado,
@@ -57,8 +48,8 @@ export function CertificadoDocView({
   const [isDownloading, setIsDownloading] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const tipoLabel = CERTIFICADO_TIPO_LABELS[certificado.tipo] ?? 'Certificado'
-  const badge = TIPO_BADGE_COLORS[certificado.tipo] ?? TIPO_BADGE_COLORS.otro
+  const [estado, setEstado] = useState(certificado.estado)
+  const [isAnulando, setIsAnulando] = useState(false)
 
   // Calcular edad del paciente
   const edad = certificado.paciente_dob
@@ -98,6 +89,21 @@ export function CertificadoDocView({
     }
   }
 
+  async function anularCertificado() {
+    setIsAnulando(true)
+    try {
+      const res = await fetch(`/api/certificados/${certificado.id}/anular`, { method: 'POST' })
+      if (!res.ok) throw new Error('Error al anular')
+      toast.success('Documento anulado')
+      setEstado('revocado')
+      router.refresh()
+    } catch {
+      toast.error('No se pudo anular el certificado')
+    } finally {
+      setIsAnulando(false)
+    }
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
 
@@ -113,11 +119,11 @@ export function CertificadoDocView({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-foreground">Certificado Médico</h1>
-              <span
-                className={`text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset ${badge.bg} ${badge.text} ${badge.ring}`}
-              >
-                {tipoLabel}
-              </span>
+              {estado === 'revocado' && (
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-red-500/10 text-red-700 dark:text-red-400 ring-red-500/30">
+                  Anulado
+                </span>
+              )}
             </div>
             <p className="text-sm text-muted-foreground mt-0.5">
               {certificado.paciente_nombre}
@@ -126,6 +132,36 @@ export function CertificadoDocView({
         </div>
 
         <div className="flex items-center gap-2">
+          {userRole === 'medico' && estado === 'emitido' && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20 gap-2">
+                  <Ban className="h-4 w-4" />
+                  Anular Documento
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Anular certificado médico?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Esta acción marcará el certificado como <strong>inválido</strong>. El QR público indicará que el documento está revocado, aunque el PDF siga impreso. Esta acción no se puede deshacer.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={anularCertificado}
+                    disabled={isAnulando}
+                    className="bg-destructive hover:bg-destructive/90"
+                  >
+                    {isAnulando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                    Anular
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+
           {userRole === 'medico' && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -168,6 +204,12 @@ export function CertificadoDocView({
 
       {/* ── DOCUMENTO PREVIEW ───────────────────────────────── */}
       <div className="bg-white border border-border/60 rounded-xl shadow-lg overflow-hidden">
+        {estado === 'revocado' && (
+          <div className="bg-red-50 dark:bg-red-950/20 border-b border-red-200 dark:border-red-900/40 px-8 py-3 text-center text-sm font-semibold text-red-800 dark:text-red-200 flex items-center justify-center gap-2">
+            <Ban className="h-4.5 w-4.5" />
+            Este documento ha sido anulado y no es válido para su uso.
+          </div>
+        )}
 
         {/* Membrete */}
         <div className="bg-gradient-to-r from-primary/5 to-primary/10 border-b border-primary/20 px-8 py-6">
@@ -204,11 +246,6 @@ export function CertificadoDocView({
             <h2 className="text-xl font-bold text-primary uppercase tracking-widest">
               Certificado Médico
             </h2>
-            <p className="text-xs text-muted-foreground uppercase tracking-widest">
-              {certificado.tipo === 'otro' && certificado.tipo_descripcion
-                ? certificado.tipo_descripcion
-                : tipoLabel}
-            </p>
           </div>
 
           {/* Datos del paciente */}
@@ -260,28 +297,6 @@ export function CertificadoDocView({
               </p>
             </div>
           </div>
-
-          {/* Datos de reposo */}
-          {certificado.tipo === 'reposo' && certificado.dias_reposo && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg px-5 py-4 flex gap-8">
-              <div>
-                <p className="text-[10px] text-blue-600 uppercase tracking-widest font-bold">
-                  Días de Reposo
-                </p>
-                <p className="text-3xl font-bold text-blue-900 mt-1">{certificado.dias_reposo}</p>
-              </div>
-              {certificado.fecha_inicio_reposo && (
-                <div className="border-l border-blue-200/50 pl-8">
-                  <p className="text-[10px] text-blue-700 dark:text-blue-300 uppercase tracking-widest font-bold">
-                    Inicio
-                  </p>
-                  <p className="text-sm font-semibold text-blue-900 dark:text-blue-100 mt-1">
-                    {formatFechaLarga(certificado.fecha_inicio_reposo!)}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Validez */}
           {certificado.valido_hasta && (

@@ -38,6 +38,20 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       .eq('id', pedido.firmado_por)
       .single()
 
+    // Generar la URL de verificación
+    const host = _req.headers.get('host') || 'localhost:3000'
+    const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
+    const verificationUrl = `${protocol}://${host}/verificar/${pedido.codigo_verificacion}`
+
+    // Generar el código QR
+    let qrCodeUrl: string | null = null
+    try {
+      const QRCode = require('qrcode')
+      qrCodeUrl = await QRCode.toDataURL(verificationUrl, { margin: 1, width: 120 })
+    } catch (qrErr) {
+      console.error('Error generating QR code:', qrErr)
+    }
+
     const buffer = await renderToBuffer(
       React.createElement(PedidoPDFTemplate, {
         pedido,
@@ -48,6 +62,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           firma_url: medico?.firma_url ?? null,
           logo_url: medico?.logo_url ?? null,
         },
+        qrCodeUrl,
       }) as React.ReactElement<DocumentProps>
     )
 

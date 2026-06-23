@@ -92,6 +92,27 @@ const s = StyleSheet.create({
     backgroundColor: VERDE_CLARO,
     marginVertical: 10,
   },
+  // Recuadro de fecha en el encabezado
+  fechaBadge: {
+    marginTop: 6,
+    backgroundColor: VERDE_CLARO,
+    borderRadius: 4,
+    border: `1pt solid ${VERDE_PRIMARIO}`,
+    padding: '4 8',
+    alignItems: 'flex-end',
+  },
+  fechaBadgeLabel: {
+    fontSize: 7,
+    color: GRIS_SUAVE,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  },
+  fechaBadgeValue: {
+    fontSize: 9,
+    fontFamily: 'Helvetica-Bold',
+    color: VERDE_PRIMARIO,
+  },
   docTitle: {
     fontSize: 16,
     fontFamily: 'Helvetica-Bold',
@@ -232,6 +253,26 @@ const s = StyleSheet.create({
     color: VERDE_PRIMARIO,
     fontFamily: 'Helvetica-Bold',
   },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    marginTop: 20,
+  },
+  qrContainer: {
+    alignItems: 'center',
+    width: 90,
+  },
+  qrImage: {
+    width: 60,
+    height: 60,
+    marginBottom: 3,
+  },
+  qrText: {
+    fontSize: 5.5,
+    color: GRIS_SUAVE,
+    textAlign: 'center',
+  },
 })
 
 const TIPO_LABELS: Record<string, string> = {
@@ -265,6 +306,7 @@ interface CertificadoPDFProps {
     firma_url?: string | null
     logo_url?: string | null
   }
+  qrCodeUrl?: string | null
 }
 
 function formatFecha(dateStr: string) {
@@ -286,9 +328,9 @@ function formatMatriculas(matriculas?: Matricula[]): string | null {
   return matriculas.map((m) => `${m.tipo} ${m.numero}`).join('  |  ')
 }
 
-export function CertificadoPDFTemplate({ certificado, medico }: CertificadoPDFProps) {
+export function CertificadoPDFTemplate({ certificado, medico, qrCodeUrl }: CertificadoPDFProps) {
   const edad = calcEdad(certificado.paciente_dob)
-  const tipoLabel = TIPO_LABELS[certificado.tipo] ?? 'Certificado Médico'
+  const tipoLabel = certificado.tipo ? (TIPO_LABELS[certificado.tipo] ?? '') : ''
   const subtitulo = certificado.tipo === 'otro' && certificado.tipo_descripcion
     ? certificado.tipo_descripcion
     : tipoLabel
@@ -297,7 +339,7 @@ export function CertificadoPDFTemplate({ certificado, medico }: CertificadoPDFPr
 
   return (
     <Document
-      title={`Certificado ${tipoLabel} — ${certificado.paciente_nombre}`}
+      title={`Certificado Médico — ${certificado.paciente_nombre}`}
       author={displayName}
       creator="Amauta — Gestión Médica"
     >
@@ -323,13 +365,18 @@ export function CertificadoPDFTemplate({ certificado, medico }: CertificadoPDFPr
             {matriculasStr && (
               <Text style={s.medicoMatricula}>{matriculasStr}</Text>
             )}
+            {/* Fecha de emisión en encabezado */}
+            <View style={s.fechaBadge}>
+              <Text style={s.fechaBadgeLabel}>Fecha de emisión</Text>
+              <Text style={s.fechaBadgeValue}>{formatFecha(certificado.fecha_certificado)}</Text>
+            </View>
           </View>
         </View>
 
         <View style={s.divider} />
 
         <Text style={s.docTitle}>Certificado Médico</Text>
-        <Text style={s.docSubtitle}>{subtitulo}</Text>
+        {subtitulo ? <Text style={s.docSubtitle}>{subtitulo}</Text> : null}
 
         {/* Datos del paciente */}
         <View style={s.section}>
@@ -393,16 +440,30 @@ export function CertificadoPDFTemplate({ certificado, medico }: CertificadoPDFPr
           </View>
         )}
 
-        {/* Firma */}
-        <View style={s.firmaContainer}>
-          {medico.firma_url && (
-            <Image src={medico.firma_url} style={s.firmaImage} />
+        {/* Fila inferior con QR y Firma */}
+        <View style={s.bottomRow}>
+          {/* QR de Verificación */}
+          {qrCodeUrl ? (
+            <View style={s.qrContainer}>
+              <Image src={qrCodeUrl} style={s.qrImage} />
+              <Text style={s.qrText}>Escanear para verificar</Text>
+              <Text style={s.qrText}>autenticidad</Text>
+            </View>
+          ) : (
+            <View style={{ width: 90 }} />
           )}
-          <View style={s.firmaLinea} />
-          <Text style={s.firmaNombre}>{displayName}</Text>
-          {matriculasStr && (
-            <Text style={s.firmaMatricula}>{matriculasStr}</Text>
-          )}
+
+          {/* Firma */}
+          <View style={s.firmaContainer}>
+            {medico.firma_url && (
+              <Image src={medico.firma_url} style={s.firmaImage} />
+            )}
+            <View style={s.firmaLinea} />
+            <Text style={s.firmaNombre}>{displayName}</Text>
+            {matriculasStr && (
+              <Text style={s.firmaMatricula}>{matriculasStr}</Text>
+            )}
+          </View>
         </View>
 
         {/* Footer */}

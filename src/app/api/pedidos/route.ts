@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       .select(`
         id, paciente_id, paciente_nombre, paciente_dni,
         diagnostico, estudios_pedidos, fecha_pedido,
-        pdf_path, created_at
+        pdf_path, created_at, codigo_verificacion, estado
       `)
       .order('fecha_pedido', { ascending: false })
 
