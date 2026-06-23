@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Download, Loader2, Trash2, ArrowLeft,
-  User, Calendar, Stethoscope, FileText, AlertCircle,
+  User, Calendar, Stethoscope, FileText, AlertCircle, Ban,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatFecha, formatFechaLarga } from '@/lib/utils'
@@ -44,6 +44,8 @@ export function PedidoDocView({
   userRole,
 }: PedidoDocViewProps) {
   const router = useRouter()
+  const [estado, setEstado] = useState(pedido.estado)
+  const [isAnulando, setIsAnulando] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
@@ -80,6 +82,21 @@ export function PedidoDocView({
     }
   }
 
+  async function anularPedido() {
+    setIsAnulando(true)
+    try {
+      const res = await fetch(`/api/pedidos/${pedido.id}/anular`, { method: 'POST' })
+      if (!res.ok) throw new Error('Error al anular')
+      toast.success('Pedido anulado')
+      setEstado('revocado')
+      router.refresh()
+    } catch {
+      toast.error('No se pudo anular el pedido')
+    } finally {
+      setIsAnulando(false)
+    }
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
 
@@ -95,9 +112,16 @@ export function PedidoDocView({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-foreground">Pedido de Estudios</h1>
-              <Badge variant="outline" className="text-xs">
-                {formatFecha(pedido.fecha_pedido)}
-              </Badge>
+              {estado === 'revocado' && (
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-red-500/10 text-red-700 dark:text-red-400 ring-red-500/30">
+                  Anulado
+                </span>
+              )}
+              {estado !== 'revocado' && (
+                <Badge variant="outline" className="text-xs">
+                  {formatFecha(pedido.fecha_pedido)}
+                </Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground mt-0.5">
               {pedido.paciente_nombre}
@@ -107,6 +131,36 @@ export function PedidoDocView({
 
         {/* Acciones */}
         <div className="flex items-center gap-2">
+          {userRole === 'medico' && estado === 'emitido' && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20 gap-2">
+                  <Ban className="h-4 w-4" />
+                  Anular Documento
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Anular pedido médico?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Esta acción marcará el pedido de estudios como <strong>inválido</strong>. El QR público indicará que el documento está revocado, aunque el PDF siga impreso. Esta acción no se puede deshacer.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={anularPedido}
+                    disabled={isAnulando}
+                    className="bg-destructive hover:bg-destructive/90"
+                  >
+                    {isAnulando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                    Anular
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+
           {userRole === 'medico' && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -149,6 +203,12 @@ export function PedidoDocView({
 
       {/* ── DOCUMENTO PREVIEW ───────────────────────────────── */}
       <div className="bg-white border border-border/60 rounded-xl shadow-lg overflow-hidden print:shadow-none">
+        {estado === 'revocado' && (
+          <div className="bg-red-50 dark:bg-red-950/20 border-b border-red-200 dark:border-red-900/40 px-8 py-3 text-center text-sm font-semibold text-red-800 dark:text-red-200 flex items-center justify-center gap-2">
+            <Ban className="h-4.5 w-4.5" />
+            Este documento ha sido anulado y no es válido para su uso.
+          </div>
+        )}
 
         {/* Membrete */}
         <div className="bg-gradient-to-r from-primary/5 to-primary/10 border-b border-primary/20 px-8 py-6">

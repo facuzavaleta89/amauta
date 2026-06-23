@@ -5,21 +5,12 @@ import { useCallback } from 'react'
 import { Search, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import {
-  CERTIFICADO_TIPOS,
-  CERTIFICADO_TIPO_LABELS,
-  type CertificadoTipo,
-} from '@/lib/validations/pedido.schema'
-
-const TIPO_TODOS = 'todos'
 
 export function CertificadosFiltros() {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const q = searchParams.get('q') ?? ''
-  const tipo = searchParams.get('tipo') ?? TIPO_TODOS
 
   const updateParams = useCallback(
     (updates: Record<string, string>) => {
@@ -34,59 +25,35 @@ export function CertificadosFiltros() {
   )
 
   return (
-    <div className="space-y-3">
-      {/* Búsqueda */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          const fd = new FormData(e.currentTarget)
-          updateParams({ q: (fd.get('q') as string) ?? '', tipo })
-        }}
-        className="flex items-center gap-2 max-w-md"
-      >
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            name="q"
-            defaultValue={q}
-            placeholder="Buscar por nombre o DNI..."
-            className="pl-9"
-            autoComplete="off"
-          />
-        </div>
-        {q && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            title="Limpiar búsqueda"
-            onClick={() => updateParams({ q: '', tipo })}
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        )}
-      </form>
-
-      {/* Filtros por tipo */}
-      <div className="flex flex-wrap gap-2">
-        <Badge
-          variant={tipo === TIPO_TODOS ? 'default' : 'outline'}
-          className="cursor-pointer select-none"
-          onClick={() => updateParams({ q, tipo: '' })}
-        >
-          Todos
-        </Badge>
-        {CERTIFICADO_TIPOS.map((t: CertificadoTipo) => (
-          <Badge
-            key={t}
-            variant={tipo === t ? 'default' : 'outline'}
-            className="cursor-pointer select-none"
-            onClick={() => updateParams({ q, tipo: t })}
-          >
-            {CERTIFICADO_TIPO_LABELS[t]}
-          </Badge>
-        ))}
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        const fd = new FormData(e.currentTarget)
+        updateParams({ q: (fd.get('q') as string) ?? '' })
+      }}
+      className="flex items-center gap-2 max-w-md"
+    >
+      <div className="relative flex-1">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          name="q"
+          defaultValue={q}
+          placeholder="Buscar por nombre o DNI..."
+          className="pl-9"
+          autoComplete="off"
+        />
       </div>
-    </div>
+      {q && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          title="Limpiar búsqueda"
+          onClick={() => updateParams({ q: '' })}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      )}
+    </form>
   )
 }

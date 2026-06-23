@@ -93,6 +93,27 @@ const s = StyleSheet.create({
     backgroundColor: VERDE_CLARO,
     marginVertical: 10,
   },
+  // Recuadro de fecha en el encabezado
+  fechaBadge: {
+    marginTop: 6,
+    backgroundColor: VERDE_CLARO,
+    borderRadius: 4,
+    border: `1pt solid ${VERDE_PRIMARIO}`,
+    padding: '4 8',
+    alignItems: 'flex-end',
+  },
+  fechaBadgeLabel: {
+    fontSize: 7,
+    color: GRIS_SUAVE,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  },
+  fechaBadgeValue: {
+    fontSize: 9,
+    fontFamily: 'Helvetica-Bold',
+    color: VERDE_PRIMARIO,
+  },
   docTitle: {
     fontSize: 16,
     fontFamily: 'Helvetica-Bold',
@@ -205,6 +226,26 @@ const s = StyleSheet.create({
     color: VERDE_PRIMARIO,
     fontFamily: 'Helvetica-Bold',
   },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    marginTop: 20,
+  },
+  qrContainer: {
+    alignItems: 'center',
+    width: 90,
+  },
+  qrImage: {
+    width: 60,
+    height: 60,
+    marginBottom: 3,
+  },
+  qrText: {
+    fontSize: 5.5,
+    color: GRIS_SUAVE,
+    textAlign: 'center',
+  },
 })
 
 interface PedidoPDFProps {
@@ -227,6 +268,7 @@ interface PedidoPDFProps {
     firma_url?: string | null
     logo_url?: string | null
   }
+  qrCodeUrl?: string | null
 }
 
 function formatFecha(dateStr: string) {
@@ -249,7 +291,7 @@ function formatMatriculas(matriculas?: Matricula[]): string | null {
   return matriculas.map((m) => `${m.tipo} ${m.numero}`).join('  |  ')
 }
 
-export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
+export function PedidoPDFTemplate({ pedido, medico, qrCodeUrl }: PedidoPDFProps) {
   const edad = calcEdad(pedido.paciente_dob)
   const fechaFormateada = formatFecha(pedido.fecha_pedido)
   const nacFormateado = formatFecha(pedido.paciente_dob)
@@ -284,6 +326,11 @@ export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
             {matriculasStr && (
               <Text style={s.medicoMatricula}>{matriculasStr}</Text>
             )}
+            {/* Fecha de emisión en encabezado */}
+            <View style={s.fechaBadge}>
+              <Text style={s.fechaBadgeLabel}>Fecha de emisión</Text>
+              <Text style={s.fechaBadgeValue}>{fechaFormateada}</Text>
+            </View>
           </View>
         </View>
 
@@ -347,16 +394,30 @@ export function PedidoPDFTemplate({ pedido, medico }: PedidoPDFProps) {
           </View>
         )}
 
-        {/* Firma */}
-        <View style={s.firmaContainer}>
-          {medico.firma_url && (
-            <Image src={medico.firma_url} style={s.firmaImage} />
+        {/* Fila inferior con QR y Firma */}
+        <View style={s.bottomRow}>
+          {/* QR de Verificación */}
+          {qrCodeUrl ? (
+            <View style={s.qrContainer}>
+              <Image src={qrCodeUrl} style={s.qrImage} />
+              <Text style={s.qrText}>Escanear para verificar</Text>
+              <Text style={s.qrText}>autenticidad</Text>
+            </View>
+          ) : (
+            <View style={{ width: 90 }} />
           )}
-          <View style={s.firmaLinea} />
-          <Text style={s.firmaNombre}>{displayName}</Text>
-          {matriculasStr && (
-            <Text style={s.firmaMatricula}>{matriculasStr}</Text>
-          )}
+
+          {/* Firma */}
+          <View style={s.firmaContainer}>
+            {medico.firma_url && (
+              <Image src={medico.firma_url} style={s.firmaImage} />
+            )}
+            <View style={s.firmaLinea} />
+            <Text style={s.firmaNombre}>{displayName}</Text>
+            {matriculasStr && (
+              <Text style={s.firmaMatricula}>{matriculasStr}</Text>
+            )}
+          </View>
         </View>
 
         {/* Footer */}

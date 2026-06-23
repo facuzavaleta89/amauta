@@ -87,8 +87,8 @@ export const certificadoSchema = z
     obra_social_nombre: z.string().max(150).optional().nullable(),
     numero_afiliado: z.string().max(50).optional().nullable(),
 
-    // Tipo
-    tipo: z.enum(CERTIFICADO_TIPOS),
+    // Tipo (ya no obligatorio — libre redacción)
+    tipo: z.enum(CERTIFICADO_TIPOS).optional().nullable(),
     tipo_descripcion: z.string().max(200).optional().nullable(),
 
     // Contenido
@@ -96,17 +96,6 @@ export const certificadoSchema = z
       .string()
       .min(10, 'El contenido debe tener al menos 10 caracteres')
       .max(5000, 'Máximo 5000 caracteres'),
-
-    // Reposo (condicional)
-    dias_reposo: z.coerce.number().int().min(1).max(365).optional().nullable(),
-    fecha_inicio_reposo: z
-      .string()
-      .refine(
-        (v) => !v || isValidDateStr(v),
-        'Fecha de inicio de reposo inválida'
-      )
-      .optional()
-      .nullable(),
 
     // Fechas del documento
     fecha_certificado: z
@@ -121,12 +110,8 @@ export const certificadoSchema = z
   })
   .transform((data) => ({
     ...data,
-    dias_reposo:           data.tipo === 'reposo' ? data.dias_reposo : null,
-    fecha_inicio_reposo:   data.tipo === 'reposo' ? (data.fecha_inicio_reposo === '' ? null : data.fecha_inicio_reposo) : null,
-    tipo_descripcion:      data.tipo === 'otro'   ? data.tipo_descripcion : null,
-    valido_hasta:          data.valido_hasta === '' ? null : data.valido_hasta,
-    // Campo auxiliar usado internamente (no se inserta en la DB)
-    fecha_inicio_reposo_clean: data.fecha_inicio_reposo === '' ? null : data.fecha_inicio_reposo,
+    tipo:         data.tipo ?? null,
+    valido_hasta: data.valido_hasta === '' ? null : data.valido_hasta,
   }))
 
 export type CertificadoFormValues = z.infer<typeof certificadoSchema>

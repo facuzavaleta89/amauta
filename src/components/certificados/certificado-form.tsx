@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useForm, Controller, useWatch } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
 import {
@@ -16,27 +16,11 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 import {
   certificadoSchema,
-  CERTIFICADO_TIPOS,
-  CERTIFICADO_TIPO_LABELS,
   type CertificadoFormInput,
 } from '@/lib/validations/pedido.schema'
-
-// Templates de contenido por tipo
-const CONTENIDO_TEMPLATES: Record<string, string> = {
-  aptitud_fisica:
-    'el/la Sr./Sra. [NOMBRE] se encuentra en condiciones de realizar actividad física sin restricciones.',
-  reposo:
-    'el/la Sr./Sra. [NOMBRE] requiere reposo domiciliario por el período indicado a continuación, por indicación médica.',
-  diagnostico:
-    'el/la Sr./Sra. [NOMBRE] se encuentra en tratamiento por [DIAGNÓSTICO], según consta en su historia clínica.',
-  libre_deuda:
-    'el/la Sr./Sra. [NOMBRE] no presenta deuda de atención médica en esta institución hasta la fecha.',
-  otro: '',
-}
 
 interface PacienteSugerido {
   id: string
@@ -70,15 +54,10 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
   } = useForm<CertificadoFormInput>({
     resolver: zodResolver(certificadoSchema),
     defaultValues: {
-      tipo: 'aptitud_fisica',
       fecha_certificado: new Date().toISOString().slice(0, 10),
       contenido: '',
     },
   })
-
-  const tipoWatch = useWatch({ control, name: 'tipo' })
-  const esReposo = tipoWatch === 'reposo'
-  const esOtro = tipoWatch === 'otro'
 
   // ── Búsqueda de pacientes ──────────────────────────────────
 
@@ -123,20 +102,6 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
     setValue('numero_afiliado', p.numero_afiliado ?? null)
     setSearchQuery(p.nombre_completo)
     setShowSugerencias(false)
-
-    // Aplicar template si hay tipo seleccionado
-    const tipo = tipoWatch ?? 'aptitud_fisica'
-    const template = CONTENIDO_TEMPLATES[tipo] ?? ''
-    setValue('contenido', template.replace('[NOMBRE]', p.nombre_completo))
-  }
-
-  // Actualizar template cuando cambia el tipo
-  const handleTipoChange = (tipo: string, onChange: (v: string) => void) => {
-    onChange(tipo)
-    if (pacienteSeleccionado) {
-      const template = CONTENIDO_TEMPLATES[tipo] ?? ''
-      setValue('contenido', template.replace('[NOMBRE]', pacienteSeleccionado.nombre_completo))
-    }
   }
 
   // ── Submit ─────────────────────────────────────────────────
@@ -242,89 +207,6 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
         </CardContent>
       </Card>
 
-      {/* Tipo de certificado */}
-      <Card className="border-border/60 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Award className="h-5 w-5 text-primary" />
-            Tipo de Certificado
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="tipo">Tipo *</Label>
-            <Controller
-              name="tipo"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  value={field.value}
-                  onValueChange={(v) => handleTipoChange(v, field.onChange)}
-                >
-                  <SelectTrigger id="tipo" className={errors.tipo ? 'border-destructive' : ''}>
-                    <SelectValue placeholder="Seleccionar tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CERTIFICADO_TIPOS.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {CERTIFICADO_TIPO_LABELS[t]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
-
-          {/* Descripción libre si es "otro" */}
-          {esOtro && (
-            <div className="space-y-2">
-              <Label htmlFor="tipo_descripcion">Descripción del certificado</Label>
-              <Input
-                id="tipo_descripcion"
-                placeholder="Ej: Aptitud para conducir, Pre-quirúrgico..."
-                {...register('tipo_descripcion')}
-              />
-            </div>
-          )}
-
-          {/* Campos de reposo */}
-          {esReposo && (
-            <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="space-y-2">
-                <Label htmlFor="dias_reposo">Días de reposo *</Label>
-                <Input
-                  id="dias_reposo"
-                  type="number"
-                  min={1}
-                  placeholder="Ej: 3"
-                  {...register('dias_reposo')}
-                  className={errors.dias_reposo ? 'border-destructive' : ''}
-                />
-                {errors.dias_reposo && (
-                  <p className="text-xs text-destructive">{errors.dias_reposo.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="fecha_inicio_reposo">Inicio del reposo</Label>
-                <Controller
-                  name="fecha_inicio_reposo"
-                  control={control}
-                  render={({ field }) => (
-                    <Input
-                      id="fecha_inicio_reposo"
-                      type="date"
-                      {...field}
-                      value={field.value ?? ''}
-                    />
-                  )}
-                />
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Contenido */}
       <Card className="border-border/60 shadow-sm">
         <CardHeader>
@@ -333,7 +215,7 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
             Contenido del Certificado *
           </CardTitle>
           <CardDescription>
-            El texto comenzará con &quot;Certifico que...&quot;. Podés editar el template generado automáticamente.
+            Redactá el texto del certificado. Comenzará con &quot;Certifico que...&quot;
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -344,7 +226,7 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
             <Textarea
               id="contenido"
               placeholder="...el/la Sr./Sra. X se encuentra en condiciones de..."
-              className={`min-h-[120px] resize-y ${errors.contenido ? 'border-destructive' : ''}`}
+              className={`min-h-[160px] resize-y ${errors.contenido ? 'border-destructive' : ''}`}
               {...register('contenido')}
             />
             {errors.contenido && (

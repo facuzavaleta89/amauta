@@ -21,6 +21,8 @@ export interface Pedido {
   pdf_path: string | null
   pdf_generado_at: string | null
   firmado_por: string            // uuid del médico que firma
+  codigo_verificacion: string
+  estado: 'emitido' | 'revocado'
   created_at: string
   updated_at: string
 }
@@ -72,6 +74,8 @@ export interface Certificado {
   pdf_path: string | null
   pdf_generado_at: string | null
   firmado_por: string
+  codigo_verificacion: string
+  estado: 'emitido' | 'revocado'
   created_at: string
   updated_at: string
 }

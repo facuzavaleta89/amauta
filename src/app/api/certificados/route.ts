@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       .select(`
         id, paciente_id, paciente_nombre, paciente_dni,
         tipo, tipo_descripcion, fecha_certificado,
-        pdf_path, created_at
+        pdf_path, created_at, codigo_verificacion, estado
       `)
       .eq('firmado_por', tenantMedicoId)
       .order('fecha_certificado', { ascending: false })
@@ -77,8 +77,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Datos inválidos', details: result.error.format() }, { status: 400 })
     }
 
-    // Separar los campos calculados del transform
-    const { fecha_inicio_reposo_clean: _, ...insertData } = result.data
+    const insertData = result.data
 
     const { data, error } = await supabase
       .from('certificados')
