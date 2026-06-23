@@ -92,9 +92,26 @@ export const turnoSchema = turnoBaseSchema
 // Versión base para updates sin cross-field (solo un campo cambia)
 export const turnoUpdateSchema = turnoBaseSchema.partial()
 
-// Versión con cross-field: se usa cuando el PATCH incluye AMBAS fechas
-export const turnoUpdateWithDatesSchema = turnoBaseSchema
-  .partial()
+// Versión con cross-field: schema PROPIO sin defaults para PATCH de drag/resize.
+// No extiende turnoBaseSchema para evitar que los .default() inyecten valores
+// que sobreescriben los datos existentes en la DB (ej: categoria: 'turno_medico').
+export const turnoUpdateWithDatesSchema = z
+  .object({
+    fecha_inicio: z
+      .string()
+      .refine(isValidDateStr, 'Fecha de inicio inválida')
+      .optional(),
+    fecha_fin: z
+      .string()
+      .refine(isValidDateStr, 'Fecha de fin inválida')
+      .optional(),
+    estado: z
+      .enum(['pendiente', 'confirmado', 'presente', 'ausente', 'cancelado', 'reprogramado', 'pendiente_confirmar'])
+      .optional(),
+    motivo: z.string().max(500).optional().nullable(),
+    notas: z.string().max(1000).optional().nullable(),
+    color: colorHexSchema,
+  })
   .superRefine((data, ctx) => {
     // Solo aplicar si se envían ambas fechas en el mismo request
     if (!data.fecha_inicio || !data.fecha_fin) return
@@ -117,33 +134,35 @@ export const turnoUpdateWithDatesSchema = turnoBaseSchema
 export type TurnoFormData = z.input<typeof turnoSchema>
 
 // ── Bloqueo de agenda ─────────────────────────────────────────────────────────
-export const bloqueoAgendaSchema = z
-  .object({
-    fecha_inicio: z
-      .string()
-      .min(1, 'La fecha de inicio es obligatoria')
-      .refine(isValidDateStr, 'Fecha de inicio inválida'),
-    fecha_fin: z
-      .string()
-      .min(1, 'La fecha de fin es obligatoria')
-      .refine(isValidDateStr, 'Fecha de fin inválida'),
-    motivo: z.string().max(500, 'Máximo 500 caracteres').optional().nullable(),
-    es_recurrente: z.boolean().default(false),
-    // recurrencia_fin debe ser una fecha válida futura si se proporciona
-    recurrencia_fin: z
-      .string()
-      .refine(
-        (v) => !v || isValidDateStr(v),
-        'Fecha de fin de recurrencia inválida'
-      )
-      .refine(
-        (v) => !v || new Date(v) > new Date(),
-        'La fecha de fin de recurrencia debe ser futura'
-      )
-      .optional()
-      .nullable(),
-    dias_semana: z.array(z.number().int().min(0).max(6)).optional().nullable(),
-  })
+
+// Objeto base sin refinements (necesario para poder llamar .partial() en Zod v4)
+const bloqueoAgendaBaseObject = z.object({
+  fecha_inicio: z
+    .string()
+    .min(1, 'La fecha de inicio es obligatoria')
+    .refine(isValidDateStr, 'Fecha de inicio inválida'),
+  fecha_fin: z
+    .string()
+    .min(1, 'La fecha de fin es obligatoria')
+    .refine(isValidDateStr, 'Fecha de fin inválida'),
+  motivo: z.string().max(500, 'Máximo 500 caracteres').optional().nullable(),
+  es_recurrente: z.boolean().default(false),
+  recurrencia_fin: z
+    .string()
+    .refine(
+      (v) => !v || isValidDateStr(v),
+      'Fecha de fin de recurrencia inválida'
+    )
+    .refine(
+      (v) => !v || new Date(v) > new Date(),
+      'La fecha de fin de recurrencia debe ser futura'
+    )
+    .optional()
+    .nullable(),
+  dias_semana: z.array(z.number().int().min(0).max(6)).optional().nullable(),
+})
+
+export const bloqueoAgendaSchema = bloqueoAgendaBaseObject
   .superRefine((data, ctx) => {
     if (!isValidDateStr(data.fecha_inicio) || !isValidDateStr(data.fecha_fin)) return
 
@@ -166,4 +185,7 @@ export const bloqueoAgendaSchema = z
       })
     }
   })
+
+// Schema de actualización parcial — sin superRefine para permitir .partial() en Zod v4
+export const bloqueoAgendaUpdateSchema = bloqueoAgendaBaseObject.partial()
 export type BloqueoFormData = z.input<typeof bloqueoAgendaSchema>

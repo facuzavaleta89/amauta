@@ -243,33 +243,52 @@ export function CalendarView() {
     else if (type === 'bloqueo') setBlockModalOpen(true)
   }
 
+  // Extrae el UUID real del ID de un bloqueo (que tiene el prefijo "block-")
+  const bloqueoId = (fcId: string) => fcId.replace(/^block-/, '')
+
   const handleEventDrop = async (dropInfo: any) => {
     const event = dropInfo.event
-    if (event.extendedProps.type === 'bloqueo') {
-      dropInfo.revert()
-      return toast.error('No se puede arrastrar un bloqueo. Editalo desde el menú.')
-    }
-    try {
-      // Si se arrastra desde allDay a un slot con hora → confirmar el turno
-      const wasAllDay = dropInfo.oldEvent.allDay
-      const isNowTimed = !event.allDay
-      const newEstado = (wasAllDay && isNowTimed) ? 'confirmado' : undefined
+    const isBloqueo = event.extendedProps.type === 'bloqueo'
 
-      const res = await fetch(`/api/turnero/${event.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fecha_inicio: event.startStr,
-          fecha_fin: event.endStr,
-          ...(newEstado ? { estado: newEstado } : {}),
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error)
+    try {
+      if (isBloqueo) {
+        // Mover bloqueo → PATCH /api/turnero/bloqueos/{id}
+        const res = await fetch(`/api/turnero/bloqueos/${bloqueoId(event.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fecha_inicio: event.startStr,
+            fecha_fin: event.endStr,
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error)
+        }
+        toast.success('Bloqueo reprogramado')
+        calendarRef.current?.getApi().refetchEvents()
+      } else {
+        // Mover turno (cualquier categoría) → PATCH /api/turnero/{id}
+        const wasAllDay = dropInfo.oldEvent.allDay
+        const isNowTimed = !event.allDay
+        const newEstado = (wasAllDay && isNowTimed) ? 'confirmado' : undefined
+
+        const res = await fetch(`/api/turnero/${event.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fecha_inicio: event.startStr,
+            fecha_fin: event.endStr,
+            ...(newEstado ? { estado: newEstado } : {}),
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error)
+        }
+        toast.success(newEstado ? 'Turno confirmado y reprogramado' : 'Turno reprogramado')
+        calendarRef.current?.getApi().refetchEvents()
       }
-      toast.success(newEstado ? 'Turno confirmado y reprogramado' : 'Turno reprogramado')
-      calendarRef.current?.getApi().refetchEvents()
     } catch (error: any) {
       toast.error('Error al reprogramar', { description: error.message })
       dropInfo.revert()
@@ -278,21 +297,37 @@ export function CalendarView() {
 
   const handleEventResize = async (resizeInfo: any) => {
     const event = resizeInfo.event
-    if (event.extendedProps.type === 'bloqueo') {
-      resizeInfo.revert()
-      return toast.error('No se puede redimensionar un bloqueo desde aquí.')
-    }
+    const isBloqueo = event.extendedProps.type === 'bloqueo'
+
     try {
-      const res = await fetch(`/api/turnero/${event.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fecha_inicio: event.startStr, fecha_fin: event.endStr }),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error)
+      if (isBloqueo) {
+        // Redimensionar bloqueo → PATCH /api/turnero/bloqueos/{id}
+        const res = await fetch(`/api/turnero/bloqueos/${bloqueoId(event.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fecha_inicio: event.startStr,
+            fecha_fin: event.endStr,
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error)
+        }
+        toast.success('Duración del bloqueo actualizada')
+      } else {
+        // Redimensionar turno (cualquier categoría) → PATCH /api/turnero/{id}
+        const res = await fetch(`/api/turnero/${event.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fecha_inicio: event.startStr, fecha_fin: event.endStr }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error)
+        }
+        toast.success('Duración actualizada')
       }
-      toast.success('Duración actualizada')
     } catch (error: any) {
       toast.error('Error al actualizar duración', { description: error.message })
       resizeInfo.revert()
