@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { PlusCircle, ClipboardList, FileText, Calendar, Search, X } from 'lucide-react'
+import { PlusCircle, ClipboardList, FileText, Calendar, Search, X, Ban } from 'lucide-react'
 import Link from 'next/link'
 import { formatFecha } from '@/lib/utils'
 
@@ -27,7 +27,7 @@ export default async function PedidosPage({ searchParams }: Props) {
     .from('pedidos')
     .select(`
       id, paciente_id, paciente_nombre, paciente_dni,
-      diagnostico, estudios_pedidos, fecha_pedido, created_at
+      diagnostico, estudios_pedidos, fecha_pedido, created_at, estado
     `)
     .order('fecha_pedido', { ascending: false })
     .limit(50)
@@ -143,9 +143,17 @@ export default async function PedidosPage({ searchParams }: Props) {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
-                    <Calendar className="h-3 w-3" />
-                    {formatFecha(pedido.fecha_pedido)}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {pedido.estado === 'revocado' && (
+                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-500/10 text-red-700 dark:text-red-400 ring-1 ring-inset ring-red-500/20">
+                        <Ban className="h-2.5 w-2.5" />
+                        Anulado
+                      </span>
+                    )}
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Calendar className="h-3 w-3" />
+                      {formatFecha(pedido.fecha_pedido)}
+                    </div>
                   </div>
                 </div>
               </div>

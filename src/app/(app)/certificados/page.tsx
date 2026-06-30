@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { Button } from '@/components/ui/button'
-import { PlusCircle, Award, Calendar } from 'lucide-react'
+import { PlusCircle, Award, Calendar, Ban, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { formatFecha } from '@/lib/utils'
 import { CertificadosFiltros } from '@/components/certificados/certificados-filtros'
@@ -28,7 +28,7 @@ export default async function CertificadosPage({ searchParams }: Props) {
     .from('certificados')
     .select(`
       id, paciente_id, paciente_nombre, paciente_dni,
-      contenido, fecha_certificado, created_at
+      contenido, fecha_certificado, created_at, estado, valido_hasta
     `)
     .order('fecha_certificado', { ascending: false })
     .limit(50)
@@ -104,6 +104,11 @@ export default async function CertificadosPage({ searchParams }: Props) {
                 : cert.contenido
               : null
 
+            // Estado derivado
+            const hoyStr = new Date().toISOString().slice(0, 10)
+            const isAnulado = cert.estado === 'revocado'
+            const isExpirado = !isAnulado && cert.valido_hasta ? hoyStr > cert.valido_hasta : false
+
             return (
               <Link key={cert.id} href={`/certificados/${cert.id}`} className="block group">
                 <div className="bg-card border border-border/60 rounded-xl px-5 py-4 hover:border-primary/40 hover:shadow-md transition-all duration-200">
@@ -126,9 +131,23 @@ export default async function CertificadosPage({ searchParams }: Props) {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
-                      <Calendar className="h-3 w-3" />
-                      {formatFecha(cert.fecha_certificado)}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isAnulado && (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-500/10 text-red-700 dark:text-red-400 ring-1 ring-inset ring-red-500/20">
+                          <Ban className="h-2.5 w-2.5" />
+                          Anulado
+                        </span>
+                      )}
+                      {isExpirado && (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-1 ring-inset ring-amber-500/20">
+                          <AlertTriangle className="h-2.5 w-2.5" />
+                          Expirado
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Calendar className="h-3 w-3" />
+                        {formatFecha(cert.fecha_certificado)}
+                      </div>
                     </div>
                   </div>
                 </div>

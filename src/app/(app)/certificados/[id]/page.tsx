@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { CertificadoDocView } from '@/components/certificados/certificado-pdf'
+import { QRVerificacion } from '@/components/shared/qr-verificacion'
 import type { Metadata } from 'next'
 import type { UserRole, Matricula } from '@/types/roles'
 
@@ -62,13 +63,19 @@ export default async function CertificadoDetailPage({ params }: Props) {
     : 'Médico'
 
   return (
-    <CertificadoDocView
-      certificado={certificado}
-      medicoNombre={displayName}
-      medicoMatricula={matriculaFormatted}
-      medicoFirma={medico?.firma_url ?? null}
-      medicoLogo={medico?.logo_url ?? null}
-      userRole={userRole}
-    />
+    <div className="max-w-3xl mx-auto space-y-4">
+      <QRVerificacion
+        codigo={certificado.codigo_verificacion}
+        estado={certificado.estado}
+      />
+      <CertificadoDocView
+        certificado={certificado}
+        medicoNombre={displayName}
+        medicoMatricula={matriculaFormatted}
+        medicoFirma={medico?.firma_url ?? null}
+        medicoLogo={medico?.logo_url ?? null}
+        userRole={userRole}
+      />
+    </div>
   )
 }

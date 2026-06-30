@@ -98,6 +98,7 @@ vinculados.
     /turnero        → Componentes del turnero
     /pedidos        → Formularios y vistas de pedidos
     /certificados   → Formularios y vistas de certificados
+    /shared         → Componentes reutilizables entre secciones (qr-verificacion, etc.)
     /difusion       → Componentes de difusión
     /recetas        → Componentes de recetas
     /dashboard      → Widgets del dashboard
@@ -138,8 +139,9 @@ vinculados.
 
 ### Flujo de autenticación
 
-1. `@supabase/ssr` maneja las cookies de sesión vía middleware (no visible en el código, pero implícito)
-2. En `src/app/(app)/layout.tsx` (Server Component): se llama `supabase.auth.getUser()`, si no hay usuario → redirect `/login`
+1. `@supabase/ssr` maneja las cookies de sesión vía `src/proxy.ts` (equivalente al middleware de Next.js — **no usar `middleware.ts`**, está deprecado en esta versión)
+2. `proxy.ts` define `publicRoutes` (array de prefijos públicos): `/login`, `/registro`, `/callback`, `/verificar`. Toda ruta no listada requiere autenticación.
+3. En `src/app/(app)/layout.tsx` (Server Component): se llama `supabase.auth.getUser()`, si no hay usuario → redirect `/login`
 3. Se carga el `profile` desde `profiles` con `role`, `medico_id`, `titulo`
 4. Si es asistente sin `medico_id` → redirect `/onboarding` (vinculación obligatoria)
 5. Se pasa todo al `LayoutShell` (Client Component) que maneja el sidebar y header
@@ -208,9 +210,14 @@ El RLS en Supabase y las API Routes validan estos permisos directamente consulta
 - Sistema de solicitudes de vinculación asistente ↔ médico (onboarding)
 - Notificaciones en tiempo real para solicitudes pendientes
 
+#### Bloque 5 — Mejoras en documentos ✅
+- Ruta pública `/verificar/[codigo]` accesible sin login (agregada a `publicRoutes` en `proxy.ts`)
+- QR de verificación renderizado en las vistas de detalle `/pedidos/[id]` y `/certificados/[id]`, antes del preview del documento
+- Badges de estado en listas: **Anulado** (rojo, `estado='revocado'`) en `/pedidos` y `/certificados`; **Expirado** (ámbar, `valido_hasta < hoy`) en `/certificados`
+- Componente `QRVerificacion` (`src/components/shared/qr-verificacion.tsx`): Server Component, genera QR con `qrcode` (Data URL), deriva URL base con `headers()` de Next.js
+
 ### Pendiente
 
-- Bloque 5: mejoras en documentos PDF (QR de verificación, template mejorado)
 - Bloque 6: obra social libre, dashboard mejorado, notas internas, mensajería interna
 - Recetas (requiere firma digital y certificación ANMAT — bloqueado)
 
@@ -290,6 +297,7 @@ npm run lint     # ESLint
 6. **Asistente sin vínculo:** Un asistente sin `medico_id` es redirigido al onboarding y no puede usar la app hasta vincularse.
 7. **Firma digital:** Solo el médico tiene `firma_url`. Se estampa en PDFs. Los asistentes no pueden tener firma propia.
 8. **Recetas:** Solo el médico puede ver recetas. La creación está bloqueada (requiere certificación ANMAT pendiente).
+9. **Estados de documentos (pedidos y certificados):** `estado` puede ser `'emitido'` o `'revocado'`. Solo el médico puede anular un documento (acción irreversible). Los certificados también tienen `valido_hasta` (fecha ISO): si `valido_hasta < hoy` el documento está expirado (se muestra en la UI, pero **no** cambia el campo `estado` en DB — es lógica de display). La página pública `/verificar/[codigo]` muestra el estado real del documento escaneando el QR.
 
 ---
 
@@ -309,7 +317,7 @@ npm run lint     # ESLint
 
 7. **Migración `20260326204733_fix_rls_recursion.sql`** tiene nombre de timestamp (convención diferente al resto que usa numeración secuencial). Posiblemente fue aplicada con Supabase CLI en un momento distinto.
 
-8. **No hay middleware explícito:** No se encontró `middleware.ts` en la raíz o en `src/`. La protección de rutas se hace dentro de cada `layout.tsx` con redirects. Puede ser un punto de entrada si alguien bypasea el layout.
+8. **`proxy.ts` en lugar de `middleware.ts`:** En esta versión de Next.js, el middleware se implementa en `src/proxy.ts` (con la función `proxy()` y `config.matcher`). **No crear `middleware.ts`** — está deprecado. Para agregar rutas públicas, modificar el array `publicRoutes` en `proxy.ts`.
 
 9. **`difusion_posts.medico_id`** fue agregado en la migración 010 como comentario (ya ejecutado). Si la tabla existía antes, puede haber registros sin `medico_id` si la migración de backfill no se completó correctamente.
 
