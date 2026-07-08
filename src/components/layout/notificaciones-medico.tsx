@@ -50,6 +50,8 @@ export function NotificacionesMedico({ medicoId, solicitudesIniciales }: Props) 
   const [respondiendo, setRespondiendo] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
+  const count = solicitudes.length
+
   // ── Realtime subscription ──────────────────────────────────
   useEffect(() => {
     const supabase = createClient()
@@ -100,8 +102,6 @@ export function NotificacionesMedico({ medicoId, solicitudesIniciales }: Props) 
       supabase.removeChannel(channel)
     }
   }, [medicoId])
-
-  const count = solicitudes.length
 
   function handleResponder(solicitudId: string, decision: 'aprobada' | 'rechazada') {
     setRespondiendo(solicitudId)

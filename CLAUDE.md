@@ -56,6 +56,10 @@ vinculados.
 | `difusion_posts` | Posts de difusión con estados borrador/publicado. `medico_id` = tenant key | `medico_id` |
 | `recetas` | Módulo de recetas (esquema existente, UI pendiente de implementación completa) | — |
 | `solicitudes_asistente` | Workflow de vinculación asistente ↔ médico. Estados: pendiente/aprobada/rechazada | — |
+| `notas` | Notas personales de cada médico o asistente. RLS personal por `user_id` | — |
+| `mensajes_internos` | Mensajería interna (asíncrona) individual o grupal. RLS por `medico_id` (tenant) | `medico_id` |
+| `mensajes_lecturas` | Registro de lecturas de mensajes grupales por usuario. RLS por `user_id` | — |
+
 
 ### Funciones SQL relevantes
 
@@ -85,6 +89,7 @@ vinculados.
       /difusion     → Posts de difusión / comunicación
       /recetas      → Módulo de recetas (parcial)
       /perfil       → Perfil del médico/asistente
+      /mensajes       → Bandeja de mensajes internos con vista de hilos
       /notificaciones
       layout.tsx    → Guard de autenticación + carga de profile + LayoutShell
     /api            → API Routes (cron, webhook WhatsApp, etc.)
@@ -104,6 +109,7 @@ vinculados.
     /dashboard      → Widgets del dashboard
     /shared         → Componentes reutilizables (PageHeader, etc.)
     /ui             → shadcn/ui components (button, card, input, tabs, etc.)
+    /mensajes          → Componentes de mensajería: bandeja inbox y modal de hilo
     /notificaciones
   /constants
     nav-items.ts    → Items de navegación por rol
@@ -216,10 +222,20 @@ El RLS en Supabase y las API Routes validan estos permisos directamente consulta
 - Badges de estado en listas: **Anulado** (rojo, `estado='revocado'`) en `/pedidos` y `/certificados`; **Expirado** (ámbar, `valido_hasta < hoy`) en `/certificados`
 - Componente `QRVerificacion` (`src/components/shared/qr-verificacion.tsx`): Server Component, genera QR con `qrcode` (Data URL), deriva URL base con `headers()` de Next.js
 
+#### Bloque 6 — Obras sociales, notas y mensajería ✅
+- Selector de obra social flexible con opciones especiales "Particular / Sin obra social" y "Otra (no está en la lista)". La opción "Particular" es hardcodeada en el formulario; no existe como registro en `obras_sociales`.
+- Campo de texto libre para obra social condicional al estado del selector, con validación en esquema Zod.
+- Notas internas de uso personal para cualquier rol, aisladas por RLS. CRUD completo con Server Actions y buscador client-side.
+- Sistema de mensajería interna asíncrona bidireccional entre médico y asistentes, con mensajes individuales y grupales (broadcast).
+- Bandeja de mensajes (`/mensajes`) separada de notificaciones (`/notificaciones`): cada sección tiene su propia ruta y ítem en el sidebar.
+- Vista de hilos de mensajes: modal estilo chat con burbujas (propias a la derecha, recibidas a la izquierda) y caja de respuesta con Ctrl+Enter.
+- Indicador de mensajes no leídos en el sidebar (badge dinámico vía `MensajesContext`) y en el header (iconito siempre visible para asistentes con acceso).
+- `/notificaciones` solo accesible para el médico (solicitudes de vinculación + sistema). Asistentes solo ven `/mensajes`.
+
 ### Pendiente
 
-- Bloque 6: obra social libre, dashboard mejorado, notas internas, mensajería interna
 - Recetas (requiere firma digital y certificación ANMAT — bloqueado)
+
 
 ---
 

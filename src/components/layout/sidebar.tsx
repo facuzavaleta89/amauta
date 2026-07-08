@@ -9,7 +9,7 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getNavItemsByRole } from '@/constants/nav-items'
 import type { UserRole } from '@/types/roles'
-import { usePermisos } from '@/contexts/permisos-context'
+import { usePermisos, useMensajes } from '@/contexts/permisos-context'
 
 interface SidebarProps {
   userFullName: string
@@ -24,6 +24,7 @@ interface SidebarProps {
 export function Sidebar({ userFullName, userRole, userEmail, userTitulo, open = false, onClose }: SidebarProps) {
   const pathname = usePathname()
   const { tienePermiso, esMedico } = usePermisos()
+  const { mensajesNoLeidos } = useMensajes()
 
   // Filtrar items: primero por rol, luego por permiso (asistentes)
   const allItems = getNavItemsByRole(userRole)
@@ -81,6 +82,9 @@ export function Sidebar({ userFullName, userRole, userEmail, userTitulo, open = 
             pathname === item.href || pathname.startsWith(item.href + '/')
           const Icon = item.icon
 
+          // Badge dinámico de mensajes no leídos
+          const showDynamicBadge = item.showMensajesBadge && mensajesNoLeidos > 0
+
           return (
             <Link
               key={item.href}
@@ -100,17 +104,22 @@ export function Sidebar({ userFullName, userRole, userEmail, userTitulo, open = 
                 )}
               />
               <span className="flex-1">{item.label}</span>
-              {item.badge && (
+              {showDynamicBadge ? (
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground px-1.5 leading-none">
+                  {mensajesNoLeidos > 9 ? '9+' : mensajesNoLeidos}
+                </span>
+              ) : item.badge ? (
                 <Badge
                   variant={item.badgeVariant ?? 'outline'}
                   className="text-[10px] h-4 px-1.5 font-normal"
                 >
                   {item.badge}
                 </Badge>
-              )}
+              ) : null}
             </Link>
           )
-        })}
+        })
+        }
       </nav>
 
       <Separator className="bg-sidebar-border" />
@@ -136,4 +145,3 @@ export function Sidebar({ userFullName, userRole, userEmail, userTitulo, open = 
     </aside>
   )
 }
-

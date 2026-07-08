@@ -57,3 +57,30 @@ export function usePermisos(): PermisosContextValue {
   }
   return ctx
 }
+
+// ── Contexto separado para badge de mensajes no leídos ────────
+// Separado del PermisosContext para no causar re-renders globales innecesarios.
+
+interface MensajesContextValue {
+  mensajesNoLeidos: number
+}
+
+const MensajesContext = createContext<MensajesContextValue>({ mensajesNoLeidos: 0 })
+
+export function MensajesProvider({
+  mensajesNoLeidos,
+  children,
+}: {
+  mensajesNoLeidos: number
+  children: React.ReactNode
+}) {
+  return (
+    <MensajesContext.Provider value={{ mensajesNoLeidos }}>
+      {children}
+    </MensajesContext.Provider>
+  )
+}
+
+export function useMensajes(): MensajesContextValue {
+  return useContext(MensajesContext)
+}

@@ -70,8 +70,24 @@ export const pacienteSchema = z.object({
   ciudad: z.string().max(50).optional().or(z.literal('')),
 
   obra_social_id: z.number().optional(),
-  obra_social_otro: z.string().max(100).optional().or(z.literal('')),
+  obra_social_otro: z
+    .string()
+    .max(100, 'El nombre no puede superar los 100 caracteres')
+    .optional()
+    .or(z.literal('')),
   numero_afiliado: z.string().max(50).optional().or(z.literal('')),
-})
+}).refine(
+  (data) => {
+    // Si no hay obra_social_id y hay texto en obra_social_otro, debe tener al menos 2 chars
+    if (!data.obra_social_id && data.obra_social_otro && data.obra_social_otro.trim().length > 0) {
+      return data.obra_social_otro.trim().length >= 2
+    }
+    return true
+  },
+  {
+    message: 'Ingresá el nombre de la obra social (mínimo 2 caracteres)',
+    path: ['obra_social_otro'],
+  }
+)
 
 export type PacienteFormValues = z.infer<typeof pacienteSchema>

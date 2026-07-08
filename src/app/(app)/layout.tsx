@@ -4,6 +4,7 @@ import { LayoutShell } from '@/components/layout/layout-shell'
 import type { UserRole, PermisosAsistente } from '@/types/roles'
 import { PERMISOS_DEFAULT } from '@/types/roles'
 import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
+import { contarMensajesNoLeidos } from '@/app/(app)/notificaciones/actions'
 
 export default async function AppLayout({
   children,
@@ -67,6 +68,10 @@ export default async function AppLayout({
     ? await obtenerSolicitudesPendientes()
     : { data: [] }
 
+  // Badge de mensajes no leídos (todos los roles con acceso)
+  const tieneAccesoMensajeria = userRole === 'medico' || (profile?.acceso_mensajeria ?? false)
+  const mensajesNoLeidos = tieneAccesoMensajeria ? await contarMensajesNoLeidos() : 0
+
   return (
     <LayoutShell
       userFullName={userFullName}
@@ -77,6 +82,7 @@ export default async function AppLayout({
       userTitulo={userTitulo}
       permisos={permisos}
       solicitudesPendientes={solicitudesPendientes ?? []}
+      mensajesNoLeidos={mensajesNoLeidos}
     >
       {children}
     </LayoutShell>
