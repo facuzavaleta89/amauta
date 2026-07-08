@@ -7,6 +7,9 @@ import {
   FileText,
   Megaphone,
   Pill,
+  NotebookPen,
+  Bell,
+  MessageSquare,
 } from 'lucide-react'
 import type { PermisoKey } from '@/types/roles'
 
@@ -21,6 +24,8 @@ export interface NavItem {
   permiso?: PermisoKey
   badge?: string            // Ej: "Próximamente"
   badgeVariant?: 'default' | 'secondary' | 'outline'
+  /** Si true, muestra el badge de mensajes no leídos en lugar de un texto estático */
+  showMensajesBadge?: boolean
 }
 
 export const navItems: NavItem[] = [
@@ -67,6 +72,27 @@ export const navItems: NavItem[] = [
     // Sin permiso específico — difusión es visible para todos los asistentes vinculados
   },
   {
+    href: '/notas',
+    label: 'Notas',
+    icon: NotebookPen,
+    roles: ['medico', 'asistente'],
+    // Sin permiso específico — cada usuario ve solo sus propias notas
+  },
+  {
+    href: '/notificaciones',
+    label: 'Notificaciones',
+    icon: Bell,
+    roles: ['medico'],   // Solo médico (solicitudes de vinculación + sistema)
+  },
+  {
+    href: '/mensajes',
+    label: 'Mensajes',
+    icon: MessageSquare,
+    roles: ['medico', 'asistente'],
+    permiso: 'acceso_mensajeria',
+    showMensajesBadge: true,
+  },
+  {
     href: '/recetas',
     label: 'Recetas',
     icon: Pill,
@@ -79,4 +105,3 @@ export const navItems: NavItem[] = [
 export function getNavItemsByRole(role: UserRole): NavItem[] {
   return navItems.filter((item) => item.roles.includes(role))
 }
-

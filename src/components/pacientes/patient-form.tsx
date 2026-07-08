@@ -48,11 +48,42 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
     register,
     handleSubmit,
     control,
+    setValue,
     formState: { errors },
   } = useForm<PacienteFormValues>({
     resolver: zodResolver(pacienteSchema),
     defaultValues,
   })
+
+  // Determinar el estado inicial del selector de obra social
+  function getInitialObraSocialSelector(): string {
+    if (!initialData) return ''
+    if (initialData.obra_social_id) return String(initialData.obra_social_id)
+    if (initialData.obra_social_otro) return 'otra'
+    return 'particular'
+  }
+
+  const [obraSocialSelector, setObraSocialSelector] = useState<string>(
+    getInitialObraSocialSelector()
+  )
+
+  function handleObraSocialChange(value: string) {
+    setObraSocialSelector(value)
+    if (value === 'particular') {
+      setValue('obra_social_id', undefined)
+      setValue('obra_social_otro', '')
+    } else if (value === 'otra') {
+      setValue('obra_social_id', undefined)
+      // obra_social_otro se completa manualmente
+    } else if (value === '') {
+      setValue('obra_social_id', undefined)
+      setValue('obra_social_otro', '')
+    } else {
+      // OS del catálogo
+      setValue('obra_social_id', Number(value))
+      setValue('obra_social_otro', '')
+    }
+  }
 
   async function onSubmit(data: PacienteFormValues) {
     setIsSubmitting(true)
@@ -199,38 +230,56 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Selector principal */}
             <div className="space-y-2">
-              <Label htmlFor="obra_social_id">Obra Social</Label>
-              <Controller
-                name="obra_social_id"
-                control={control}
-                render={({ field }) => (
-                  <Select
-                    value={field.value ? field.value.toString() : ""}
-                    onValueChange={(val) => field.onChange(val === "" ? undefined : Number(val))}
-                  >
-                    <SelectTrigger id="obra_social_id">
-                      <SelectValue placeholder="Seleccionar" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {obrasSociales.map((os) => (
-                        <SelectItem key={os.id} value={os.id.toString()}>
-                          {os.nombre}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
+              <Label htmlFor="obra_social_selector">Cobertura médica</Label>
+              <Select
+                value={obraSocialSelector}
+                onValueChange={handleObraSocialChange}
+              >
+                <SelectTrigger id="obra_social_selector">
+                  <SelectValue placeholder="Seleccionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="particular">Particular / Sin obra social</SelectItem>
+                  <SelectItem value="otra">Otra (no está en la lista)</SelectItem>
+                  {/* Separador visual antes del catálogo */}
+                  <div className="my-1 h-px bg-border" role="separator" />
+                  {obrasSociales.map((os) => (
+                    <SelectItem key={os.id} value={os.id.toString()}>
+                      {os.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* Campos sincronizados con RHF (ocultos, controlados por handleObraSocialChange) */}
+              <Controller name="obra_social_id" control={control} render={() => <></>} />
             </div>
+
+            {/* Número de afiliado */}
             <div className="space-y-2">
               <Label htmlFor="numero_afiliado">Número de Afiliado</Label>
               <Input id="numero_afiliado" {...register('numero_afiliado')} />
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="obra_social_otro">Otra (si no está en la lista)</Label>
-              <Input id="obra_social_otro" {...register('obra_social_otro')} />
-            </div>
+
+            {/* Campo de texto libre — solo visible cuando se elige "Otra" */}
+            {obraSocialSelector === 'otra' && (
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="obra_social_otro">
+                  Nombre de la obra social *
+                </Label>
+                <Input
+                  id="obra_social_otro"
+                  placeholder="Ej: Swiss Medical, Galeno, etc."
+                  {...register('obra_social_otro')}
+                  className={errors.obra_social_otro ? 'border-destructive' : ''}
+                  autoFocus
+                />
+                {errors.obra_social_otro && (
+                  <p className="text-xs text-destructive">{errors.obra_social_otro.message}</p>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

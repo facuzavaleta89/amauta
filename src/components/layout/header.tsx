@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Breadcrumb } from './breadcrumb'
 import { NotificacionesMedico } from './notificaciones-medico'
-import { LogOut, Menu, User } from 'lucide-react'
+import { LogOut, Menu, User, MessageSquare } from 'lucide-react'
 import type { UserRole } from '@/types/roles'
 import Link from 'next/link'
 
@@ -32,6 +32,7 @@ interface HeaderProps {
   medicoId: string | null
   userTitulo?: string | null
   solicitudesPendientes?: Solicitud[]
+  mensajesNoLeidos?: number
   onMenuToggle?: () => void
 }
 
@@ -43,6 +44,7 @@ export function Header({
   medicoId,
   userTitulo,
   solicitudesPendientes = [],
+  mensajesNoLeidos = 0,
   onMenuToggle,
 }: HeaderProps) {
   const displayName = userTitulo ? `${userTitulo} ${userFullName}` : userFullName
@@ -74,12 +76,32 @@ export function Header({
 
       {/* ── Acciones ────────────────────────────────────────── */}
       <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-        {/* Campana de notificaciones — solo médicos */}
+        {/* Campanita de notificaciones — solo médicos (incluye solicitudes de vinculación) */}
         {userRole === 'medico' && (
           <NotificacionesMedico
             medicoId={userId}
             solicitudesIniciales={solicitudesPendientes}
           />
+        )}
+
+        {/* Ícono de mensajes — asistentes con acceso a mensajería (siempre visible) */}
+        {userRole === 'asistente' && (
+          <Link
+            href="/mensajes"
+            className="relative flex items-center justify-center w-9 h-9 rounded-lg hover:bg-muted transition-colors"
+            aria-label={
+              mensajesNoLeidos > 0
+                ? `${mensajesNoLeidos} mensaje${mensajesNoLeidos > 1 ? 's' : ''} no leído${mensajesNoLeidos > 1 ? 's' : ''}`
+                : 'Mensajes'
+            }
+          >
+            <MessageSquare className="h-4.5 w-4.5 text-muted-foreground" />
+            {mensajesNoLeidos > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white leading-none">
+                {mensajesNoLeidos > 9 ? '9+' : mensajesNoLeidos}
+              </span>
+            )}
+          </Link>
         )}
 
         {/* Menú de usuario */}
