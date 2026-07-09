@@ -14,6 +14,7 @@ interface Usuario {
   id: string
   full_name: string
   role: string
+  acceso_mensajeria?: boolean
 }
 
 interface Props {
@@ -44,6 +45,16 @@ export function MensajeForm({ usuarios, replyTo, onSent, onClose }: Props) {
       toast.error('Seleccioná un destinatario')
       return
     }
+
+    // Validar en el cliente que el destinatario tenga permisos de mensajería si es asistente
+    if (!esGrupal) {
+      const selectedUser = usuarios.find((u) => u.id === destinatario)
+      if (selectedUser && selectedUser.role === 'asistente' && !selectedUser.acceso_mensajeria) {
+        toast.error('El asistente seleccionado no tiene permisos de mensajería')
+        return
+      }
+    }
+
     if (!asunto.trim()) {
       toast.error('El asunto es requerido')
       return
@@ -118,17 +129,27 @@ export function MensajeForm({ usuarios, replyTo, onSent, onClose }: Props) {
                     </span>
                   </SelectItem>
                   <div className="my-1 h-px bg-border" role="separator" />
-                  {usuarios.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      <span className="flex items-center gap-2">
-                        <User className="h-3.5 w-3.5 text-muted-foreground" />
-                        {u.full_name}
-                        <span className="text-xs text-muted-foreground">
-                          ({u.role === 'medico' ? 'Médico' : 'Asistente'})
+                  {usuarios.map((u) => {
+                    const sinAcceso = u.role === 'asistente' && !u.acceso_mensajeria
+                    return (
+                      <SelectItem key={u.id} value={u.id} disabled={sinAcceso}>
+                        <span className="flex items-center gap-2">
+                          <User className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className={sinAcceso ? 'text-muted-foreground line-through opacity-50' : ''}>
+                            {u.full_name}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            ({u.role === 'medico' ? 'Médico' : 'Asistente'})
+                          </span>
+                          {sinAcceso && (
+                            <span className="text-[10px] text-destructive bg-destructive/10 px-1.5 py-0.5 rounded font-normal normal-case ml-auto shrink-0">
+                              Sin acceso a mensajería
+                            </span>
+                          )}
                         </span>
-                      </span>
-                    </SelectItem>
-                  ))}
+                      </SelectItem>
+                    )
+                  })}
                 </SelectContent>
               </Select>
             )}
@@ -185,3 +206,4 @@ export function MensajeForm({ usuarios, replyTo, onSent, onClose }: Props) {
     </div>
   )
 }
+

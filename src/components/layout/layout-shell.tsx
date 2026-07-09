@@ -109,6 +109,7 @@ export function LayoutShell({
               userTitulo={userTitulo}
               solicitudesPendientes={solicitudesPendientes}
               mensajesNoLeidos={mensajesNoLeidos}
+              tieneAccesoMensajeria={userRole === 'medico' || (permisos?.acceso_mensajeria ?? false)}
               onMenuToggle={handleToggle}
             />
             <main className="flex-1 overflow-y-auto scrollbar-thin">

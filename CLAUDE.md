@@ -230,7 +230,17 @@ El RLS en Supabase y las API Routes validan estos permisos directamente consulta
 - Bandeja de mensajes (`/mensajes`) separada de notificaciones (`/notificaciones`): cada sección tiene su propia ruta y ítem en el sidebar.
 - Vista de hilos de mensajes: modal estilo chat con burbujas (propias a la derecha, recibidas a la izquierda) y caja de respuesta con Ctrl+Enter.
 - Indicador de mensajes no leídos en el sidebar (badge dinámico vía `MensajesContext`) y en el header (iconito siempre visible para asistentes con acceso).
-- `/notificaciones` solo accesible para el médico (solicitudes de vinculación + sistema). Asistentes solo ven `/mensajes`.
+- /notificaciones solo accesible para el médico (solicitudes de vinculación + sistema). Asistentes solo ven /mensajes.
+- **Seguridad y permisos de mensajería:**
+  - El ícono de mensajes en el Header está condicionado por el permiso `acceso_mensajeria` para asistentes.
+  - Validación en cliente y servidor en `enviarMensaje` para deshabilitar e impedir envíos a asistentes sin acceso a mensajería.
+  - Migraciones RLS: `019` para ver el médico vinculado, `020` para políticas de `DELETE` en mensajes, y `021` para permitir a asistentes ver otros perfiles del mismo médico (evitando nombres "Desconocido" en chats grupales).
+- **UX de la bandeja de mensajes e hilos:**
+  - Marcación como leído optimista en la lista (0ms de retraso).
+  - Eliminación de mensajes individuales (remitente/médico) y conversaciones completas (médicos) mediante diálogos de confirmación personalizados nativos de la app.
+  - Eliminación de refrescos redundantes de Next.js (`router.refresh()`), mitigando el error de runtime "An unexpected response was received from the server" en desarrollo.
+- **Navegación y Breadcrumbs:**
+  - Registro de etiquetas para `/mensajes` y `/notificaciones` en `Breadcrumb`, con capitalización automática fallback para cualquier otra ruta dinámica.
 
 ### Pendiente
 

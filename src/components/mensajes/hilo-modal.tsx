@@ -1,17 +1,18 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, startTransition } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { toast } from 'sonner'
-import { X, Users, User, Loader2, Send } from 'lucide-react'
+import { X, Users, User, Loader2, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { Separator } from '@/components/ui/separator'
 import type { MensajeInterno } from '@/types/mensaje'
-import { obtenerHilo } from '@/app/(app)/mensajes/actions'
-import { enviarMensaje } from '@/app/(app)/notificaciones/actions'
+import { obtenerHilo, eliminarMensaje } from '@/app/(app)/mensajes/actions'
+import { enviarMensaje, marcarMensajeLeido } from '@/app/(app)/notificaciones/actions'
+import { usePermisos } from '@/contexts/permisos-context'
 
 interface Props {
   /** Mensaje raíz sobre el que se abre el modal */
@@ -42,10 +43,14 @@ function BurbujaMensaje({
   mensaje,
   currentUserId,
   esRaiz = false,
+  puedeEliminar = false,
+  onDelete,
 }: {
   mensaje: MensajeInterno
   currentUserId: string
   esRaiz?: boolean
+  puedeEliminar?: boolean
+  onDelete?: () => void
 }) {
   const esMio = mensaje.remitente_id === currentUserId
   const remitente = mensaje.remitente?.full_name ?? 'Desconocido'
@@ -65,19 +70,32 @@ function BurbujaMensaje({
           )}
           <span className="text-[10px] text-muted-foreground">{fechaStr}</span>
         </div>
-        <div
-          className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap max-w-full ${
-            esMio
-              ? 'bg-primary text-primary-foreground rounded-tr-sm'
-              : 'bg-muted text-foreground rounded-tl-sm'
-          }`}
-        >
-          {esRaiz && (
-            <p className={`text-[11px] font-semibold mb-1.5 ${esMio ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-              {mensaje.asunto}
-            </p>
+        <div className="relative group max-w-full">
+          <div
+            className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap max-w-full ${
+              esMio
+                ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                : 'bg-muted text-foreground rounded-tl-sm'
+            }`}
+          >
+            {esRaiz && (
+              <p className={`text-[11px] font-semibold mb-1.5 ${esMio ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                {mensaje.asunto}
+              </p>
+            )}
+            {mensaje.cuerpo}
+          </div>
+          {puedeEliminar && onDelete && (
+            <button
+              onClick={onDelete}
+              className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive ${
+                esMio ? '-left-10' : '-right-10'
+              }`}
+              title="Eliminar mensaje"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
-          {mensaje.cuerpo}
         </div>
       </div>
     </div>
@@ -90,10 +108,12 @@ export function HiloModal({ mensajeRaiz, currentUserId, onClose, onMensajeEnviad
   const [cargado, setCargado] = useState(false)
   const [respuesta, setRespuesta] = useState('')
   const [sending, setSending] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const { esMedico } = usePermisos()
 
   // Cargar el hilo completo al abrir el modal
-  async function cargarHilo() {
-    if (cargado) return
+  async function cargarHilo(force = false) {
+    if (cargado && !force) return
     setLoading(true)
     try {
       const { mensajes: hilo, error } = await obtenerHilo(mensajeRaiz.id)
@@ -103,6 +123,20 @@ export function HiloModal({ mensajeRaiz, currentUserId, onClose, onMensajeEnviad
       }
       setMensajes(hilo)
       setCargado(true)
+
+      // Marcar automáticamente como leídos los mensajes que no sean míos y no estén leídos
+      const noLeidos = hilo.filter((m) => {
+        if (m.remitente_id === currentUserId) return false
+        if (m.es_grupal) {
+          return !(m.lecturas ?? []).some((l) => l.user_id === currentUserId)
+        }
+        return !m.leido
+      })
+
+      if (noLeidos.length > 0) {
+        await Promise.all(noLeidos.map((m) => marcarMensajeLeido(m.id)))
+        onMensajeEnviado() // Notificar al padre para actualizar contadores/bandeja
+      }
     } finally {
       setLoading(false)
     }
@@ -141,11 +175,31 @@ export function HiloModal({ mensajeRaiz, currentUserId, onClose, onMensajeEnviad
       onMensajeEnviado()
       // Recargar hilo para mostrar la nueva respuesta
       setCargado(false)
-      await cargarHilo()
+      await cargarHilo(true)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al enviar')
     } finally {
       setSending(false)
+    }
+  }
+
+  async function handleEliminar(id: string) {
+    try {
+      const { error } = await eliminarMensaje(id)
+      if (error) throw new Error(error)
+      toast.success('Mensaje eliminado')
+
+      if (id === mensajeRaiz.id) {
+        // Si borramos la raíz, cerramos el hilo completo primero y revalidamos después
+        onClose()
+        onMensajeEnviado()
+      } else {
+        // Si no, recargamos el hilo primero y revalidamos después
+        await cargarHilo(true)
+        onMensajeEnviado()
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al eliminar')
     }
   }
 
@@ -192,7 +246,7 @@ export function HiloModal({ mensajeRaiz, currentUserId, onClose, onMensajeEnviad
 
         {/* Hilo de mensajes */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {loading ? (
+          {loading && mensajes.length === 1 ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
@@ -203,6 +257,8 @@ export function HiloModal({ mensajeRaiz, currentUserId, onClose, onMensajeEnviad
                 mensaje={m}
                 currentUserId={currentUserId}
                 esRaiz={i === 0}
+                puedeEliminar={m.remitente_id === currentUserId || esMedico}
+                onDelete={() => setConfirmDeleteId(m.id)}
               />
             ))
           )}
@@ -242,6 +298,45 @@ export function HiloModal({ mensajeRaiz, currentUserId, onClose, onMensajeEnviad
           </div>
         </div>
       </div>
+
+      {/* Modal de confirmación para eliminar un mensaje en el hilo */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setConfirmDeleteId(null)} />
+          <div className="relative z-10 w-full max-w-sm bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
+            <h3 className="font-semibold text-base text-foreground">
+              {confirmDeleteId === mensajeRaiz.id ? '¿Eliminar conversación?' : '¿Eliminar mensaje?'}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {confirmDeleteId === mensajeRaiz.id 
+                ? 'Esta acción no se puede deshacer. Se eliminará la conversación completa y todas sus respuestas.'
+                : 'Esta acción no se puede deshacer y el mensaje se borrará permanentemente.'}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmDeleteId(null)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={async () => {
+                  const id = confirmDeleteId
+                  setConfirmDeleteId(null)
+                  await handleEliminar(id)
+                }}
+              >
+                Eliminar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
+

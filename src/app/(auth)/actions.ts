@@ -37,6 +37,13 @@ export async function login(
 
   const supabase = await createClient()
 
+  // Limpiar cualquier sesión residual del usuario anterior antes de hacer login nuevo,
+  // pero solo si hay una sesión activa para evitar conflictos de cookies y cabeceras.
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session) {
+    await supabase.auth.signOut()
+  }
+
   const { error } = await supabase.auth.signInWithPassword({ email, password })
 
   if (error) {

@@ -20,6 +20,8 @@ const routeLabels: Record<string, string> = {
   estudios: 'Estudios',
   evolucion: 'Evolución',
   perfil: 'Perfil',
+  mensajes: 'Mensajes',
+  notificaciones: 'Notificaciones',
 }
 
 export function Breadcrumb() {
@@ -39,7 +41,9 @@ export function Breadcrumb() {
         const isLast = index === segments.length - 1
         // Si parece un UUID, mostrar "Detalle"
         const isUuid = /^[0-9a-f-]{36}$/.test(segment)
-        const label = isUuid ? 'Detalle' : (routeLabels[segment] ?? segment)
+        const label = isUuid 
+          ? 'Detalle' 
+          : (routeLabels[segment] ?? (segment.charAt(0).toUpperCase() + segment.slice(1)))
 
         return (
           <span key={href} className="flex items-center gap-1">

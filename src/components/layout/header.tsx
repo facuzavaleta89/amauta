@@ -33,6 +33,7 @@ interface HeaderProps {
   userTitulo?: string | null
   solicitudesPendientes?: Solicitud[]
   mensajesNoLeidos?: number
+  tieneAccesoMensajeria?: boolean
   onMenuToggle?: () => void
 }
 
@@ -45,6 +46,7 @@ export function Header({
   userTitulo,
   solicitudesPendientes = [],
   mensajesNoLeidos = 0,
+  tieneAccesoMensajeria = false,
   onMenuToggle,
 }: HeaderProps) {
   const displayName = userTitulo ? `${userTitulo} ${userFullName}` : userFullName
@@ -84,8 +86,8 @@ export function Header({
           />
         )}
 
-        {/* Ícono de mensajes — asistentes con acceso a mensajería (siempre visible) */}
-        {userRole === 'asistente' && (
+        {/* Ícono de mensajes — solo asistentes con permiso acceso_mensajeria */}
+        {userRole === 'asistente' && tieneAccesoMensajeria && (
           <Link
             href="/mensajes"
             className="relative flex items-center justify-center w-9 h-9 rounded-lg hover:bg-muted transition-colors"
