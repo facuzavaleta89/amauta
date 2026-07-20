@@ -6,6 +6,8 @@ import { es } from 'date-fns/locale'
 import { Search, Plus, StickyNote, Clock } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { ViewToggle } from '@/components/shared/view-toggle'
+import { useViewMode } from '@/hooks/use-view-mode'
 import type { Nota } from '@/types/nota'
 import { NotaForm } from './nota-form'
 
@@ -17,6 +19,7 @@ export function NotasList({ notas: initialNotas }: Props) {
   const [notas, setNotas] = useState<Nota[]>(initialNotas)
   const [query, setQuery] = useState('')
   const [editando, setEditando] = useState<Nota | null | 'nueva'>(null)
+  const [view, setView] = useViewMode('amauta:view:notas')
 
   const filtered = notas.filter((n) => {
     if (!query.trim()) return true
@@ -50,6 +53,9 @@ export function NotasList({ notas: initialNotas }: Props) {
             className="pl-9"
           />
         </div>
+        {notas.length > 0 && (
+          <ViewToggle mode={view} onChange={setView} className="shrink-0" />
+        )}
         <Button
           id="nueva-nota-btn"
           onClick={() => setEditando('nueva')}
@@ -84,7 +90,7 @@ export function NotasList({ notas: initialNotas }: Props) {
             </Button>
           )}
         </div>
-      ) : (
+      ) : view === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((nota) => (
             <button
@@ -102,6 +108,34 @@ export function NotasList({ notas: initialNotas }: Props) {
                 </p>
               )}
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground pt-1">
+                <Clock className="h-3 w-3 shrink-0" />
+                <span>
+                  {format(new Date(nota.updated_at), "d 'de' MMM, HH:mm", { locale: es })}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="divide-y divide-border rounded-lg border border-border bg-card overflow-hidden">
+          {filtered.map((nota) => (
+            <button
+              key={nota.id}
+              id={`nota-${nota.id}`}
+              onClick={() => setEditando(nota)}
+              className="group w-full text-left flex items-center gap-4 px-4 py-3 hover:bg-muted/50 transition-colors"
+            >
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-foreground truncate group-hover:text-primary transition-colors">
+                  {nota.titulo}
+                </h3>
+                {nota.cuerpo && (
+                  <p className="text-sm text-muted-foreground truncate">
+                    {nota.cuerpo}
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0 flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
                 <Clock className="h-3 w-3 shrink-0" />
                 <span>
                   {format(new Date(nota.updated_at), "d 'de' MMM, HH:mm", { locale: es })}

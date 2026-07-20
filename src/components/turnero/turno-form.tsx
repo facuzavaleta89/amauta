@@ -8,6 +8,7 @@ import { Loader2, CalendarPlus, Trash2, FileText, Stethoscope, GraduationCap, Us
 import type { LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
+import { reformatDateForInput } from '@/lib/utils/fecha-input'
 
 import {
   Dialog,
@@ -74,12 +75,6 @@ interface TurnoFormModalProps {
   initialData?: any // RAW event data
   onSaved: () => void
   onSwitchToBlock: () => void
-}
-
-function reformatDateForInput(isoString: string) {
-  // ISO to "YYYY-MM-DDThh:mm"
-  const date = new Date(isoString)
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 
 function formatDateToIsoOutput(localString: string) {

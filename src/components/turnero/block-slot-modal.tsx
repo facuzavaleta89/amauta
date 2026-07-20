@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2, Ban, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { BloqueoFormData, bloqueoAgendaSchema } from '@/lib/validations/turno.schema'
+import { reformatDateForInput } from '@/lib/utils/fecha-input'
 
 import {
   Dialog,
@@ -44,11 +45,6 @@ interface BlockSlotModalProps {
   initialDates: { start: string, end: string } | null
   initialData?: any // RAW event data
   onSaved: () => void
-}
-
-function reformatDateForInput(isoString: string) {
-  const date = new Date(isoString)
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 
 function formatDateToIsoOutput(localString: string) {

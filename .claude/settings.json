@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(//home/facuzavaleta89/dev/amauta/**)",
+      "Write(//home/facuzavaleta89/dev/amauta/**)",
+
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(pnpm:*)",
+      "Bash(yarn:*)",
+
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(sed:*)",
+      "Bash(echo:*)",
+      "Bash(wc:*)"
+    ],
+    "deny": [
+      "Bash(git:*)"
+    ]
+  }
+}

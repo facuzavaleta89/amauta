@@ -226,7 +226,15 @@ export function CalendarView() {
 
   const handleDateSelect = (selectInfo: any) => {
     setSelectedEvent(null)
-    setSelectedSlot({ start: selectInfo.startStr, end: selectInfo.endStr })
+    if (selectInfo.allDay) {
+      // Vista mes: la selección es de día completo (sin hora). Proponemos el día
+      // clickeado a las 09:00–09:30, editable (09:00 igual que la HC).
+      const dia = selectInfo.startStr.slice(0, 10) // "YYYY-MM-DD"
+      setSelectedSlot({ start: `${dia}T09:00`, end: `${dia}T09:30` })
+    } else {
+      // Vistas semana/día: respetar exactamente la franja marcada.
+      setSelectedSlot({ start: selectInfo.startStr, end: selectInfo.endStr })
+    }
     if (creationMode === 'bloqueo') {
       setBlockModalOpen(true)
     } else {
