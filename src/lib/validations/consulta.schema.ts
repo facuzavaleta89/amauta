@@ -60,6 +60,19 @@ export const consultaSchema = z
         return /^\d{4}-\d{2}-\d{2}/.test(v)
       }, 'La fecha del próximo turno no tiene un formato válido.'),
 
+    // Campos extra ad-hoc (examen físico / parámetros metabólicos), por consulta
+    campos_extra: z
+      .array(
+        z.object({
+          seccion: z.enum(['examen_fisico', 'parametros_metabolicos']),
+          nombre: z.string().trim().min(1, 'El nombre del campo es requerido').max(60, 'Máximo 60 caracteres'),
+          valor: z.string().max(500, 'Máximo 500 caracteres'),
+        })
+      )
+      .max(20, 'Máximo 20 campos extra por consulta')
+      .optional()
+      .default([]),
+
     // Estado
     estado: z.enum(['borrador', 'finalizada']).default('borrador'),
   })

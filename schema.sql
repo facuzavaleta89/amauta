@@ -200,6 +200,9 @@ CREATE TABLE public.consultas (
   observaciones          TEXT,
   -- Seguimiento
   proximo_turno_sugerido DATE,
+  -- Campos extra ad-hoc por consulta (migración 022): array [{ seccion, nombre, valor }],
+  -- seccion ∈ 'examen_fisico' | 'parametros_metabolicos'. Preserva el orden de carga.
+  campos_extra           JSONB NOT NULL DEFAULT '[]'::jsonb,
   -- Estado: 'finalizada' es inmutable desde la UI
   estado                 TEXT NOT NULL DEFAULT 'borrador' CHECK (estado IN ('borrador', 'finalizada')),
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),

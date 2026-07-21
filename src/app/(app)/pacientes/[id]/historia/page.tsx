@@ -4,7 +4,6 @@ import { notFound, redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { HistoriaClinicaView } from '@/components/pacientes/consultas/historia-clinica-view'
 import type { Consulta } from '@/types/consulta'
-import type { Matricula } from '@/types/roles'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -49,13 +48,6 @@ export default async function HistoriaClinicaPage({ params }: Props) {
 
   if (pacienteError || !paciente) notFound()
 
-  // Médico (para el PDF)
-  const { data: medicoProfile } = await supabase
-    .from('profiles')
-    .select('full_name, titulo, matriculas, firma_url, logo_url')
-    .eq('id', tenantMedicoId)
-    .single()
-
   // Consultas iniciales (las primeras 50, orden desc)
   const { data: consultas } = await supabase
     .from('consultas')
@@ -66,9 +58,6 @@ export default async function HistoriaClinicaPage({ params }: Props) {
     .limit(50)
 
   const obrasSociales = paciente.obras_sociales as unknown as { nombre: string } | null
-  const matriculas: Matricula[] = Array.isArray(medicoProfile?.matriculas)
-    ? medicoProfile.matriculas
-    : []
 
   return (
     <div className="flex flex-col h-[calc(100vh-theme(spacing.16))]">
@@ -80,13 +69,6 @@ export default async function HistoriaClinicaPage({ params }: Props) {
           fecha_nacimiento:   paciente.fecha_nacimiento,
           obra_social_nombre: obrasSociales?.nombre ?? paciente.obra_social_otro ?? null,
           numero_afiliado:    paciente.numero_afiliado ?? null,
-        }}
-        medico={{
-          full_name:  medicoProfile?.full_name ?? '',
-          titulo:     medicoProfile?.titulo ?? null,
-          matriculas: matriculas,
-          firma_url:  medicoProfile?.firma_url ?? null,
-          logo_url:   medicoProfile?.logo_url ?? null,
         }}
         initialConsultas={(consultas ?? []) as Consulta[]}
       />

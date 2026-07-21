@@ -4,67 +4,49 @@ import { useState } from 'react'
 import { Download, Loader2, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import type { Consulta } from '@/types/consulta'
 
-import type { Matricula } from '@/types/roles'
+// Descarga un PDF desde un endpoint del servidor (Content-Disposition: attachment).
+// Reemplaza la generación en el navegador: @react-pdf ya no entra al bundle del cliente.
+async function descargarPdf(url: string, fallbackName: string) {
+  const res = await fetch(url)
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '')
+    throw new Error(msg || 'No se pudo generar el PDF')
+  }
+  const blob = await res.blob()
 
-interface PacienteData {
-  nombre_completo: string
-  dni: string
-  fecha_nacimiento: string
-  obra_social_nombre?: string | null
-  numero_afiliado?: string | null
-}
+  // Nombre de archivo desde el header, con fallback
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const match = /filename="?([^"]+)"?/.exec(disposition)
+  const filename = match?.[1] ?? fallbackName
 
-interface MedicoData {
-  full_name: string
-  titulo?: string | null
-  matriculas?: Matricula[]
-  firma_url?: string | null
-  logo_url?: string | null
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(objectUrl)
 }
 
 // ── Botón: PDF de consulta individual ────────────────────────
 
 interface ConsultaPDFButtonProps {
-  consulta: Consulta
-  paciente: PacienteData
-  medico: MedicoData
+  consultaId: string
   variant?: 'default' | 'outline' | 'ghost'
 }
 
-export function ConsultaPDFButton({
-  consulta,
-  paciente,
-  medico,
-  variant = 'outline',
-}: ConsultaPDFButtonProps) {
+export function ConsultaPDFButton({ consultaId, variant = 'outline' }: ConsultaPDFButtonProps) {
   const [isGenerating, setIsGenerating] = useState(false)
 
   async function handleDownload() {
     setIsGenerating(true)
     try {
-      const { pdf } = await import('@react-pdf/renderer')
-      const { ConsultaIndividualPDF } = await import('@/lib/pdf/consulta-template')
-
-      const blob = await pdf(
-        <ConsultaIndividualPDF consulta={consulta} paciente={paciente} medico={medico} />
-      ).toBlob()
-
-      const url = URL.createObjectURL(blob)
-      const a   = document.createElement('a')
-      const fecha = new Date(consulta.fecha_hora)
-        .toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-        .replace(/\//g, '-')
-      a.href     = url
-      a.download = `consulta_${paciente.nombre_completo.replace(/\s+/g, '_')}_${fecha}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      await descargarPdf(`/api/consultas/${consultaId}/pdf`, `consulta_${consultaId}.pdf`)
     } catch (err) {
       console.error(err)
-      toast.error('Error al generar el PDF')
+      toast.error((err as Error).message || 'Error al generar el PDF')
     } finally {
       setIsGenerating(false)
     }
@@ -85,48 +67,36 @@ export function ConsultaPDFButton({
 // ── Botón: PDF de HC completa ─────────────────────────────────
 
 interface HCCompletaPDFButtonProps {
-  consultas: Consulta[]
-  paciente: PacienteData
-  medico: MedicoData
+  pacienteId: string
+  finalizadasCount: number
 }
 
-export function HCCompletaPDFButton({ consultas, paciente, medico }: HCCompletaPDFButtonProps) {
+export function HCCompletaPDFButton({ pacienteId, finalizadasCount }: HCCompletaPDFButtonProps) {
   const [isGenerating, setIsGenerating] = useState(false)
 
-  const finalizadas = consultas.filter((c) => c.estado === 'finalizada')
-
   async function handleDownload() {
-    if (finalizadas.length === 0) {
+    if (finalizadasCount === 0) {
       toast.info('No hay consultas finalizadas para descargar')
       return
     }
     setIsGenerating(true)
     try {
-      const { pdf } = await import('@react-pdf/renderer')
-      const { HCCompletaPDF } = await import('@/lib/pdf/consulta-template')
-
-      const blob = await pdf(
-        <HCCompletaPDF consultas={finalizadas} paciente={paciente} medico={medico} />
-      ).toBlob()
-
-      const url = URL.createObjectURL(blob)
-      const a   = document.createElement('a')
-      a.href     = url
-      a.download = `HC_completa_${paciente.nombre_completo.replace(/\s+/g, '_')}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      await descargarPdf(`/api/pacientes/${pacienteId}/historia/pdf`, `HC_completa_${pacienteId}.pdf`)
     } catch (err) {
       console.error(err)
-      toast.error('Error al generar la HC completa')
+      toast.error((err as Error).message || 'Error al generar la HC completa')
     } finally {
       setIsGenerating(false)
     }
   }
 
   return (
-    <Button variant="outline" onClick={handleDownload} disabled={isGenerating || finalizadas.length === 0} className="gap-2">
+    <Button
+      variant="outline"
+      onClick={handleDownload}
+      disabled={isGenerating || finalizadasCount === 0}
+      className="gap-2"
+    >
       {isGenerating ? (
         <Loader2 className="h-4 w-4 animate-spin" />
       ) : (
@@ -134,7 +104,7 @@ export function HCCompletaPDFButton({ consultas, paciente, medico }: HCCompletaP
       )}
       {isGenerating
         ? 'Generando…'
-        : `Descargar HC completa${finalizadas.length > 0 ? ` (${finalizadas.length})` : ''}`}
+        : `Descargar HC completa${finalizadasCount > 0 ? ` (${finalizadasCount})` : ''}`}
     </Button>
   )
 }

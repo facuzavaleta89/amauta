@@ -130,13 +130,18 @@ interface PacienteData {
 // ── Sección de una consulta (reutilizable) ────────────────────
 
 function ConsultaBody({ consulta }: { consulta: Consulta }) {
-  const hasExamenFisico =
+  const examenExtra = (consulta.campos_extra ?? []).filter((c) => c.seccion === 'examen_fisico')
+  const metabolicoExtra = (consulta.campos_extra ?? []).filter((c) => c.seccion === 'parametros_metabolicos')
+
+  const hasExamenFisico = !!(
     consulta.peso_kg || consulta.talla_cm || consulta.ta_sistolica ||
     consulta.ta_diastolica || consulta.frecuencia_cardiaca || consulta.temperatura
+  ) || examenExtra.length > 0
 
-  const hasMetabolico =
+  const hasMetabolico = !!(
     consulta.glucemia_ayunas || consulta.glucemia_postprandial || consulta.hba1c ||
     consulta.trigliceridos || consulta.colesterol_ldl || consulta.colesterol_hdl
+  ) || metabolicoExtra.length > 0
 
   return (
     <View>
@@ -144,6 +149,13 @@ function ConsultaBody({ consulta }: { consulta: Consulta }) {
         <View>
           <Text style={s.sectionTitle}>Motivo de Consulta</Text>
           <View style={s.clinicBox}><Text style={s.bodyText}>{consulta.motivo_consulta}</Text></View>
+        </View>
+      )}
+
+      {consulta.medicacion_actual && (
+        <View>
+          <Text style={s.sectionTitle}>Medicación Actual</Text>
+          <View style={s.clinicBox}><Text style={s.bodyText}>{consulta.medicacion_actual}</Text></View>
         </View>
       )}
 
@@ -170,6 +182,9 @@ function ConsultaBody({ consulta }: { consulta: Consulta }) {
             {consulta.ta_diastolica     && <View style={s.gridItem}><Text style={s.gridLabel}>TA Diastólica</Text><Text style={s.gridValue}>{consulta.ta_diastolica} mmHg</Text></View>}
             {consulta.frecuencia_cardiaca && <View style={s.gridItem}><Text style={s.gridLabel}>FC</Text><Text style={s.gridValue}>{consulta.frecuencia_cardiaca} lpm</Text></View>}
             {consulta.temperatura       && <View style={s.gridItem}><Text style={s.gridLabel}>Temperatura</Text><Text style={s.gridValue}>{consulta.temperatura} °C</Text></View>}
+            {examenExtra.map((c, i) => (
+              <View key={`ef-${i}`} style={s.gridItem}><Text style={s.gridLabel}>{c.nombre}</Text><Text style={s.gridValue}>{c.valor || '—'}</Text></View>
+            ))}
           </View>
         </View>
       )}
@@ -184,6 +199,9 @@ function ConsultaBody({ consulta }: { consulta: Consulta }) {
             {consulta.trigliceridos         && <View style={s.gridItem}><Text style={s.gridLabel}>Triglicéridos</Text><Text style={s.gridValue}>{consulta.trigliceridos} mg/dL</Text></View>}
             {consulta.colesterol_ldl        && <View style={s.gridItem}><Text style={s.gridLabel}>LDL</Text><Text style={s.gridValue}>{consulta.colesterol_ldl} mg/dL</Text></View>}
             {consulta.colesterol_hdl        && <View style={s.gridItem}><Text style={s.gridLabel}>HDL</Text><Text style={s.gridValue}>{consulta.colesterol_hdl} mg/dL</Text></View>}
+            {metabolicoExtra.map((c, i) => (
+              <View key={`pm-${i}`} style={s.gridItem}><Text style={s.gridLabel}>{c.nombre}</Text><Text style={s.gridValue}>{c.valor || '—'}</Text></View>
+            ))}
           </View>
         </View>
       )}
@@ -199,13 +217,6 @@ function ConsultaBody({ consulta }: { consulta: Consulta }) {
         <View>
           <Text style={s.sectionTitle}>Plan Terapéutico</Text>
           <View style={s.clinicBox}><Text style={s.bodyText}>{consulta.plan_terapeutico}</Text></View>
-        </View>
-      )}
-
-      {consulta.medicacion_actual && (
-        <View>
-          <Text style={s.sectionTitle}>Medicación Actual</Text>
-          <View style={s.clinicBox}><Text style={s.bodyText}>{consulta.medicacion_actual}</Text></View>
         </View>
       )}
 

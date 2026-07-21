@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useForm, useWatch, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
 import {
-  Save, CheckCircle2, X, Loader2, Lock,
-  ClipboardList, Activity, Beaker, Stethoscope, CalendarClock, FileText,
+  Save, CheckCircle2, X, Loader2, Lock, Plus, Trash2,
+  ClipboardList, Activity, Beaker, Stethoscope, CalendarClock, FileText, Pill,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -23,34 +23,14 @@ import {
 import { consultaSchema, type ConsultaFormInput } from '@/lib/validations/consulta.schema'
 import { FinalizarDialog } from './finalizar-dialog'
 import { ConsultaPDFButton } from './pdf-download-button'
-import type { Consulta } from '@/types/consulta'
+import type { Consulta, CampoExtraSeccion } from '@/types/consulta'
 
 // ── Tipos ─────────────────────────────────────────────────────
-
-import type { Matricula } from '@/types/roles'
-
-interface PacienteData {
-  nombre_completo: string
-  dni: string
-  fecha_nacimiento: string
-  obra_social_nombre?: string | null
-  numero_afiliado?: string | null
-}
-
-interface MedicoData {
-  full_name: string
-  titulo?: string | null
-  matriculas?: Matricula[]
-  firma_url?: string | null
-  logo_url?: string | null
-}
 
 interface ConsultaDetailProps {
   mode: 'new' | 'edit' | 'view'
   consulta: Consulta | null   // null cuando mode='new'
   pacienteId: string
-  paciente: PacienteData
-  medico: MedicoData
   onSaved: (c: Consulta) => void
   onCancel: () => void
 }
@@ -79,17 +59,17 @@ function SectionHeader({ icon: Icon, label }: { icon: React.ComponentType<{ clas
 
 // ── Vista de sólo lectura (consulta finalizada) ───────────────
 
-function ConsultaReadOnly({
-  consulta, paciente, medico,
-}: { consulta: Consulta; paciente: PacienteData; medico: MedicoData }) {
+function ConsultaReadOnly({ consulta }: { consulta: Consulta }) {
+  const examenExtra = (consulta.campos_extra ?? []).filter((c) => c.seccion === 'examen_fisico')
+  const metabolicoExtra = (consulta.campos_extra ?? []).filter((c) => c.seccion === 'parametros_metabolicos')
   const hasExamenFisico = !!(
     consulta.peso_kg || consulta.talla_cm || consulta.ta_sistolica ||
     consulta.ta_diastolica || consulta.frecuencia_cardiaca || consulta.temperatura
-  )
+  ) || examenExtra.length > 0
   const hasMetabolico = !!(
     consulta.glucemia_ayunas || consulta.glucemia_postprandial || consulta.hba1c ||
     consulta.trigliceridos || consulta.colesterol_ldl || consulta.colesterol_hdl
-  )
+  ) || metabolicoExtra.length > 0
   const imc = consulta.peso_kg && consulta.talla_cm
     ? (consulta.peso_kg / Math.pow(consulta.talla_cm / 100, 2)).toFixed(1)
     : null
@@ -110,7 +90,7 @@ function ConsultaReadOnly({
             La consulta está finalizada y no puede editarse.
           </p>
         </div>
-        <ConsultaPDFButton consulta={consulta} paciente={paciente} medico={medico} />
+        <ConsultaPDFButton consultaId={consulta.id} />
       </div>
 
       <Separator />
@@ -120,6 +100,14 @@ function ConsultaReadOnly({
         <div>
           <SectionHeader icon={ClipboardList} label="Motivo de Consulta" />
           <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{consulta.motivo_consulta}</p>
+        </div>
+      )}
+
+      {/* Medicación actual */}
+      {consulta.medicacion_actual && (
+        <div>
+          <SectionHeader icon={Pill} label="Medicación Actual" />
+          <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{consulta.medicacion_actual}</p>
         </div>
       )}
 
@@ -143,6 +131,7 @@ function ConsultaReadOnly({
             <Field label="TA Diastólica" value={consulta.ta_diastolica ? `${consulta.ta_diastolica} mmHg` : null} />
             <Field label="FC" value={consulta.frecuencia_cardiaca ? `${consulta.frecuencia_cardiaca} lpm` : null} />
             <Field label="Temperatura" value={consulta.temperatura ? `${consulta.temperatura} °C` : null} />
+            {examenExtra.map((c, i) => <Field key={`ef-${i}`} label={c.nombre} value={c.valor || '—'} />)}
           </div>
         </div>
       )}
@@ -158,18 +147,18 @@ function ConsultaReadOnly({
             <Field label="Triglicéridos" value={consulta.trigliceridos ? `${consulta.trigliceridos} mg/dL` : null} />
             <Field label="LDL" value={consulta.colesterol_ldl ? `${consulta.colesterol_ldl} mg/dL` : null} />
             <Field label="HDL" value={consulta.colesterol_hdl ? `${consulta.colesterol_hdl} mg/dL` : null} />
+            {metabolicoExtra.map((c, i) => <Field key={`pm-${i}`} label={c.nombre} value={c.valor || '—'} />)}
           </div>
         </div>
       )}
 
       {/* Diagnóstico y plan */}
-      {(consulta.diagnostico || consulta.plan_terapeutico || consulta.medicacion_actual || consulta.observaciones) && (
+      {(consulta.diagnostico || consulta.plan_terapeutico || consulta.observaciones) && (
         <div>
           <SectionHeader icon={Stethoscope} label="Diagnóstico y Plan" />
           <div className="space-y-4">
             {consulta.diagnostico       && <Field label="Diagnóstico" value={consulta.diagnostico} />}
             {consulta.plan_terapeutico  && <Field label="Plan terapéutico" value={consulta.plan_terapeutico} />}
-            {consulta.medicacion_actual && <Field label="Medicación actual" value={consulta.medicacion_actual} />}
             {consulta.observaciones     && <Field label="Observaciones" value={consulta.observaciones} />}
           </div>
         </div>
@@ -248,9 +237,14 @@ function ConsultaForm({
       medicacion_actual:     consulta?.medicacion_actual ?? '',
       observaciones:         consulta?.observaciones ?? '',
       proximo_turno_sugerido: consulta?.proximo_turno_sugerido ?? '',
+      campos_extra:          consulta?.campos_extra ?? [],
       estado: 'borrador',
     },
   })
+
+  // Campos extra ad-hoc (examen físico / parámetros metabólicos)
+  const { fields: camposExtra, append: appendCampo, remove: removeCampo } =
+    useFieldArray({ control: form.control, name: 'campos_extra' })
 
   // IMC calculado en tiempo real
   const pesoVal  = useWatch({ control: form.control, name: 'peso_kg' })
@@ -289,6 +283,15 @@ function ConsultaForm({
   }, [proximoFecha, proximoHora, form])
 
   async function submitWithEstado(estado: 'borrador' | 'finalizada') {
+    // Descartar filas de campos extra completamente vacías antes de validar
+    const camposActuales = form.getValues('campos_extra') ?? []
+    const camposPodados = camposActuales.filter(
+      (c) => (c?.nombre ?? '').trim() !== '' || (c?.valor ?? '').trim() !== ''
+    )
+    if (camposPodados.length !== camposActuales.length) {
+      form.setValue('campos_extra', camposPodados)
+    }
+
     const valid = await form.trigger()
     if (!valid) return
 
@@ -333,6 +336,51 @@ function ConsultaForm({
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => field.onChange(e.target.value),
   })
 
+  // Render de los campos extra ad-hoc de una sección (nombre + valor + eliminar)
+  const renderCamposExtra = (seccion: CampoExtraSeccion) => (
+    <div className="mt-4 space-y-2">
+      {camposExtra.map((campo, index) =>
+        campo.seccion === seccion ? (
+          <div key={campo.id} className="flex items-start gap-2">
+            <FormField control={form.control} name={`campos_extra.${index}.nombre`} render={({ field }) => (
+              <FormItem className="flex-1">
+                <FormControl><Input placeholder="Nombre del campo" {...field} value={field.value || ''} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name={`campos_extra.${index}.valor`} render={({ field }) => (
+              <FormItem className="flex-1">
+                <FormControl><Input placeholder="Valor" {...field} value={field.value || ''} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={() => removeCampo(index)}
+              aria-label="Eliminar campo"
+            >
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
+        ) : null
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        onClick={() => appendCampo({ seccion, nombre: '', valor: '' })}
+        disabled={camposExtra.length >= 20}
+      >
+        <Plus className="h-4 w-4" />
+        Agregar campo
+      </Button>
+    </div>
+  )
+
   return (
     <>
       <Form {...form}>
@@ -361,6 +409,18 @@ function ConsultaForm({
                 </FormItem>
               )} />
             </div>
+          </div>
+
+          {/* ── Medicación actual (entre motivo y anamnesis) ── */}
+          <div>
+            <SectionHeader icon={Pill} label="Medicación Actual" />
+            <FormField control={form.control} name="medicacion_actual" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Medicación actual</FormLabel>
+                <FormControl><Textarea placeholder="Medicamentos que toma actualmente…" className="resize-y" {...field} value={field.value || ''} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
           </div>
 
           {/* ── Sección 2: Anamnesis ── */}
@@ -432,6 +492,7 @@ function ConsultaForm({
                 </FormItem>
               )} />
             </div>
+            {renderCamposExtra('examen_fisico')}
           </div>
 
           {/* ── Sección 4: Parámetros metabólicos ── */}
@@ -481,6 +542,7 @@ function ConsultaForm({
                 </FormItem>
               )} />
             </div>
+            {renderCamposExtra('parametros_metabolicos')}
           </div>
 
           {/* ── Sección 5: Diagnóstico y plan ── */}
@@ -498,13 +560,6 @@ function ConsultaForm({
                 <FormItem>
                   <FormLabel>Plan terapéutico / indicaciones</FormLabel>
                   <FormControl><Textarea placeholder="Indicaciones, cambios de tratamiento…" className="resize-y" {...field} value={field.value || ''} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="medicacion_actual" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Medicación actual</FormLabel>
-                  <FormControl><Textarea placeholder="Medicamentos que toma actualmente…" className="resize-y" {...field} value={field.value || ''} /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -602,11 +657,11 @@ function ConsultaForm({
 // ── Componente principal ──────────────────────────────────────
 
 export function ConsultaDetail({
-  mode, consulta, pacienteId, paciente, medico, onSaved, onCancel,
+  mode, consulta, pacienteId, onSaved, onCancel,
 }: ConsultaDetailProps) {
   if (mode === 'view' && consulta) {
     return (
-      <ConsultaReadOnly consulta={consulta} paciente={paciente} medico={medico} />
+      <ConsultaReadOnly consulta={consulta} />
     )
   }
 

@@ -5,6 +5,16 @@
 
 export type ConsultaEstado = 'borrador' | 'finalizada'
 
+/** Sección a la que pertenece un campo extra ad-hoc de una consulta */
+export type CampoExtraSeccion = 'examen_fisico' | 'parametros_metabolicos'
+
+/** Campo extra ad-hoc cargado por consulta (no pertenece al formulario fijo) */
+export interface CampoExtra {
+  seccion: CampoExtraSeccion
+  nombre: string
+  valor: string
+}
+
 export interface Consulta {
   id: string
   paciente_id: string
@@ -40,6 +50,9 @@ export interface Consulta {
   // Seguimiento
   proximo_turno_sugerido: string | null  // ISO date (YYYY-MM-DD)
 
+  // Campos extra ad-hoc (examen físico / parámetros metabólicos), por consulta
+  campos_extra: CampoExtra[]
+
   // Estado
   estado: ConsultaEstado
 
@@ -70,6 +83,7 @@ export interface ConsultaInsert {
   medicacion_actual?: string | null
   observaciones?: string | null
   proximo_turno_sugerido?: string | null
+  campos_extra?: CampoExtra[]
   estado?: ConsultaEstado
 }
 

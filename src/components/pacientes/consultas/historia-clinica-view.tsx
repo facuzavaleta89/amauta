@@ -9,8 +9,6 @@ import { ConsultaDetail } from './consulta-detail'
 import { HCCompletaPDFButton } from './pdf-download-button'
 import type { Consulta } from '@/types/consulta'
 
-import type { Matricula } from '@/types/roles'
-
 interface PacienteData {
   nombre_completo: string
   dni: string
@@ -19,18 +17,9 @@ interface PacienteData {
   numero_afiliado?: string | null
 }
 
-interface MedicoData {
-  full_name: string
-  titulo?: string | null
-  matriculas?: Matricula[]
-  firma_url?: string | null
-  logo_url?: string | null
-}
-
 interface HistoriaClinicaViewProps {
   pacienteId: string
   paciente: PacienteData
-  medico: MedicoData
   initialConsultas: Consulta[]
 }
 
@@ -39,7 +28,6 @@ type PanelMode = 'empty' | 'new' | 'view' | 'edit'
 export function HistoriaClinicaView({
   pacienteId,
   paciente,
-  medico,
   initialConsultas,
 }: HistoriaClinicaViewProps) {
   const [consultas, setConsultas] = useState<Consulta[]>(initialConsultas)
@@ -125,8 +113,6 @@ export function HistoriaClinicaView({
       mode={panelMode === 'new' ? 'new' : panelMode}
       consulta={panelMode === 'new' ? null : selectedConsulta}
       pacienteId={pacienteId}
-      paciente={paciente}
-      medico={medico}
       onSaved={handleSaved}
       onCancel={handleCancel}
     />
@@ -148,9 +134,8 @@ export function HistoriaClinicaView({
           </div>
         </div>
         <HCCompletaPDFButton
-          consultas={consultas}
-          paciente={paciente}
-          medico={medico}
+          pacienteId={pacienteId}
+          finalizadasCount={consultas.filter((c) => c.estado === 'finalizada').length}
         />
       </div>
 
