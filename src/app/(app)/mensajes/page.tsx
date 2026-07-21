@@ -9,7 +9,10 @@ export const metadata = {
   title: 'Mensajes',
 }
 
-export default async function MensajesPage() {
+export default async function MensajesPage(props: {
+  searchParams?: Promise<{ hilo?: string }>
+}) {
+  const { hilo } = (await props.searchParams) ?? {}
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -42,6 +45,7 @@ export default async function MensajesPage() {
         threads={threads}
         currentUserId={currentUserId}
         usuarios={usuarios ?? []}
+        hiloInicial={hilo ?? null}
       />
     </div>
   )

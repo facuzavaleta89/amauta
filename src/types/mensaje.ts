@@ -41,3 +41,14 @@ export interface MensajeFormValues {
   cuerpo: string
   parent_id?: string
 }
+
+/** Resumen de un mensaje no leído, para la campanita de notificaciones */
+export interface MensajeNoLeido {
+  id: string
+  /** Raíz del hilo (parent_id ?? id) — para linkear a /mensajes?hilo=… */
+  thread_id: string
+  asunto: string
+  remitente_nombre: string
+  es_grupal: boolean
+  created_at: string
+}

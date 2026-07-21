@@ -11,9 +11,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Breadcrumb } from './breadcrumb'
-import { NotificacionesMedico } from './notificaciones-medico'
-import { LogOut, Menu, User, MessageSquare } from 'lucide-react'
+import { NotificacionesBell } from './notificaciones-bell'
+import { LogOut, Menu, User } from 'lucide-react'
 import type { UserRole } from '@/types/roles'
+import type { MensajeNoLeido } from '@/types/mensaje'
 import Link from 'next/link'
 
 interface Solicitud {
@@ -32,7 +33,7 @@ interface HeaderProps {
   medicoId: string | null
   userTitulo?: string | null
   solicitudesPendientes?: Solicitud[]
-  mensajesNoLeidos?: number
+  mensajesIniciales?: MensajeNoLeido[]
   tieneAccesoMensajeria?: boolean
   onMenuToggle?: () => void
 }
@@ -45,7 +46,7 @@ export function Header({
   medicoId,
   userTitulo,
   solicitudesPendientes = [],
-  mensajesNoLeidos = 0,
+  mensajesIniciales = [],
   tieneAccesoMensajeria = false,
   onMenuToggle,
 }: HeaderProps) {
@@ -78,32 +79,15 @@ export function Header({
 
       {/* ── Acciones ────────────────────────────────────────── */}
       <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-        {/* Campanita de notificaciones — solo médicos (incluye solicitudes de vinculación) */}
-        {userRole === 'medico' && (
-          <NotificacionesMedico
-            medicoId={userId}
+        {/* Campanita unificada — solicitudes (médico) + mensajes no leídos (médico y asistente con acceso) */}
+        {(userRole === 'medico' || tieneAccesoMensajeria) && (
+          <NotificacionesBell
+            esMedico={userRole === 'medico'}
+            userId={userId}
+            tenantId={userRole === 'medico' ? userId : (medicoId ?? '')}
             solicitudesIniciales={solicitudesPendientes}
+            mensajesIniciales={mensajesIniciales}
           />
-        )}
-
-        {/* Ícono de mensajes — solo asistentes con permiso acceso_mensajeria */}
-        {userRole === 'asistente' && tieneAccesoMensajeria && (
-          <Link
-            href="/mensajes"
-            className="relative flex items-center justify-center w-9 h-9 rounded-lg hover:bg-muted transition-colors"
-            aria-label={
-              mensajesNoLeidos > 0
-                ? `${mensajesNoLeidos} mensaje${mensajesNoLeidos > 1 ? 's' : ''} no leído${mensajesNoLeidos > 1 ? 's' : ''}`
-                : 'Mensajes'
-            }
-          >
-            <MessageSquare className="h-4.5 w-4.5 text-muted-foreground" />
-            {mensajesNoLeidos > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white leading-none">
-                {mensajesNoLeidos > 9 ? '9+' : mensajesNoLeidos}
-              </span>
-            )}
-          </Link>
         )}
 
         {/* Menú de usuario */}

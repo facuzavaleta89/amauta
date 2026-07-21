@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
+import type { MensajeNoLeido } from '@/types/mensaje'
 
 const mensajeSchema = z.object({
   destinatario_id: z.string().nullable().optional(),
@@ -203,5 +204,81 @@ export async function contarMensajesNoLeidos(): Promise<number> {
   } catch {
     // Un error en mensajes no debe romper el layout de la app
     return 0
+  }
+}
+
+/** Últimos mensajes no leídos del usuario (individuales + grupales), para la campanita.
+ *  Retorna [] ante cualquier error para no romper el layout de la app. */
+export async function obtenerMensajesNoLeidos(): Promise<MensajeNoLeido[]> {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return []
+
+    const { data: myProfile } = await supabase
+      .from('profiles')
+      .select('role, medico_id')
+      .eq('id', user.id)
+      .single()
+
+    const medicoId = myProfile?.role === 'medico' ? user.id : myProfile?.medico_id
+    if (!medicoId) return []
+
+    const cols = 'id, parent_id, asunto, remitente_id, es_grupal, created_at'
+
+    // 1) Individuales no leídos (destinatario = yo)
+    const { data: individuales } = await supabase
+      .from('mensajes_internos')
+      .select(cols)
+      .eq('destinatario_id', user.id)
+      .eq('leido', false)
+      .eq('es_grupal', false)
+      .order('created_at', { ascending: false })
+      .limit(20)
+
+    // 2) Grupales no leídos (del tenant, no míos, sin lectura mía)
+    const { data: gruposLeidos } = await supabase
+      .from('mensajes_lecturas')
+      .select('mensaje_id')
+      .eq('user_id', user.id)
+    const idsLeidos = (gruposLeidos ?? []).map((r) => r.mensaje_id)
+
+    let gruposQuery = supabase
+      .from('mensajes_internos')
+      .select(cols)
+      .eq('medico_id', medicoId)
+      .eq('es_grupal', true)
+      .neq('remitente_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    if (idsLeidos.length > 0) {
+      gruposQuery = gruposQuery.not('id', 'in', `(${idsLeidos.join(',')})`)
+    }
+    const { data: grupales } = await gruposQuery
+
+    const combinados = [...(individuales ?? []), ...(grupales ?? [])]
+    if (combinados.length === 0) return []
+
+    // Nombres de remitentes (las FK apuntan a auth.users, así que se traen de profiles aparte)
+    const remitenteIds = [...new Set(combinados.map((m) => m.remitente_id).filter(Boolean))]
+    const { data: perfiles } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', remitenteIds)
+    const nombreMap = new Map((perfiles ?? []).map((p) => [p.id, p.full_name]))
+
+    return combinados
+      .map((m) => ({
+        id: m.id,
+        thread_id: m.parent_id ?? m.id,
+        asunto: m.asunto,
+        remitente_nombre: nombreMap.get(m.remitente_id) ?? 'Alguien',
+        es_grupal: m.es_grupal,
+        created_at: m.created_at,
+      }))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 15)
+  } catch {
+    return []
   }
 }

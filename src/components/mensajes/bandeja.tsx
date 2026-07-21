@@ -25,13 +25,18 @@ interface Props {
   threads: MensajeInterno[]
   currentUserId: string
   usuarios: Usuario[]
+  /** Id de hilo a abrir automáticamente al entrar (deep-link desde la campanita) */
+  hiloInicial?: string | null
 }
 
-export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Props) {
+export function Bandeja({ threads: initialThreads, currentUserId, usuarios, hiloInicial }: Props) {
   const router = useRouter()
   const { esMedico } = usePermisos()
   const [threads, setThreads] = useState<MensajeInterno[]>(initialThreads)
-  const [hiloAbierto, setHiloAbierto] = useState<MensajeInterno | null>(null)
+  // Abrir de entrada el hilo del deep-link (sin efecto → evita set-state-in-effect)
+  const [hiloAbierto, setHiloAbierto] = useState<MensajeInterno | null>(
+    () => (hiloInicial ? initialThreads.find((t) => t.id === hiloInicial) ?? null : null)
+  )
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [confirmDeleteThreadId, setConfirmDeleteThreadId] = useState<string | null>(null)
 

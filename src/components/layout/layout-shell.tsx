@@ -6,6 +6,7 @@ import { Sidebar } from './sidebar'
 import { Header } from './header'
 import { PermisosProvider, MensajesProvider } from '@/contexts/permisos-context'
 import type { UserRole, PermisosAsistente } from '@/types/roles'
+import type { MensajeNoLeido } from '@/types/mensaje'
 import { createClient } from '@/lib/supabase/client'
 
 interface Solicitud {
@@ -26,6 +27,7 @@ interface LayoutShellProps {
   permisos: PermisosAsistente | null
   solicitudesPendientes: Solicitud[]
   mensajesNoLeidos: number
+  mensajesIniciales: MensajeNoLeido[]
   children: React.ReactNode
 }
 
@@ -39,6 +41,7 @@ export function LayoutShell({
   permisos,
   solicitudesPendientes,
   mensajesNoLeidos,
+  mensajesIniciales,
   children,
 }: LayoutShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -108,7 +111,7 @@ export function LayoutShell({
               medicoId={medicoId}
               userTitulo={userTitulo}
               solicitudesPendientes={solicitudesPendientes}
-              mensajesNoLeidos={mensajesNoLeidos}
+              mensajesIniciales={mensajesIniciales}
               tieneAccesoMensajeria={userRole === 'medico' || (permisos?.acceso_mensajeria ?? false)}
               onMenuToggle={handleToggle}
             />

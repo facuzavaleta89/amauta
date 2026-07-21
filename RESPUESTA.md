@@ -1,110 +1,101 @@
-# RESPUESTA — HC: PDF al servidor + reordenar medicación + campos dinámicos
+# RESPUESTA — Unificar notificaciones de mensajes en la campanita
 
-Las tres partes completas. Resumen abajo. Verificación automática: `tsc` limpio, `next build`
-exit 0, y chequeos puntuales por parte. Falta la prueba manual en el navegador (logueado), que
-detallo al final.
-
----
-
-## ✅ PARTE 3 — PDFs de HC migrados al servidor (hecha primero)
-
-Antes la HC era el único PDF generado en el navegador (`pdf().toBlob()` + import dinámico de
-`@react-pdf`), y fallaba escondido tras un toast. Ahora se genera en el servidor con
-`renderToBuffer`, igual que pedidos y certificados.
-
-**Route Handlers nuevos** (patrón de `api/pedidos/[id]/pdf/route.ts`):
-- `src/app/api/consultas/[id]/pdf/route.ts` — consulta individual.
-- `src/app/api/pacientes/[id]/historia/pdf/route.ts` — HC completa (consultas finalizadas).
-
-**Aislamiento por tenant + permiso:** cada handler valida sesión (401), resuelve el tenant y
-exige `ver_historia_clinica` (`getTenantContext` → 403 si el asistente no lo tiene), y consulta
-los datos **filtrando por el tenant del usuario** con el cliente de sesión (RLS activa).
-Cambiar el `id` por el de otro tenant → 404, nunca el PDF. El admin client se usa solo para
-leer el perfil del médico firmante, y **después** de autorizar.
-
-**Botones** (`pdf-download-button.tsx`): descargan por `fetch` desde esos endpoints (blob →
-`<a download>`), con spinner y toast de error. Ya no importan `@react-pdf`: **esa librería
-salió del bundle del cliente**. Además, la **firma del médico ya no viaja al navegador**: se
-eliminó el prop `medico` de toda la cadena cliente (`historia-clinica-view.tsx`,
-`consulta-detail.tsx`) y el fetch del perfil en `pacientes/[id]/historia/page.tsx`.
-
-**Verificado:** `next build` registra ambas rutas; smoke test con el server levantado → los dos
-endpoints dan **HTTP 401 sin sesión** (no filtran el PDF).
+Completo. La campanita del header es ahora el centro único de avisos: **solicitudes +
+mensajes no leídos**, para médico y para asistentes con `acceso_mensajeria`.
 
 ---
 
-## ✅ PARTE 1 — "Medicación actual" reordenada
+## PARTE 0 — Realtime: **hubo SQL** (idempotente), ya lo ejecutaste
 
-Orden nuevo **motivo → medicación actual → anamnesis** ("Medicación Actual" como subsección
-propia con ícono `Pill`). Replicado en los tres lugares: formulario (`ConsultaForm`), vista
-(`ConsultaReadOnly`) y PDF (`ConsultaBody`). No cambió el payload ni la validación (solo se
-movió JSX). Verificado por orden en los 3 archivos + build.
+No se pudo verificar de forma read-only si `mensajes_internos` estaba en la publicación
+`supabase_realtime` (sin credenciales de Postgres; el Realtime se configura por dashboard y no
+hay `ALTER PUBLICATION` en las migraciones; la sonda Realtime da `SUBSCRIBED` esté o no la tabla,
+así que no distingue). Por eso escribí un SQL **idempotente** (guard sobre `pg_publication_tables`),
+seguro en ambos casos:
+- `supabase/migrations/023_realtime_mensajes_internos.sql`
+- `MIGRACION-P4.sql` (raíz)
+
+**Confirmaste que lo ejecutaste**, así que `mensajes_internos` queda habilitada para Realtime.
 
 ---
 
-## ✅ PARTE 2 — Campos dinámicos en Examen Físico y Parámetros Metabólicos
+## Componente renombrado
 
-Columna JSONB `campos_extra` en `consultas`, array de `{ seccion, nombre, valor }`. Los 6 pasos
-del checklist "se guarda Y se muestra", completos:
+`notificaciones-medico.tsx` → **`notificaciones-bell.tsx`** (export `NotificacionesMedico` →
+**`NotificacionesBell`**). Se eliminó el archivo viejo y se actualizó el import en `header.tsx`.
+El nombre ya no es preciso como "del médico" porque ahora la usan también los asistentes.
 
-1. **Migración** (ejecutada por vos): `supabase/migrations/022_consultas_campos_extra.sql`
-   (+ `MIGRACION-P2.sql`). Confirmé que la columna existe en la base.
-2. **Tipos** (`src/types/consulta.ts`): `CampoExtraSeccion` (unión de literales), `CampoExtra`,
-   y `campos_extra` en `Consulta` y `ConsultaInsert`. Se exporta por el barrel `index.ts`
-   (ya reexportaba `./consulta`).
-3. **Schema Zod** (`src/lib/validations/consulta.schema.ts`): array de objetos con `seccion`
-   (enum), `nombre` (1–60 chars, trim), `valor` (≤500), tope de 20, default `[]`.
-4. **Formulario** (`ConsultaForm`): botón "+ Agregar campo" al pie de Examen Físico y de
-   Parámetros Metabólicos (`useFieldArray`), con `seccion` fijada por sección, input de nombre +
-   valor y botón de eliminar. El botón se deshabilita al llegar a 20. Antes de guardar se
-   descartan filas completamente vacías.
-5. **Vista de solo lectura** (`ConsultaReadOnly`): los extras se renderizan dentro de la grilla
-   de su sección con el mismo componente `Field`. **Guards ampliados**: `hasExamenFisico` y
-   `hasMetabolico` ahora también consideran los campos extra (si una consulta tuviera solo
-   extras en una sección, igual se dibuja).
-6. **PDF** (`ConsultaBody` en `consulta-template.tsx`): mismo render en cada grid, con los
-   mismos guards ampliados.
+---
 
-(Las rutas `api/consultas/route.ts` y `[id]/route.ts` no se tocaron: hacen
-`insert({...consulta})` / `update(updates)` con el objeto ya validado por Zod, así que
-`campos_extra` fluye solo.)
+## Qué se hizo (Parte 1)
 
-**Verificado:** transpilé y corrí el **schema Zod real** contra 7 payloads — default `[]`,
-válido (preserva orden), y rechaza correctamente: nombre vacío, sección inválida, valor >500 y
->20 campos; y trimea el nombre. `tsc` limpio y `next build` OK.
+1. **Campanita generalizada** (`notificaciones-bell.tsx`): recibe `solicitudesIniciales` +
+   `mensajesIniciales` y muestra el badge con la **suma** de ambos. El dropdown tiene dos bloques:
+   **Solicitudes** (solo médico, con aprobar/rechazar como antes) y **Mensajes** (cada ítem
+   linkea a `/mensajes?hilo=<raíz>`). El bloque de solicitudes y su suscripción solo se arman
+   para el médico.
+2. **Realtime de mensajes**: además de la suscripción de solicitudes (médico), una segunda
+   binding `postgres_changes`/`INSERT` sobre `mensajes_internos` filtrada por
+   `medico_id=eq.<tenant>`; en el handler se decide si el mensaje es para mí:
+   - individual: `destinatario_id === userId` y no es mío;
+   - grupal: `es_grupal` y `remitente_id !== userId`.
+   Al llegar, se busca el nombre del remitente (RLS permite leer perfiles del mismo tenant) y se
+   agrega al estado (con guard anti-duplicados), igual que las solicitudes. **Todo dentro de un
+   `try/catch`**: si la suscripción falla, la campanita queda con la carga inicial y el layout no
+   se rompe.
+3. **Visible también para asistentes** con `acceso_mensajeria` (antes era exclusiva del médico).
+   Se **eliminó del `header.tsx` el ícono de mensajes separado**; ese badge ahora vive en la
+   campanita. Condición de render: `userRole === 'medico' || tieneAccesoMensajeria`.
+4. **Carga inicial**: nueva `obtenerMensajesNoLeidos()` en
+   `(app)/notificaciones/actions.ts` (mismo estilo defensivo que `contarMensajesNoLeidos`,
+   devuelve `[]` ante error). Trae los no leídos (individuales + grupales) con el nombre del
+   remitente y el `thread_id` (raíz) para linkear. El `layout.tsx` la llama y pasa
+   `mensajesIniciales` por el shell hasta la campanita. El conteo del sidebar
+   (`contarMensajesNoLeidos` → `MensajesProvider`) queda igual.
+5. **Marcar como leído**: sin cambios en la lógica — `HiloModal` ya llama `marcarMensajeLeido()`
+   al abrir el hilo. Al abrir un mensaje **desde la campanita**, además se lo saca del estado
+   local para que el badge baje al instante (la fuente de verdad sigue siendo
+   `mensajes_internos.leido` / `mensajes_lecturas`; la campanita solo la refleja).
 
-También actualicé `schema.sql` con la columna.
+**Deep-link `/mensajes?hilo=<id>`**: `mensajes/page.tsx` lee el `searchParams` y `bandeja.tsx`
+abre ese hilo al entrar (vía inicializador de `useState`, sin `set-state-in-effect`).
+
+No se tocó la tabla `notificaciones` (sigue con su uso `turno_creado`/`recordatorio_enviado`).
 
 ---
 
 ## Archivos tocados
 
-**Nuevos:** `src/app/api/consultas/[id]/pdf/route.ts`,
-`src/app/api/pacientes/[id]/historia/pdf/route.ts`,
-`supabase/migrations/022_consultas_campos_extra.sql`, `MIGRACION-P2.sql`.
-
-**Modificados:** `src/components/pacientes/consultas/pdf-download-button.tsx`,
-`src/components/pacientes/consultas/consulta-detail.tsx`,
-`src/components/pacientes/consultas/historia-clinica-view.tsx`,
-`src/app/(app)/pacientes/[id]/historia/page.tsx`,
-`src/lib/pdf/consulta-template.tsx`, `src/types/consulta.ts`,
-`src/lib/validations/consulta.schema.ts`, `schema.sql`.
-
-> Lint: mi código nuevo pasa limpio. `consulta-detail.tsx` conserva 3 errores `no-explicit-any`
-> y 1 warning `mode` **pre-existentes** (no los introduje ni los toqué); `consulta-template.tsx`
-> tiene 2 warnings `alt-text` pre-existentes en las imágenes de `@react-pdf`.
+**Nuevos:** `src/components/layout/notificaciones-bell.tsx`,
+`supabase/migrations/023_realtime_mensajes_internos.sql`, `MIGRACION-P4.sql`.
+**Eliminado:** `src/components/layout/notificaciones-medico.tsx`.
+**Modificados:** `src/app/(app)/notificaciones/actions.ts` (nueva `obtenerMensajesNoLeidos`),
+`src/types/mensaje.ts` (tipo `MensajeNoLeido`), `src/components/layout/header.tsx`,
+`src/components/layout/layout-shell.tsx`, `src/app/(app)/layout.tsx`,
+`src/app/(app)/mensajes/page.tsx`, `src/components/mensajes/bandeja.tsx`.
 
 ---
 
-## Prueba manual pendiente (en el navegador, logueado)
+## Verificación
 
-No pude ejercitar el flujo autenticado desde acá (los endpoints y el guardado requieren sesión).
-Te pido confirmar:
-- **PDFs (Parte 3):** descargar el PDF de una consulta finalizada y el de la HC completa
-  (deberían bajar); y que pedir la HC de un paciente de **otro tenant** (cambiando el id en la
-  URL) dé 403/404, no el PDF.
-- **Campos dinámicos (Parte 2):** en una consulta nueva, agregar un campo extra en Examen Físico
-  y otro en Parámetros Metabólicos, guardar y reabrir → aparecen en su sección; descargar el PDF
-  → aparecen en la sección correcta. Una consulta sin campos extra se ve/exporta igual que antes.
-- **Orden (Parte 1):** medicación actual aparece entre motivo y anamnesis en el formulario, la
-  vista y el PDF.
+**Automática (hecha):**
+- `tsc --noEmit` limpio y `next build` exit 0.
+- ESLint: mis archivos nuevos, limpios. `bandeja.tsx` conserva 2 warnings **pre-existentes**
+  (`startTransition` y `router` sin usar) que no introduje.
+- Smoke test con el server levantado: `/dashboard` y `/mensajes?hilo=x` sin sesión redirigen
+  (307) a login sin 500 — el layout (que ahora llama `obtenerMensajesNoLeidos`) no crashea.
+- Realtime: la migración idempotente garantiza que `mensajes_internos` está en la publicación.
+
+**Pendiente de prueba manual (requiere la app logueada, no lo pude ejercitar desde acá):**
+- El médico ve la campanita con badge = solicitudes + mensajes no leídos.
+- El asistente con `acceso_mensajeria` ve la campanita (antes no la tenía) con sus mensajes.
+- Un mensaje nuevo (individual y grupal) aparece en la campanita en vivo, sin recargar.
+- Abrir el mensaje (desde la campanita o la bandeja) lo marca leído y baja el badge.
+- Sin doble aviso: el mismo mensaje no aparece duplicado en dos sistemas.
+
+> Nota sobre el badge tras leer desde la **bandeja** (no desde la campanita): como el
+> `(app)/layout.tsx` es un Server Component que no se re-ejecuta en cada navegación cliente, el
+> badge de la campanita se actualiza en vivo para mensajes **nuevos** (Realtime) y al abrir
+> **desde la campanita** (quita local); si se lee desde la bandeja, el badge se pone al día en la
+> próxima carga/navegación completa. Es el mismo comportamiento que tenía el ícono separado
+> anterior; no se introdujo un doble estado de "leído".
