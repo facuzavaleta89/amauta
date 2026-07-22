@@ -5,7 +5,7 @@ import { PacienteAcciones } from '@/components/pacientes/paciente-acciones'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award, Archive } from 'lucide-react'
+import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award, Archive, FolderOpen } from 'lucide-react'
 import Link from 'next/link'
 import { differenceInYears, format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -278,6 +278,13 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
           <Link href={`/pacientes/${id}/historia`}>
             <FileText className="h-4 w-4" />
             Historia clínica
+          </Link>
+        </Button>
+        {/* Estudios: se pueden ver aun archivado (la subida se bloquea dentro de la página). */}
+        <Button variant="outline" className="gap-2" asChild>
+          <Link href={`/pacientes/${id}/estudios`}>
+            <FolderOpen className="h-4 w-4" />
+            Estudios
           </Link>
         </Button>
       </div>
