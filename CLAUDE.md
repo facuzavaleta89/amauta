@@ -99,7 +99,7 @@ del usuario actual.
 | `solicitudes_asistente` | Workflow de vinculación (onboarding) | — |
 | `notas` | Notas personales por usuario | `user_id` |
 | `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). Realtime (migración 023) | `medico_id` / `user_id` |
-| `notificaciones` | Avisos del sistema para el médico (turno agendado, recordatorio enviado). ⚠ Verificar: existe y se usa en código, pero **sin migración fuente** ni en `schema.sql` | `medico_id` |
+| `notificaciones` | Avisos del sistema para el médico (turno agendado, recordatorio enviado). Estructura verificada y reconstruida en `schema.sql`; ⚠ **sigue sin migración fuente** | `medico_id` |
 
 Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()`,
 `check_permiso(user_id, permiso)`, `verificar_documento(codigo)`, `set_updated_at()`,
@@ -223,8 +223,14 @@ Seguridad, Estético) y la sección "Recetas" (bloqueada por certificación ANMA
 5. **Admin client para permisos:** el médico actualiza permisos del asistente vía
    `admin.ts` (bypass RLS), porque `profiles_update_own` solo permite el perfil propio.
 6. **Esquema sin migración fuente:** la tabla `consultas` (su columna `campos_extra` **sí**
-   tiene fuente: migración 022), la tabla `notificaciones` (⚠ ni siquiera en `schema.sql`),
-   las columnas de Bloque 4 en `turnos` (`categoria/origen/consulta_id`) y
-   `profiles.titulo/matriculas/logo_url` se aplicaron directo en Supabase. `schema.sql` los
-   reconstruye (salvo `notificaciones`); ver `PENDIENTES.md` → Bloque A.
+   tiene fuente: migración 022), la tabla `notificaciones`, las columnas de Bloque 4 en
+   `turnos` (`categoria/origen/consulta_id`) y `profiles.titulo/matriculas/logo_url` se
+   aplicaron directo en Supabase. `schema.sql` **los reconstruye a todos** (incluida
+   `notificaciones`, ya verificada contra la base), pero les falta la migración fuente
+   versionada; ver `PENDIENTES.md` → Bloque A.
 7. **Migración vacía:** `20260326204733_fix_rls_recursion.sql` tiene 0 bytes.
+8. **Migración 025 (seguridad):** `verificar_documento` ya **no expone** DNI completo ni
+   contenido clínico (devuelve DNI enmascarado, fija `search_path`, y solo `service_role`
+   puede ejecutarla); se dropearon dos RLS huérfanas en `consultas` que salteaban los
+   permisos, el `DELETE` de `pedidos`/`certificados` (solo se anulan) y `log_turno_cambio`
+   fija `search_path`.

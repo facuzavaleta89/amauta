@@ -30,8 +30,10 @@ levantado solo desde migraciones quedaría incompleto. Crear las migraciones fal
 - Tabla **`consultas`** completa (reconstruida en `schema.sql` desde `types/consulta.ts`).
   Su columna `campos_extra` **sí** tiene fuente (migración `022`); el resto de la tabla no.
 - Tabla **`notificaciones`** completa: existe en la base y se usa en el código
-  (`notificaciones/page.tsx`, `api/turnero`, `api/cron/recordatorios`) pero **no** tiene
-  `CREATE` en migraciones ni figura en `schema.sql` (solo una nota ⚠ Verificar). Crear la migración.
+  (`notificaciones/page.tsx`, `api/turnero`, `api/cron/recordatorios`). Su estructura ya
+  se **verificó contra la base real y se reconstruyó en `schema.sql`** (id, medico_id,
+  titulo, mensaje, tipo, leida, payload, created_at + políticas). **Sigue sin migración
+  fuente:** falta crear el `CREATE TABLE` versionado en `supabase/migrations/`.
 - Columnas de Bloque 4 en **`turnos`**: `categoria`, `origen`, `consulta_id`.
 - Columnas en **`profiles`**: `titulo`, `matriculas` (jsonb), `logo_url`.
 - **Migración vacía:** `supabase/migrations/20260326204733_fix_rls_recursion.sql`
@@ -39,10 +41,10 @@ levantado solo desde migraciones quedaría incompleto. Crear las migraciones fal
 
 ### Desajustes tipo TypeScript ↔ esquema DB
 (No corregidos por consigna; anotados para revisión.)
-- **`TurnoEstado` incluye `'pendiente_confirmar'`** que **no existe en el ENUM
-  `turno_estado`** de la DB (solo 6 valores). Aparece en `src/types/turno.ts:6` y en
-  `src/lib/validations/turno.schema.ts:30,109`. Riesgo: insertar ese estado podría
-  fallar contra el ENUM. Decidir si se agrega el valor al ENUM o se elimina del código.
+- ~~**`TurnoEstado` incluye `'pendiente_confirmar'`** que no existiría en el ENUM.~~
+  **✅ FALSO DESAJUSTE (verificado 2026-07-22):** el ENUM `turno_estado` de la base **sí**
+  tiene 7 valores e incluye `'pendiente_confirmar'`. El código (`types/turno.ts`,
+  `turno.schema.ts`) está alineado con la base. `schema.sql` corregido para reflejarlo.
 - **`Certificado.tipo` tipado no-nullable** (`src/types/pedido.ts:67`) pero la
   migración 017 hizo la columna **nullable y sin default**. El tipo debería ser
   `CertificadoTipo | null`.
@@ -88,15 +90,15 @@ argentina de protección de datos (**Ley 25.326**, que clasifica los datos de sa
 Información Pública**). Hallazgos:
 
 ### Verificación pública de documentos (`/verificar/[codigo]`) — minimización de datos
-- La página usa **admin client (bypass RLS)** y la función `verificar_documento`
-  (`SECURITY DEFINER`) para exponer, **sin autenticación**, a cualquiera con el código:
-  **DNI completo del paciente**, nombre completo y **contenido clínico completo** del
-  documento. Evaluar minimización: enmascarar el DNI (p. ej. mostrar solo últimos
-  dígitos), y revisar si el contenido clínico debe mostrarse íntegro públicamente.
-  Ubicación: `src/app/verificar/[codigo]/page.tsx`, `supabase/migrations/018_qr_verificacion.sql`.
-- **Hardening de la función:** `verificar_documento` es `SECURITY DEFINER` pero **no fija
-  `SET search_path`** (a diferencia del resto de funciones DEFINER del proyecto).
-  Agregar `SET search_path = public` para evitar secuestro de `search_path`.
+- **✅ RESUELTO (migración 025, 2026-07-22) — minimización de datos.** La función
+  `verificar_documento` ya **no expone** el DNI completo ni el contenido clínico. Ahora
+  devuelve `paciente_dni_masked` (solo los últimos 3 dígitos) y **omite** el contenido.
+  La página `src/app/verificar/[codigo]/page.tsx` consume la nueva forma y se quitó el
+  bloque "Contenido Clínico". El nombre del paciente se mantiene (sin él la verificación
+  no cumple su función).
+- **✅ RESUELTO (migración 025) — hardening de la función.** `verificar_documento` ahora
+  fija `SET search_path = public`, y se **revocó `EXECUTE` de PUBLIC** dejándolo solo para
+  `service_role` (el rol del admin client) y `postgres`.
 - **Enumeración de códigos:** `codigo_verificacion` = 12 chars hex de `md5(random())`.
   No hay rate-limiting en `/verificar`. Evaluar límite de intentos para dificultar el
   scraping/enumeración de documentos.
@@ -148,18 +150,18 @@ Información Pública**). Hallazgos:
   **plan Pro de Supabase**. Es un bloqueante de go-live, no un pulido opcional.
 
 ### Defensa en profundidad — borrado de documentos a nivel base
-- **Revocar las políticas RLS `pedidos_delete` y `certificados_delete`.** El borrado físico
-  de pedidos y certificados ya se quitó **a nivel de aplicación** (se eliminaron los handlers
-  `DELETE` de `api/pedidos/[id]` y `api/certificados/[id]`, y los botones de la UI: ahora solo
-  se **anulan**). Pero las políticas **`pedidos_delete` / `certificados_delete` siguen
-  existiendo** en la base (migraciones `006` / `007`). Revocarlas (`DROP POLICY`) como defensa
-  en profundidad, para que Postgres niegue el `DELETE` aunque alguien llegue por otra vía
-  (p. ej. el service role o un cliente que reintroduzca la llamada). Requiere una migración nueva.
+- **✅ RESUELTO (migración 025, 2026-07-22).** Se dropearon las políticas RLS
+  `pedidos_delete` y `certificados_delete`. Sin política de `DELETE`, Postgres niega el
+  borrado aunque alguien llegue por otra vía (service role o un cliente que reintroduzca la
+  llamada). El borrado físico ya estaba quitado a nivel de aplicación; esto lo cierra a nivel
+  base. `schema.sql` actualizado.
 
-### Minimización en la verificación pública (ya listada arriba)
-- Ver "Verificación pública de documentos — minimización de datos" al inicio de este bloque:
-  enmascarar DNI y revisar exposición del contenido clínico íntegro sin autenticación. Sigue
-  vigente y es un pulido de seguridad prioritario (dato sensible de salud, Ley 25.326).
+### RLS huérfanas en `consultas` (hallazgo de la auditoría)
+- **✅ RESUELTO (migración 025, 2026-07-22).** La auditoría de la base real encontró dos
+  políticas huérfanas (`medico_full_access`, `asistente_access`) que existían solo en la base
+  (no en migraciones) y daban a **cualquier asistente vinculado** acceso `ALL` a las consultas
+  del tenant, salteando `check_permiso()` (rompía la regla de negocio 1 a nivel base). Se
+  dropearon ambas; quedan solo las correctas (`consultas_select/insert/update/delete`).
 
 ---
 

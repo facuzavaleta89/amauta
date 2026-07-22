@@ -2,12 +2,15 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→024).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→025).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
 -- mensajes_internos en la publicación supabase_realtime — no cambia estructura de
--- tabla), 024 (pacientes.archivado_at + índice idx_pacientes_activos).
+-- tabla), 024 (pacientes.archivado_at + índice idx_pacientes_activos), 025
+-- (endurecimiento de seguridad: verificar_documento sin datos sensibles + permisos,
+-- drop de RLS huérfanas en consultas, drop de DELETE en pedidos/certificados,
+-- search_path en log_turno_cambio).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -23,7 +26,8 @@
 --     · Tabla `consultas` completa (su columna `campos_extra` sí tiene fuente: migración 022)
 --     · Columnas `turnos.categoria`, `turnos.origen`, `turnos.consulta_id`
 --     · Columnas `profiles.titulo`, `profiles.matriculas`, `profiles.logo_url`
---     · Tabla `notificaciones` completa (ver nota al pie de este archivo)
+--     · Tabla `notificaciones` (sin migración fuente; su estructura se verificó
+--       contra la base real y se reconstruye — ver su sección más abajo)
 -- ============================================================================
 
 
@@ -40,15 +44,17 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";   -- uuid_generate_v4()
 -- └──────────────────────────────────────────────────────────────────────────┘
 
 -- Estado de un turno en la agenda.
--- ⚠ El código (types/turno.ts y turno.schema.ts) usa además 'pendiente_confirmar',
---   que NO está en este ENUM. Ver PENDIENTES.md → Bloque A.
+-- Verificado contra la base real: el ENUM tiene 7 valores e incluye
+-- 'pendiente_confirmar' (usado por types/turno.ts y turno.schema.ts). No hay
+-- desajuste entre el código y la base.
 CREATE TYPE turno_estado AS ENUM (
-  'pendiente',    -- Agendado, sin confirmar
-  'confirmado',   -- Confirmado con el paciente
-  'presente',     -- El paciente llegó al consultorio
-  'ausente',      -- No se presentó (no-show)
-  'cancelado',    -- Cancelado por cualquier parte
-  'reprogramado'  -- Fue movido a otro horario
+  'pendiente',           -- Agendado, sin confirmar
+  'confirmado',          -- Confirmado con el paciente
+  'presente',            -- El paciente llegó al consultorio
+  'ausente',             -- No se presentó (no-show)
+  'cancelado',           -- Cancelado por cualquier parte
+  'reprogramado',        -- Fue movido a otro horario
+  'pendiente_confirmar'  -- A la espera de confirmación del paciente
 );
 
 -- Tipo de certificado médico.
@@ -507,16 +513,38 @@ CREATE INDEX mensajes_lecturas_user_idx ON public.mensajes_lecturas(user_id);
 
 
 -- ── notificaciones ──────────────────────────────────────────────────────────
--- ⚠ SIN MIGRACIÓN FUENTE y ⚠ Verificar: esta tabla EXISTE en la base y se usa en el
--- código, pero NO tiene CREATE en supabase/migrations/ NI se reconstruye acá con su
--- forma exacta (no se inventa su estructura). Avisos del sistema para el médico.
--- Referencias reales en el código:
+-- ⚠ SIN MIGRACIÓN FUENTE: la tabla se aplicó directo en Supabase (no hay CREATE en
+-- supabase/migrations/). La estructura de abajo se VERIFICÓ contra la base real y se
+-- reconstruye fielmente. Avisos del sistema para el médico. Referencias en el código:
 --   · SELECT  → src/app/(app)/notificaciones/page.tsx        (.eq('medico_id', ...))
 --   · INSERT  → src/app/api/turnero/route.ts                 (turno agendado por asistente)
 --   · INSERT  → src/app/api/cron/recordatorios/route.ts      (recordatorio 24hs enviado)
--- Columnas referenciadas en esos INSERT (no confirmadas por migración):
---   medico_id, titulo, mensaje, tipo, payload (jsonb), created_at, id.
--- TODO: crear la migración fuente. Ver PENDIENTES.md → Bloque A.
+-- TODO: crear la migración fuente para versionarla. Ver PENDIENTES.md → Bloque A.
+CREATE TABLE public.notificaciones (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  medico_id  UUID        NOT NULL REFERENCES public.profiles(id),
+  titulo     TEXT        NOT NULL,
+  mensaje    TEXT        NOT NULL,
+  tipo       TEXT        NOT NULL,
+  leida      BOOLEAN     DEFAULT false,
+  payload    JSONB,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE public.notificaciones ENABLE ROW LEVEL SECURITY;
+
+-- RLS de notificaciones (el médico solo ve/gestiona las propias).
+-- ⚠ La auditoría confirmó los NOMBRES de las políticas (notificaciones_select/insert/
+--   update/delete) + una duplicada "Medicos ven sus propias notificaciones" (redundante
+--   con el SELECT). Los PREDICADOS de abajo son una reconstrucción plausible
+--   (medico_id = auth.uid()), no verificados uno a uno contra la base.
+CREATE POLICY "notificaciones_select" ON public.notificaciones
+  FOR SELECT USING (medico_id = auth.uid());
+CREATE POLICY "notificaciones_insert" ON public.notificaciones
+  FOR INSERT WITH CHECK (medico_id = auth.uid());
+CREATE POLICY "notificaciones_update" ON public.notificaciones
+  FOR UPDATE USING (medico_id = auth.uid());
+CREATE POLICY "notificaciones_delete" ON public.notificaciones
+  FOR DELETE USING (medico_id = auth.uid());
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
@@ -612,8 +640,9 @@ RETURNS boolean AS $$ SELECT public.check_permiso(user_id, 'ver_turnos'); $$
 LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public;
 
 -- Trigger: registra en turnos_audit_log cada alta/cambio de un turno.
+-- SECURITY DEFINER con search_path fijo (migración 025).
 CREATE OR REPLACE FUNCTION public.log_turno_cambio()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
     INSERT INTO public.turnos_audit_log (turno_id, usuario_id, accion, detalle)
@@ -636,36 +665,53 @@ END;
 $$;
 
 -- Verificación pública de documentos (QR). SECURITY DEFINER: la usa el
--- admin client en /verificar/[codigo] para pacientes/certificados sin login.
--- ⚠ A diferencia del resto de funciones DEFINER, NO fija SET search_path.
---   Además expone DNI completo y contenido clínico. Ver PENDIENTES.md → Bloque B.
+-- admin client (service_role) en /verificar/[codigo] sin login.
+-- Endurecida en la migración 025 (Ley 25.326, minimización de datos sensibles):
+--   · Fija SET search_path = public.
+--   · NO expone DNI completo ni contenido clínico. Devuelve el DNI enmascarado
+--     (paciente_dni_masked: solo los últimos 3 dígitos) y omite el contenido.
+--   · EXECUTE revocado de PUBLIC; solo service_role y postgres pueden invocarla.
 CREATE OR REPLACE FUNCTION public.verificar_documento(codigo text)
 RETURNS TABLE (
   id uuid, tipo_documento text, fecha_emision date,
   medico_nombre text, medico_titulo text, medico_matriculas jsonb,
-  paciente_nombre text, paciente_dni text, contenido text,
+  paciente_nombre text, paciente_dni_masked text,
   estado text, valido_hasta date
-) SECURITY DEFINER AS $$
+) SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   RETURN QUERY
   SELECT c.id, 'certificado'::text, c.fecha_certificado,
          p.full_name, p.titulo, p.matriculas,
-         c.paciente_nombre, c.paciente_dni, c.contenido, c.estado, c.valido_hasta
+         c.paciente_nombre,
+         CASE
+           WHEN c.paciente_dni IS NULL      THEN NULL
+           WHEN length(c.paciente_dni) <= 3 THEN repeat('•', length(c.paciente_dni))
+           ELSE repeat('•', length(c.paciente_dni) - 3) || right(c.paciente_dni, 3)
+         END::text,
+         c.estado, c.valido_hasta
   FROM public.certificados c
   JOIN public.profiles p ON c.firmado_por = p.id
   WHERE c.codigo_verificacion = codigo
   UNION ALL
   SELECT ped.id, 'pedido'::text, ped.fecha_pedido,
          p.full_name, p.titulo, p.matriculas,
-         ped.paciente_nombre, ped.paciente_dni,
-         (E'Estudios pedidos: ' || ped.estudios_pedidos || E'\nDiagnóstico: ' || ped.diagnostico
-           || COALESCE(E'\nIndicaciones: ' || ped.indicaciones, ''))::text,
+         ped.paciente_nombre,
+         CASE
+           WHEN ped.paciente_dni IS NULL      THEN NULL
+           WHEN length(ped.paciente_dni) <= 3 THEN repeat('•', length(ped.paciente_dni))
+           ELSE repeat('•', length(ped.paciente_dni) - 3) || right(ped.paciente_dni, 3)
+         END::text,
          ped.estado, NULL::date
   FROM public.pedidos ped
   JOIN public.profiles p ON ped.firmado_por = p.id
   WHERE ped.codigo_verificacion = codigo;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Solo el servidor (admin client / service_role) puede ejecutarla. Ver migración 025.
+REVOKE EXECUTE ON FUNCTION public.verificar_documento(text) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.verificar_documento(text) TO service_role;
+GRANT  EXECUTE ON FUNCTION public.verificar_documento(text) TO postgres;
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
@@ -720,6 +766,8 @@ ALTER TABLE public.solicitudes_asistente ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notas                 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mensajes_internos     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mensajes_lecturas     ENABLE ROW LEVEL SECURITY;
+-- notificaciones: su ENABLE RLS y sus políticas viven en su propio bloque
+-- autocontenido más arriba (tabla sin migración fuente).
 
 -- ── profiles ────────────────────────────────────────────────────────────────
 CREATE POLICY "profiles_select" ON public.profiles
@@ -762,6 +810,10 @@ CREATE POLICY "historia_delete" ON public.historia_clinica
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = historia_clinica.paciente_id AND creado_por = auth.uid()));
 
 -- ── consultas ───────────────────────────────────────────────────────────────
+-- ⚠ La migración 025 dropeó dos políticas huérfanas (medico_full_access,
+--   asistente_access) que existían solo en la base (no en migraciones) y daban a
+--   cualquier asistente acceso ALL a las consultas del tenant, salteando
+--   check_permiso(). Las cuatro políticas de abajo son las únicas correctas.
 CREATE POLICY "consultas_select" ON public.consultas
   FOR SELECT USING (public.check_permiso(auth.uid(), 'ver_historia_clinica') AND medico_id = get_medico_id());
 CREATE POLICY "consultas_insert" ON public.consultas
@@ -831,9 +883,8 @@ CREATE POLICY "pedidos_insert" ON public.pedidos
 CREATE POLICY "pedidos_update" ON public.pedidos
   FOR UPDATE USING (public.check_permiso(auth.uid(), 'crear_pedidos')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = pedidos.paciente_id AND creado_por = get_medico_id()));
-CREATE POLICY "pedidos_delete" ON public.pedidos
-  FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = pedidos.paciente_id AND creado_por = auth.uid()));
+-- Sin política de DELETE: los pedidos NO se borran, solo se anulan (regla de negocio 5).
+-- La política pedidos_delete fue dropeada en la migración 025 (sin DELETE, RLS lo niega).
 
 -- ── certificados ────────────────────────────────────────────────────────────
 CREATE POLICY "certificados_select" ON public.certificados
@@ -845,9 +896,8 @@ CREATE POLICY "certificados_insert" ON public.certificados
 CREATE POLICY "certificados_update" ON public.certificados
   FOR UPDATE USING (public.check_permiso(auth.uid(), 'crear_certificados')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = certificados.paciente_id AND creado_por = get_medico_id()));
-CREATE POLICY "certificados_delete" ON public.certificados
-  FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = certificados.paciente_id AND creado_por = auth.uid()));
+-- Sin política de DELETE: los certificados NO se borran, solo se anulan (regla de negocio 5).
+-- La política certificados_delete fue dropeada en la migración 025 (sin DELETE, RLS lo niega).
 
 -- ── recetas ─────────────────────────────────────────────────────────────────
 -- Los asistentes solo pueden VER; crear/modificar/eliminar es exclusivo del médico.

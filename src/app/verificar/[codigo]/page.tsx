@@ -21,6 +21,22 @@ interface Matricula {
   numero: string
 }
 
+// Forma del retorno de la función SQL verificar_documento(codigo).
+// ⚠ No expone datos sensibles: el DNI viene enmascarado (paciente_dni_masked)
+// y NO se devuelve el contenido clínico del documento. Ver migración 025.
+interface DocumentoVerificado {
+  id: string
+  tipo_documento: 'certificado' | 'pedido'
+  fecha_emision: string
+  medico_nombre: string
+  medico_titulo: string | null
+  medico_matriculas: Matricula[] | null
+  paciente_nombre: string
+  paciente_dni_masked: string | null
+  estado: 'emitido' | 'revocado'
+  valido_hasta: string | null
+}
+
 function formatMatriculas(matriculas: any): string | null {
   if (!matriculas) return null
   const arr = Array.isArray(matriculas) ? matriculas : JSON.parse(JSON.stringify(matriculas))
@@ -37,7 +53,8 @@ export default async function VerificarDocumentoPage({ params }: PageProps) {
     codigo: codigo.toUpperCase().trim()
   })
 
-  const doc = results && results.length > 0 ? results[0] : null
+  const doc: DocumentoVerificado | null =
+    results && results.length > 0 ? (results[0] as DocumentoVerificado) : null
 
   if (error || !doc) {
     return (
@@ -144,7 +161,7 @@ export default async function VerificarDocumentoPage({ params }: PageProps) {
                 {doc.paciente_nombre}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                DNI: {doc.paciente_dni}
+                DNI: {doc.paciente_dni_masked}
               </p>
             </div>
 
@@ -172,16 +189,6 @@ export default async function VerificarDocumentoPage({ params }: PageProps) {
               </div>
             </div>
           </div>
-
-          {/* Contenido (Solo si NO está revocado) */}
-          {doc.estado !== 'revocado' && (
-            <div className="border-t border-slate-100 dark:border-slate-700/50 pt-6">
-              <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">Contenido Clínico</p>
-              <div className="bg-slate-50 dark:bg-slate-900/80 rounded-xl p-4 border border-slate-100 dark:border-slate-700/50 font-serif text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap text-sm italic">
-                {doc.contenido}
-              </div>
-            </div>
-          )}
 
           {doc.valido_hasta && (
             <div className="text-center text-xs text-slate-400 dark:text-slate-500 pt-2">
