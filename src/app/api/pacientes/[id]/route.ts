@@ -227,18 +227,28 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       }
     }
 
-    // ── Limpieza defensiva de Storage (bucket privado "estudios": {paciente_id}/…) ──
+    // ── Limpieza defensiva de Storage ──────────────────────────────────────────
+    // Ruta real de los objetos (migración 026): {medico_id}/{paciente_id}/{uuid}.{ext}.
+    // El médico es el tenant, así que el prefijo del paciente es `${user.id}/${id}`.
     // Aunque "sin estudios" es condición para llegar acá, evitamos dejar huérfanos.
+    // No abortamos el borrado del paciente por un fallo de Storage; solo lo registramos.
+    const estudiosPrefix = `${user.id}/${id}`
     try {
-      const { data: archivos } = await admin.storage.from('estudios').list(id)
-      if (archivos && archivos.length > 0) {
-        await admin.storage
+      const { data: archivos, error: listError } = await admin.storage
+        .from('estudios')
+        .list(estudiosPrefix)
+      if (listError) {
+        console.error(`Error listando Storage (${estudiosPrefix}) del paciente ${id}:`, listError)
+      } else if (archivos && archivos.length > 0) {
+        const { error: removeError } = await admin.storage
           .from('estudios')
-          .remove(archivos.map((f) => `${id}/${f.name}`))
+          .remove(archivos.map((f) => `${estudiosPrefix}/${f.name}`))
+        if (removeError) {
+          console.error(`Error borrando objetos de Storage (${estudiosPrefix}) del paciente ${id}:`, removeError)
+        }
       }
     } catch (storageErr) {
-      // No abortamos el borrado por un fallo de limpieza de Storage; solo lo registramos.
-      console.error('Error limpiando Storage del paciente:', storageErr)
+      console.error(`Error limpiando Storage (${estudiosPrefix}) del paciente ${id}:`, storageErr)
     }
 
     // ── Borrado físico (RLS + rol ya validados como doble capa) ─────────────────
