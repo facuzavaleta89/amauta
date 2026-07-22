@@ -25,6 +25,7 @@ export default async function PacientesPage({ searchParams }: PacientesPageProps
   const q = typeof resolvedParams.q === 'string' ? resolvedParams.q : ''
   const obraSocialId = typeof resolvedParams.obra_social_id === 'string' ? resolvedParams.obra_social_id : ''
   const sexo = typeof resolvedParams.sexo === 'string' ? resolvedParams.sexo : ''
+  const verArchivados = resolvedParams.archivados === 'true'
 
   // Buscar obras sociales para el filtro
   const { data: obrasSociales } = await supabase.from('obras_sociales').select('*').order('nombre')
@@ -37,6 +38,11 @@ export default async function PacientesPage({ searchParams }: PacientesPageProps
       obras_sociales ( nombre )
     `)
     .order('created_at', { ascending: false })
+
+  // Por defecto solo activos; el filtro "Mostrar archivados" los incluye.
+  if (!verArchivados) {
+    query = query.is('archivado_at', null)
+  }
 
   if (q) {
     // Busca por DNI exacto o LIKE nombre

@@ -120,47 +120,5 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// ── DELETE /api/pedidos/[id] ──────────────────────────────────
-
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  try {
-    const { id } = await params
-
-    const idValidation = uuidSchema.safeParse(id)
-    if (!idValidation.success) {
-      return NextResponse.json({ error: 'ID de pedido inválido' }, { status: 400 })
-    }
-
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-
-    const rl = rateLimit(request, { key: `pedidos_delete:${user.id}`, limit: 10, windowMs: 60_000 })
-    if (!rl.success) return rateLimitResponse(rl.retryAfter!)
-
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
-    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
-
-    // Verificar tenant explícitamente antes de eliminar (doble capa sobre RLS)
-    const { data: existing } = await supabase
-      .from('pedidos')
-      .select('firmado_por')
-      .eq('id', id)
-      .single()
-
-    if (!existing || existing.firmado_por !== tenantMedicoId) {
-      return NextResponse.json({ error: 'No autorizado para eliminar este pedido' }, { status: 403 })
-    }
-
-    const { error } = await supabase.from('pedidos').delete().eq('id', id)
-    if (error) {
-      console.error('[DELETE /api/pedidos/[id]] DB error:', error)
-      return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
-    }
-
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error('[DELETE /api/pedidos/[id]]', err)
-    return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
-  }
-}
+// Los pedidos no se borran: se ANULAN (ver /api/pedidos/[id]/anular). La documentación
+// clínica debe conservarse (Ley 26.529). El handler DELETE fue removido a propósito.

@@ -20,6 +20,7 @@ interface PacienteData {
 interface HistoriaClinicaViewProps {
   pacienteId: string
   paciente: PacienteData
+  archivado?: boolean
   initialConsultas: Consulta[]
 }
 
@@ -28,6 +29,7 @@ type PanelMode = 'empty' | 'new' | 'view' | 'edit'
 export function HistoriaClinicaView({
   pacienteId,
   paciente,
+  archivado = false,
   initialConsultas,
 }: HistoriaClinicaViewProps) {
   const [consultas, setConsultas] = useState<Consulta[]>(initialConsultas)
@@ -50,10 +52,11 @@ export function HistoriaClinicaView({
   }, [consultas])
 
   const handleNew = useCallback(() => {
+    if (archivado) return // paciente archivado: no se crean consultas nuevas
     setSelectedId(null)
     setPanelMode('new')
     setMobileView('detail')
-  }, [])
+  }, [archivado])
 
   const handleCancel = useCallback(() => {
     if (selectedId) {
@@ -152,6 +155,7 @@ export function HistoriaClinicaView({
             consultas={consultas}
             selectedId={selectedId}
             isCreatingNew={panelMode === 'new'}
+            archivado={archivado}
             onSelect={handleSelectConsulta}
             onNew={handleNew}
           />

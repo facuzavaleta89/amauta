@@ -2,7 +2,7 @@
 
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { PlusCircle, ClipboardList } from 'lucide-react'
+import { PlusCircle, ClipboardList, Archive } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -12,6 +12,7 @@ interface ConsultaTimelineProps {
   consultas: Consulta[]
   selectedId: string | null
   isCreatingNew: boolean
+  archivado?: boolean
   onSelect: (id: string) => void
   onNew: () => void
 }
@@ -35,6 +36,7 @@ export function ConsultaTimeline({
   consultas,
   selectedId,
   isCreatingNew,
+  archivado = false,
   onSelect,
   onNew,
 }: ConsultaTimelineProps) {
@@ -42,15 +44,34 @@ export function ConsultaTimeline({
     <div className="flex flex-col h-full">
       {/* Encabezado con botón nueva consulta */}
       <div className="p-4 border-b border-border/60 shrink-0">
-        <Button
-          id="btn-nueva-consulta"
-          onClick={onNew}
-          className="w-full gap-2 bg-primary hover:bg-primary/90"
-          size="sm"
-        >
-          <PlusCircle className="h-4 w-4" />
-          Nueva consulta
-        </Button>
+        {archivado ? (
+          <>
+            <Button
+              id="btn-nueva-consulta"
+              disabled
+              className="w-full gap-2"
+              size="sm"
+              title="Paciente archivado: desarchivalo para registrar nuevas consultas"
+            >
+              <PlusCircle className="h-4 w-4" />
+              Nueva consulta
+            </Button>
+            <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
+              <Archive className="h-3 w-3 mt-0.5 shrink-0" />
+              Paciente archivado. Desarchivalo para registrar nuevas consultas.
+            </p>
+          </>
+        ) : (
+          <Button
+            id="btn-nueva-consulta"
+            onClick={onNew}
+            className="w-full gap-2 bg-primary hover:bg-primary/90"
+            size="sm"
+          >
+            <PlusCircle className="h-4 w-4" />
+            Nueva consulta
+          </Button>
+        )}
       </div>
 
       {/* Lista */}

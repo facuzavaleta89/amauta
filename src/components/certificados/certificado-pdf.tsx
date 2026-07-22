@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { differenceInYears } from 'date-fns'
 import {
-  Download, Loader2, Trash2, ArrowLeft,
+  Download, Loader2, ArrowLeft,
   User, Calendar, Award, Clock, Ban,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -46,7 +46,6 @@ export function CertificadoDocView({
 }: CertificadoDocViewProps) {
   const router = useRouter()
   const [isDownloading, setIsDownloading] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
 
   const [estado, setEstado] = useState(certificado.estado)
   const [isAnulando, setIsAnulando] = useState(false)
@@ -72,20 +71,6 @@ export function CertificadoDocView({
       toast.error('No se pudo generar el PDF')
     } finally {
       setIsDownloading(false)
-    }
-  }
-
-  async function eliminarCertificado() {
-    setIsDeleting(true)
-    try {
-      const res = await fetch(`/api/certificados/${certificado.id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Error al eliminar')
-      toast.success('Certificado eliminado')
-      router.push('/certificados')
-      router.refresh()
-    } catch {
-      toast.error('No se pudo eliminar el certificado')
-      setIsDeleting(false)
     }
   }
 
@@ -156,35 +141,6 @@ export function CertificadoDocView({
                   >
                     {isAnulando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                     Anular
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-
-          {userRole === 'medico' && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>¿Eliminar certificado?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Esta acción no se puede deshacer. El certificado de <strong>{certificado.paciente_nombre}</strong> será eliminado permanentemente.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={eliminarCertificado}
-                    disabled={isDeleting}
-                    className="bg-destructive hover:bg-destructive/90"
-                  >
-                    {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                    Eliminar
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

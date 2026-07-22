@@ -132,12 +132,14 @@ CREATE TABLE public.pacientes (
   obra_social_otro TEXT,                      -- Texto libre si no está en la lista
   numero_afiliado  TEXT,
   creado_por       UUID NOT NULL REFERENCES public.profiles(id),  -- tenant key
+  archivado_at     TIMESTAMPTZ,                -- NULL = activo; con valor = archivado (Ley 26.529). Migración 024.
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_pacientes_dni         ON public.pacientes(dni);
 CREATE INDEX idx_pacientes_nombre      ON public.pacientes(nombre_completo);
 CREATE INDEX idx_pacientes_obra_social ON public.pacientes(obra_social_id);
+CREATE INDEX idx_pacientes_activos     ON public.pacientes(creado_por) WHERE archivado_at IS NULL;  -- listado de activos (migración 024)
 
 -- ── historia_clinica ────────────────────────────────────────────────────────
 -- Historia clínica base (modelo legacy 1:1 por paciente). Antecedentes y datos

@@ -47,6 +47,7 @@ export async function GET(request: NextRequest) {
       .from('pacientes')
       .select('id, nombre_completo, dni, fecha_nacimiento, obra_social_id, numero_afiliado, telefono, email, obras_sociales ( nombre )')
       .eq('creado_por', tenantMedicoId)
+      .is('archivado_at', null) // no ofrecer pacientes archivados al emitir documentos/turnos
 
     if (sanitizedQuery.length > 0) {
       dbQuery = dbQuery.or(`nombre_completo.ilike.%${sanitizedQuery}%,dni.ilike.%${sanitizedQuery}%`)

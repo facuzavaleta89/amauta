@@ -5,7 +5,7 @@ import { useCallback } from 'react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Search, X } from 'lucide-react'
+import { Search, X, Archive } from 'lucide-react'
 import type { ObraSocial } from '@/types/paciente'
 
 interface PatientFiltersProps {
@@ -20,6 +20,7 @@ export function PatientFilters({ obrasSociales }: PatientFiltersProps) {
   const q = searchParams.get('q') ?? ''
   const obraSocialId = searchParams.get('obra_social_id') ?? ''
   const sexo = searchParams.get('sexo') ?? ''
+  const verArchivados = searchParams.get('archivados') === 'true'
 
   const updateParam = useCallback(
     (key: string, value: string) => {
@@ -35,7 +36,7 @@ export function PatientFilters({ obrasSociales }: PatientFiltersProps) {
     [router, pathname, searchParams]
   )
 
-  const hasFilters = q || obraSocialId || sexo
+  const hasFilters = q || obraSocialId || sexo || verArchivados
 
   return (
     <div className="flex flex-col sm:flex-row gap-3">
@@ -84,6 +85,20 @@ export function PatientFilters({ obrasSociales }: PatientFiltersProps) {
           <SelectItem value="otro">Otro</SelectItem>
         </SelectContent>
       </Select>
+
+      {/* Mostrar archivados */}
+      <Button
+        id="toggle-archivados"
+        type="button"
+        variant={verArchivados ? 'secondary' : 'outline'}
+        size="sm"
+        className="h-9 gap-1.5"
+        aria-pressed={verArchivados}
+        onClick={() => updateParam('archivados', verArchivados ? '' : 'true')}
+      >
+        <Archive className="h-4 w-4" />
+        {verArchivados ? 'Ocultar archivados' : 'Mostrar archivados'}
+      </Button>
 
       {/* Limpiar filtros */}
       {hasFilters && (

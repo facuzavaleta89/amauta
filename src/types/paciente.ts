@@ -24,6 +24,7 @@ export interface Paciente {
   obra_social_otro: string | null
   numero_afiliado: string | null
   creado_por: string         // uuid del médico dueño del registro
+  archivado_at: string | null // ISO timestamp; NULL = activo, con valor = archivado (Ley 26.529)
   created_at: string
   updated_at: string
 }

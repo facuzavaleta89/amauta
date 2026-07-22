@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { pacienteSchema } from '@/lib/validations/paciente.schema'
 import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
@@ -134,6 +135,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
   }
 }
 
+// DELETE /api/pacientes/[id]
+// Borrado físico de EXCEPCIÓN: SOLO para pacientes sin ninguna actuación registrada.
+// EXCLUSIVO DEL MÉDICO. Si el paciente tiene cualquier actuación (consultas, HC,
+// estudios, evoluciones, turnos, pedidos, certificados, recetas) → 409, hay que archivarlo.
+// Ley 26.529: la documentación clínica se conserva; esto es solo para altas erróneas.
 export async function DELETE(request: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
@@ -154,28 +160,93 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     const rl = rateLimit(request, { key: `paciente_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+    // Validar explícitamente que el usuario sea médico (no confiar solo en RLS).
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    if (!profile || profile.role !== 'medico') {
+      return NextResponse.json(
+        { error: 'Solo el médico titular puede eliminar pacientes' },
+        { status: 403 }
+      )
     }
 
-    // Verificar pertenencia al tenant antes de borrar
+    // El médico es dueño del tenant: su id es el creado_por de sus pacientes.
     const { data: existing, error: findError } = await supabase
       .from('pacientes')
       .select('id')
       .eq('id', id)
-      .eq('creado_por', tenantMedicoId)
+      .eq('creado_por', user.id)
       .single()
 
     if (findError || !existing) {
       return NextResponse.json({ error: 'Paciente no encontrado o sin permisos' }, { status: 404 })
     }
 
+    // ── Verificar ausencia TOTAL de actuaciones ────────────────────────────────
+    // Con admin client (bypass RLS) para que ninguna fila oculta por RLS genere un
+    // falso negativo: las tablas CASCADE (consultas/estudios/evoluciones) NO bloquean
+    // el borrado a nivel de FK, así que este conteo es la única barrera real contra la
+    // pérdida silenciosa de datos clínicos.
+    //
+    // NOTA: historia_clinica NO cuenta como actuación. Se crea vacía (sin consultas)
+    // junto con el paciente, así que siempre hay 1 fila; incluirla bloquearía el
+    // borrado de cualquier paciente. La unidad de actuación clínica es la CONSULTA.
+    // Al hacer el DELETE físico, el FK CASCADE de historia_clinica borra esa fila vacía.
+    const admin = createAdminClient()
+    const tablasHijas = [
+      'consultas',
+      'estudios',
+      'evoluciones',
+      'turnos',
+      'pedidos',
+      'certificados',
+      'recetas',
+    ] as const
+
+    const counts = await Promise.all(
+      tablasHijas.map((tabla) =>
+        admin.from(tabla).select('id', { count: 'exact', head: true }).eq('paciente_id', id)
+      )
+    )
+
+    for (let i = 0; i < counts.length; i++) {
+      const { count, error } = counts[i]
+      if (error) {
+        console.error(`Error contando ${tablasHijas[i]} del paciente:`, error)
+        return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
+      }
+      if ((count ?? 0) > 0) {
+        return NextResponse.json(
+          { error: 'El paciente tiene actuaciones registradas; archivalo en lugar de eliminarlo.' },
+          { status: 409 }
+        )
+      }
+    }
+
+    // ── Limpieza defensiva de Storage (bucket privado "estudios": {paciente_id}/…) ──
+    // Aunque "sin estudios" es condición para llegar acá, evitamos dejar huérfanos.
+    try {
+      const { data: archivos } = await admin.storage.from('estudios').list(id)
+      if (archivos && archivos.length > 0) {
+        await admin.storage
+          .from('estudios')
+          .remove(archivos.map((f) => `${id}/${f.name}`))
+      }
+    } catch (storageErr) {
+      // No abortamos el borrado por un fallo de limpieza de Storage; solo lo registramos.
+      console.error('Error limpiando Storage del paciente:', storageErr)
+    }
+
+    // ── Borrado físico (RLS + rol ya validados como doble capa) ─────────────────
     const { error } = await supabase
       .from('pacientes')
       .delete()
       .eq('id', id)
-      .eq('creado_por', tenantMedicoId)
+      .eq('creado_por', user.id)
 
     if (error) {
       console.error('Error eliminando paciente:', error)

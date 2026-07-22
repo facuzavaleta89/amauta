@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Download, Loader2, Trash2, ArrowLeft,
+  Download, Loader2, ArrowLeft,
   User, Calendar, Stethoscope, FileText, AlertCircle, Ban,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -47,7 +47,6 @@ export function PedidoDocView({
   const [estado, setEstado] = useState(pedido.estado)
   const [isAnulando, setIsAnulando] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
 
   async function descargarPDF() {
     setIsDownloading(true)
@@ -65,20 +64,6 @@ export function PedidoDocView({
       toast.error('No se pudo generar el PDF')
     } finally {
       setIsDownloading(false)
-    }
-  }
-
-  async function eliminarPedido() {
-    setIsDeleting(true)
-    try {
-      const res = await fetch(`/api/pedidos/${pedido.id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Error al eliminar')
-      toast.success('Pedido eliminado')
-      router.push('/pedidos')
-      router.refresh()
-    } catch {
-      toast.error('No se pudo eliminar el pedido')
-      setIsDeleting(false)
     }
   }
 
@@ -155,35 +140,6 @@ export function PedidoDocView({
                   >
                     {isAnulando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                     Anular
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-
-          {userRole === 'medico' && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>¿Eliminar pedido?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Esta acción no se puede deshacer. El pedido de estudios de <strong>{pedido.paciente_nombre}</strong> será eliminado permanentemente.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={eliminarPedido}
-                    disabled={isDeleting}
-                    className="bg-destructive hover:bg-destructive/90"
-                  >
-                    {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                    Eliminar
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

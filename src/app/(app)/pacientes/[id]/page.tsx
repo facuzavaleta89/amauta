@@ -1,11 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import { PatientForm } from '@/components/pacientes/patient-form'
-import { DeletePatientButton } from '@/components/pacientes/delete-patient-button'
+import { PacienteAcciones } from '@/components/pacientes/paciente-acciones'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award } from 'lucide-react'
+import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award, Archive } from 'lucide-react'
 import Link from 'next/link'
 import { differenceInYears, format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -41,7 +41,19 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
 
   const { data: obrasSociales } = await supabase.from('obras_sociales').select('*').order('nombre')
 
-  const isEditing = edit === 'true'
+  // Rol del usuario actual: archivar/desarchivar/eliminar es exclusivo del médico.
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user!.id)
+    .single()
+  const esMedico = profile?.role === 'medico'
+
+  const archivado = Boolean(paciente.archivado_at)
+
+  // Un paciente archivado no se edita, ni siquiera entrando por ?edit=true.
+  const isEditing = edit === 'true' && !archivado
 
   const edad = paciente.fecha_nacimiento
     ? differenceInYears(new Date(), new Date(paciente.fecha_nacimiento))
@@ -90,22 +102,50 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
             <ChevronLeft className="h-5 w-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{paciente.nombre_completo}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-foreground">{paciente.nombre_completo}</h1>
+              {archivado && (
+                <Badge variant="secondary" className="gap-1 text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/10">
+                  <Archive className="h-3 w-3" />
+                  Archivado
+                </Badge>
+              )}
+            </div>
             <p className="text-sm text-muted-foreground mt-1 capitalize">
               {paciente.sexo} · {edad !== null ? `${edad} años` : 'Edad desconocida'}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button asChild variant="outline" className="gap-2">
-            <Link href={`/pacientes/${id}?edit=true`}>
-              <Pencil className="h-4 w-4" />
-              <span className="hidden sm:inline">Editar</span>
-            </Link>
-          </Button>
-          <DeletePatientButton patientId={paciente.id} patientName={paciente.nombre_completo} />
+          {!archivado && (
+            <Button asChild variant="outline" className="gap-2">
+              <Link href={`/pacientes/${id}?edit=true`}>
+                <Pencil className="h-4 w-4" />
+                <span className="hidden sm:inline">Editar</span>
+              </Link>
+            </Button>
+          )}
+          {esMedico && (
+            <PacienteAcciones
+              patientId={paciente.id}
+              patientName={paciente.nombre_completo}
+              archivado={archivado}
+            />
+          )}
         </div>
       </div>
+
+      {/* Aviso de paciente archivado */}
+      {archivado && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
+          <Archive className="h-4 w-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-amber-800 dark:text-amber-200">
+            Este paciente está <strong>archivado</strong>. Sus datos e historia clínica se conservan,
+            pero no se le pueden emitir documentos ni editar mientras esté archivado.
+            {esMedico && ' Usá "Desarchivar" para reactivarlo.'}
+          </p>
+        </div>
+      )}
 
       {/* Cards de información */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -187,32 +227,53 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
         </Card>
       </div>
 
-      {/* Accesos rápidos */}
+      {/* Accesos rápidos. Las acciones de escritura se deshabilitan si está archivado. */}
       <div className="flex flex-wrap gap-3">
-        <Button variant="outline" className="gap-2" asChild>
-          <Link href={`/pacientes/${id}?edit=true`}>
+        {archivado ? (
+          <Button variant="outline" className="gap-2" disabled title="Paciente archivado">
             <Pencil className="h-4 w-4" />
             Editar datos
-          </Link>
-        </Button>
+          </Button>
+        ) : (
+          <Button variant="outline" className="gap-2" asChild>
+            <Link href={`/pacientes/${id}?edit=true`}>
+              <Pencil className="h-4 w-4" />
+              Editar datos
+            </Link>
+          </Button>
+        )}
         <Button variant="outline" className="gap-2" asChild>
           <Link href={`/turnero?paciente_id=${id}`}>
             <CalendarDays className="h-4 w-4" />
             Ver turnos
           </Link>
         </Button>
-        <Button variant="outline" className="gap-2" asChild>
-          <Link href={`/pedidos/nuevo?paciente_id=${id}`}>
+        {archivado ? (
+          <Button variant="outline" className="gap-2" disabled title="No se pueden emitir documentos a un paciente archivado">
             <ClipboardList className="h-4 w-4" />
             Nuevo Pedido
-          </Link>
-        </Button>
-        <Button variant="outline" className="gap-2" asChild>
-          <Link href={`/certificados/nuevo?paciente_id=${id}`}>
+          </Button>
+        ) : (
+          <Button variant="outline" className="gap-2" asChild>
+            <Link href={`/pedidos/nuevo?paciente_id=${id}`}>
+              <ClipboardList className="h-4 w-4" />
+              Nuevo Pedido
+            </Link>
+          </Button>
+        )}
+        {archivado ? (
+          <Button variant="outline" className="gap-2" disabled title="No se pueden emitir documentos a un paciente archivado">
             <Award className="h-4 w-4" />
             Nuevo Certificado
-          </Link>
-        </Button>
+          </Button>
+        ) : (
+          <Button variant="outline" className="gap-2" asChild>
+            <Link href={`/certificados/nuevo?paciente_id=${id}`}>
+              <Award className="h-4 w-4" />
+              Nuevo Certificado
+            </Link>
+          </Button>
+        )}
         <Button variant="default" className="gap-2" asChild>
           <Link href={`/pacientes/${id}/historia`}>
             <FileText className="h-4 w-4" />

@@ -42,7 +42,7 @@ export default async function HistoriaClinicaPage({ params }: Props) {
   // Paciente
   const { data: paciente, error: pacienteError } = await supabase
     .from('pacientes')
-    .select('id, nombre_completo, dni, fecha_nacimiento, obra_social_otro, numero_afiliado, obras_sociales(nombre)')
+    .select('id, nombre_completo, dni, fecha_nacimiento, obra_social_otro, numero_afiliado, archivado_at, obras_sociales(nombre)')
     .eq('id', id)
     .single()
 
@@ -70,6 +70,7 @@ export default async function HistoriaClinicaPage({ params }: Props) {
           obra_social_nombre: obrasSociales?.nombre ?? paciente.obra_social_otro ?? null,
           numero_afiliado:    paciente.numero_afiliado ?? null,
         }}
+        archivado={Boolean(paciente.archivado_at)}
         initialConsultas={(consultas ?? []) as Consulta[]}
       />
     </div>

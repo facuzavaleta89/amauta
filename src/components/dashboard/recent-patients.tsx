@@ -17,6 +17,7 @@ export async function RecentPatients() {
       created_at,
       obras_sociales ( nombre )
     `)
+    .is('archivado_at', null)
     .order('created_at', { ascending: false })
     .limit(5)
 

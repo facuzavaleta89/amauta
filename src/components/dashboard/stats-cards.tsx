@@ -15,7 +15,7 @@ async function getStats() {
     { count: turnosSemana },
     { count: consultasMes },
   ] = await Promise.all([
-    supabase.from('pacientes').select('*', { count: 'exact', head: true }),
+    supabase.from('pacientes').select('*', { count: 'exact', head: true }).is('archivado_at', null),
     supabase
       .from('turnos')
       .select('*', { count: 'exact', head: true })

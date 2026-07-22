@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
@@ -103,6 +104,28 @@ export async function POST(request: NextRequest) {
     }
 
     const consulta = result.data
+
+    // ── Rechazar consultas para pacientes archivados (P5) ──────
+    // Un paciente archivado conserva su HC (lectura), pero no admite consultas nuevas.
+    // Se lee con admin client (bypass RLS): quien crea consultas puede no tener
+    // ver_pacientes, y aun así el chequeo debe ser confiable. Se acota al tenant.
+    const admin = createAdminClient()
+    const { data: pac, error: pacError } = await admin
+      .from('pacientes')
+      .select('archivado_at')
+      .eq('id', consulta.paciente_id)
+      .eq('creado_por', ctx.tenantMedicoId)
+      .single()
+
+    if (pacError || !pac) {
+      return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
+    }
+    if (pac.archivado_at) {
+      return NextResponse.json(
+        { error: 'El paciente está archivado. Desarchivalo para registrar nuevas consultas.' },
+        { status: 409 }
+      )
+    }
 
     // ── Validar solapamiento del próximo control ANTES de guardar ──
     if (consulta.proximo_turno_sugerido) {
