@@ -28,6 +28,10 @@ Estos objetos existen en Supabase pero **no tienen `CREATE`/`ALTER` en
 `supabase/migrations/`** (se aplicaron directo en el dashboard). Un entorno nuevo
 levantado solo desde migraciones quedaría incompleto. Crear las migraciones faltantes:
 - Tabla **`consultas`** completa (reconstruida en `schema.sql` desde `types/consulta.ts`).
+  Su columna `campos_extra` **sí** tiene fuente (migración `022`); el resto de la tabla no.
+- Tabla **`notificaciones`** completa: existe en la base y se usa en el código
+  (`notificaciones/page.tsx`, `api/turnero`, `api/cron/recordatorios`) pero **no** tiene
+  `CREATE` en migraciones ni figura en `schema.sql` (solo una nota ⚠ Verificar). Crear la migración.
 - Columnas de Bloque 4 en **`turnos`**: `categoria`, `origen`, `consulta_id`.
 - Columnas en **`profiles`**: `titulo`, `matriculas` (jsonb), `logo_url`.
 - **Migración vacía:** `supabase/migrations/20260326204733_fix_rls_recursion.sql`
@@ -52,14 +56,22 @@ levantado solo desde migraciones quedaría incompleto. Crear las migraciones fal
   en vez de las uniones literales (`UserRole`, acciones del audit). Ajustar a literales.
 
 ### Limpieza de código muerto
-- **14 componentes stub** `export default function Placeholder(){return null}`, sin
+- **13 componentes stub** `export default function Placeholder(){return null}`, sin
   imports en ningún lado: `turnero/turno-card`, `pacientes/{patient-tabs, evolucion-charts,
   estudios-upload}`, `dashboard/weekly-calendar`, `shared/{role-guard, loading-spinner,
-  file-preview, confirm-dialog, error-boundary}`, `difusion/{post-editor, post-list,
-  send-modal}`, `lib/pdf/receta-template`. Eliminarlos o implementarlos.
+  file-preview, confirm-dialog, error-boundary}`, `difusion/{post-editor, send-modal}`,
+  `lib/pdf/receta-template`. Eliminarlos o implementarlos.
+  (`difusion/post-list.tsx` **ya se implementó** — era el 14.º stub.)
 - **Barrel redundante:** `src/types/supabase.ts` re-exporta un subconjunto de dominios;
   ahora existe `src/types/index.ts` como barrel completo. Consolidar imports hacia
   `@/types` y evaluar deprecar `supabase.ts`.
+
+### Lint preexistente (deuda técnica menor)
+- **Errores/warnings de lint preexistentes** (no introducidos por los cambios recientes,
+  detectados al pasar por esos archivos): `@typescript-eslint/no-explicit-any` en
+  `src/components/pacientes/consultas/consulta-detail.tsx`, y warnings de alt-text /
+  `no-explicit-any` en `src/lib/pdf/consulta-template.tsx`. Limpiar cuando se pase por ahí;
+  no bloquean el build.
 
 ### Datos / catálogo
 - **"Particular / Sin obra social"** existe como **registro real** en la seed de
@@ -126,6 +138,29 @@ Información Pública**). Hallazgos:
 - **Logs:** confirmar que `SUPABASE_SERVICE_ROLE_KEY` y datos de pacientes nunca se
   loguean (el admin client se usa en `/verificar` y en actualización de permisos).
 
+### Residencia de datos — transferencia internacional (Ley 25.326)
+- **Migrar la región de Supabase antes de producción.** El proyecto está hoy en un
+  servidor de **EE.UU. (North Virginia)**. La Ley 25.326 regula la **transferencia
+  internacional** de datos personales: antes de cargar el **primer paciente real** hay que
+  **migrar el proyecto a una región de protección adecuada (UE)** o resolver el
+  **consentimiento expreso** del paciente para la transferencia. Aplica **antes de
+  producción**; en desarrollo con datos de prueba no aplica. La migración de región requiere
+  **plan Pro de Supabase**. Es un bloqueante de go-live, no un pulido opcional.
+
+### Defensa en profundidad — borrado de documentos a nivel base
+- **Revocar las políticas RLS `pedidos_delete` y `certificados_delete`.** El borrado físico
+  de pedidos y certificados ya se quitó **a nivel de aplicación** (se eliminaron los handlers
+  `DELETE` de `api/pedidos/[id]` y `api/certificados/[id]`, y los botones de la UI: ahora solo
+  se **anulan**). Pero las políticas **`pedidos_delete` / `certificados_delete` siguen
+  existiendo** en la base (migraciones `006` / `007`). Revocarlas (`DROP POLICY`) como defensa
+  en profundidad, para que Postgres niegue el `DELETE` aunque alguien llegue por otra vía
+  (p. ej. el service role o un cliente que reintroduzca la llamada). Requiere una migración nueva.
+
+### Minimización en la verificación pública (ya listada arriba)
+- Ver "Verificación pública de documentos — minimización de datos" al inicio de este bloque:
+  enmascarar DNI y revisar exposición del contenido clínico íntegro sin autenticación. Sigue
+  vigente y es un pulido de seguridad prioritario (dato sensible de salud, Ley 25.326).
+
 ---
 
 ## Bloque C — Estético
@@ -142,7 +177,7 @@ Unificación visual y pulido de interfaz. Detalle y ubicaciones en `DESIGN.md`
   `globals.css` pero **no se carga** en ningún layout. Cargar la fuente o quitar el token.
 - **`turnos.color` (HEX `#3B82F6`)** quedó en desuso frente a las clases `.categoria-*`
   del turnero; limpiar el default o reutilizarlo coherentemente.
-- **Componentes stub sin usar** (los 14 del Bloque A) ensucian `components/ui` y demás
+- **Componentes stub sin usar** (los 13 del Bloque A) ensucian `components/ui` y demás
   carpetas; eliminarlos también mejora la prolijidad visual del árbol de UI.
 - **Dark mode a medias:** hay un set completo de tokens `.dark` en `globals.css` pero la
   app no expone un toggle de tema. Decidir: implementar el toggle o retirar los tokens.

@@ -84,9 +84,9 @@ del usuario actual.
 |---|---|---|
 | `profiles` | Extiende `auth.users`: rol, `medico_id`, firma/sello, 12 permisos | — |
 | `obras_sociales` | Catálogo (lectura pública autenticada) | — |
-| `pacientes` | Pacientes (DNI único) | `creado_por` |
-| `historia_clinica` | HC base 1:1 por paciente (modelo legacy) | vía `pacientes` |
-| `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología) | `medico_id` |
+| `pacientes` | Pacientes (DNI único). `archivado_at` → archivar en vez de borrar | `creado_por` |
+| `historia_clinica` | HC base 1:1 por paciente, **vacía** al crear (no es una actuación) | vía `pacientes` |
+| `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología). `campos_extra` (JSONB) ad-hoc | `medico_id` |
 | `estudios` | Archivos adjuntos (bucket privado) | vía `pacientes` |
 | `evoluciones` | Series de laboratorio/antropometría (legacy, gráficos) | vía `pacientes` |
 | `turnos` | Agenda. `categoria`, `origen`, `consulta_id` (Bloque 4) | `medico_id` |
@@ -98,7 +98,8 @@ del usuario actual.
 | `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos | `medico_id` |
 | `solicitudes_asistente` | Workflow de vinculación (onboarding) | — |
 | `notas` | Notas personales por usuario | `user_id` |
-| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal) | `medico_id` / `user_id` |
+| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). Realtime (migración 023) | `medico_id` / `user_id` |
+| `notificaciones` | Avisos del sistema para el médico (turno agendado, recordatorio enviado). ⚠ Verificar: existe y se usa en código, pero **sin migración fuente** ni en `schema.sql` | `medico_id` |
 
 Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()`,
 `check_permiso(user_id, permiso)`, `verificar_documento(codigo)`, `set_updated_at()`,
@@ -151,17 +152,27 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 
 1. **HC inmutable:** una `consulta` en estado `finalizada` no se edita desde la UI.
    Solo el médico finaliza (el asistente con permiso puede crear en `borrador`).
+   La **consulta** es la unidad de actuación clínica (la fila de `historia_clinica`
+   nace vacía y **no** cuenta como actuación).
 2. **Médico = acceso total.** Los asistentes solo acceden a lo habilitado explícitamente.
 3. **Tenant aislado:** ninguna data se comparte entre médicos distintos.
 4. **Matrículas:** MP (provincial), MN (nacional), ME (especialidad). Varias posibles,
    en `profiles.matriculas` (JSONB `[{tipo, numero}]`). `matricula` (TEXT) está deprecado.
 5. **Documentos:** pedidos y certificados llevan logo, matrícula(s) y título del médico
    en el PDF. `estado ∈ {emitido, revocado}`; anular es irreversible y solo del médico.
-   Certificados: si `valido_hasta < hoy` → "expirado" (solo display, no cambia `estado`).
-   Cada uno tiene `codigo_verificacion` para la página pública `/verificar/[codigo]`.
+   **No se borran nunca — solo se anulan** (el borrado físico se quitó de app: endpoints
+   y UI). Certificados: si `valido_hasta < hoy` → "expirado" (solo display, no cambia
+   `estado`). Cada uno tiene `codigo_verificacion` para la página pública `/verificar/[codigo]`.
 6. **Firma:** solo el médico tiene `firma_url`; los asistentes no pueden firmar.
 7. **Recetas:** solo el médico las ve; la creación está bloqueada (ANMAT pendiente).
 8. **Asistente sin vínculo** → redirigido a onboarding, no puede usar la app.
+9. **Pacientes se archivan, no se borran** (Ley 26.529 — conservación de la HC). Archivar
+   (`archivado_at`) los saca de listados y bloquea escritura (editar, emitir documentos,
+   **crear consultas**), pero la HC queda de **solo lectura**. El borrado físico real es la
+   **excepción**: solo pacientes sin **ninguna** actuación (consultas, estudios, evoluciones,
+   turnos, pedidos, certificados, recetas — la HC vacía no cuenta). Archivar / desarchivar /
+   eliminar es **exclusivo del médico** (validado en el endpoint, no solo por RLS).
+   Criterio exacto: `DELETE /api/pacientes/[id]` (conteo con admin client).
 
 ---
 
@@ -170,6 +181,19 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 Bloques 1–6 completados: HC/consultas, perfil del médico, permisos granulares,
 ajustes del turnero (24/7, categorías, integración con HC), mejoras en documentos
 (QR de verificación, estados, badges), y obras sociales + notas + mensajería interna.
+
+Tanda de pulidos posterior (P1–P5):
+1. **Turnero:** fix de zona horaria en fecha/hora por defecto desde la vista mes (helper
+   de fechas compartido en `src/lib/utils/`).
+2. **HC:** PDF de consulta y de HC completa ahora se generan **en el servidor**
+   (`api/consultas/[id]/pdf`, `api/pacientes/[id]/historia/pdf`); `medicacion_actual`
+   reordenada (entre motivo y anamnesis); campos dinámicos `campos_extra` (migración 022).
+3. **UI:** selector mosaico/lista compartido (`shared/view-toggle`, hook `use-view-mode`,
+   preferencia en localStorage) en difusión y notas; `post-list.tsx` implementado.
+4. **Notificaciones:** campanita del header `NotificacionesBell` unifica solicitudes +
+   mensajes no leídos, con Realtime para `mensajes_internos` (migración 023).
+5. **Pacientes/documentos:** archivar en vez de borrar (`archivado_at`, migración 024);
+   documentos solo se anulan (ver reglas de negocio 5 y 9).
 
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético) y la sección "Recetas" (bloqueada por certificación ANMAT).
@@ -188,7 +212,9 @@ Seguridad, Estético) y la sección "Recetas" (bloqueada por certificación ANMA
 
 ## Notas y deuda técnica
 
-1. **Hooks vacíos:** `src/hooks/*` son stubs (11 bytes). La lógica está en Server Components/Actions.
+1. **Hooks:** 4 de 5 en `src/hooks/*` siguen stubs (11 bytes: `use-auth`, `use-pacientes`,
+   `use-role`, `use-turnos`) — la lógica vive en Server Components/Actions. Excepción:
+   `use-view-mode.ts` sí tiene lógica real (preferencia mosaico/lista en localStorage).
 2. **Permisos legacy:** `puede_ver_historias` / `puede_editar_agenda` (Bloque 2) fueron
    reemplazados por los 12 granulares; siguen en la tabla por compatibilidad.
 3. **`profiles.matricula`** (TEXT) deprecada → usar `matriculas` (JSONB).
@@ -196,7 +222,9 @@ Seguridad, Estético) y la sección "Recetas" (bloqueada por certificación ANMA
    **No crear `middleware.ts`.** Para rutas públicas, editar `publicRoutes` en `proxy.ts`.
 5. **Admin client para permisos:** el médico actualiza permisos del asistente vía
    `admin.ts` (bypass RLS), porque `profiles_update_own` solo permite el perfil propio.
-6. **Esquema sin migración fuente:** la tabla `consultas`, las columnas de Bloque 4 en
-   `turnos` (`categoria/origen/consulta_id`) y `profiles.titulo/matriculas/logo_url` se
-   aplicaron directo en Supabase. `schema.sql` los reconstruye; ver `PENDIENTES.md` → Bloque A.
+6. **Esquema sin migración fuente:** la tabla `consultas` (su columna `campos_extra` **sí**
+   tiene fuente: migración 022), la tabla `notificaciones` (⚠ ni siquiera en `schema.sql`),
+   las columnas de Bloque 4 en `turnos` (`categoria/origen/consulta_id`) y
+   `profiles.titulo/matriculas/logo_url` se aplicaron directo en Supabase. `schema.sql` los
+   reconstruye (salvo `notificaciones`); ver `PENDIENTES.md` → Bloque A.
 7. **Migración vacía:** `20260326204733_fix_rls_recursion.sql` tiene 0 bytes.

@@ -2,8 +2,12 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→021).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→024).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
+--
+-- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
+-- mensajes_internos en la publicación supabase_realtime — no cambia estructura de
+-- tabla), 024 (pacientes.archivado_at + índice idx_pacientes_activos).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -16,9 +20,10 @@
 --   (fueron aplicados directamente en Supabase). Están marcados con
 --   "-- ⚠ SIN MIGRACIÓN FUENTE" y su forma se dedujo de los tipos TS y del uso
 --   en el código. Ver PENDIENTES.md → Bloque A.
---     · Tabla `consultas` completa
+--     · Tabla `consultas` completa (su columna `campos_extra` sí tiene fuente: migración 022)
 --     · Columnas `turnos.categoria`, `turnos.origen`, `turnos.consulta_id`
 --     · Columnas `profiles.titulo`, `profiles.matriculas`, `profiles.logo_url`
+--     · Tabla `notificaciones` completa (ver nota al pie de este archivo)
 -- ============================================================================
 
 
@@ -499,6 +504,19 @@ CREATE TABLE public.mensajes_lecturas (
   PRIMARY KEY (mensaje_id, user_id)
 );
 CREATE INDEX mensajes_lecturas_user_idx ON public.mensajes_lecturas(user_id);
+
+
+-- ── notificaciones ──────────────────────────────────────────────────────────
+-- ⚠ SIN MIGRACIÓN FUENTE y ⚠ Verificar: esta tabla EXISTE en la base y se usa en el
+-- código, pero NO tiene CREATE en supabase/migrations/ NI se reconstruye acá con su
+-- forma exacta (no se inventa su estructura). Avisos del sistema para el médico.
+-- Referencias reales en el código:
+--   · SELECT  → src/app/(app)/notificaciones/page.tsx        (.eq('medico_id', ...))
+--   · INSERT  → src/app/api/turnero/route.ts                 (turno agendado por asistente)
+--   · INSERT  → src/app/api/cron/recordatorios/route.ts      (recordatorio 24hs enviado)
+-- Columnas referenciadas en esos INSERT (no confirmadas por migración):
+--   medico_id, titulo, mensaje, tipo, payload (jsonb), created_at, id.
+-- TODO: crear la migración fuente. Ver PENDIENTES.md → Bloque A.
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐

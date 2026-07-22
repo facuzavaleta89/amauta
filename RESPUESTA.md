@@ -1,3 +1,62 @@
+# Actualización de documentación (tras las 5 tareas P1–P5)
+
+> Tarea **solo de documentación**: no se tocó código de la app, ni esquema, ni Supabase.
+> Cada documento se contrastó con el código real. Lo marcado **⚠ Verificar** es lo no confirmable.
+
+## `CLAUDE.md`
+**Agregado / cambiado:**
+- Modelo de datos: `pacientes` → nota `archivado_at` (archivar en vez de borrar);
+  `historia_clinica` → "vacía al crear, no es actuación"; `consultas` → `campos_extra` (JSONB);
+  `mensajes_internos` → Realtime (migración 023). **Fila nueva `notificaciones`** con ⚠ Verificar.
+- Reglas de negocio: regla 1 aclara que **la consulta es la unidad de actuación**; regla 5,
+  documentos **no se borran, solo se anulan**; **regla 9 nueva** (archivar pacientes, borrado
+  físico solo sin actuaciones, exclusivo del médico, HC de solo lectura).
+- Estado de desarrollo: bloque nuevo **"Tanda de pulidos P1–P5"** resumiendo las 5 tareas.
+- Deuda técnica: nota 1 (hooks) corregida — `use-view-mode.ts` ya tiene lógica (4 de 5 siguen
+  stubs); nota 6 suma `notificaciones` y aclara que `campos_extra` tiene fuente (022).
+
+## `schema.sql`
+- Ya reflejaba `campos_extra` (022) y `archivado_at` + índice (024) — **no se duplicó nada**.
+- Header: rango de migraciones `001→021` → **`001→024`** + resumen de 022/023/024.
+- **Nota nueva de la tabla `notificaciones`** (⚠ SIN MIGRACIÓN FUENTE / ⚠ Verificar): existe y se
+  usa en código (page + 2 inserts), con las columnas **referenciadas en el código** (medico_id,
+  titulo, mensaje, tipo, payload, created_at, id) — **sin inventar** su estructura definitiva.
+
+## `src/types/` — solo verificación (sin cambios)
+- `consulta.ts`: `CampoExtra`, `CampoExtraSeccion`, `campos_extra` y `medicacion_actual` ✅ presentes.
+- `paciente.ts`: `archivado_at: string | null` ✅. Barrel `index.ts` exporta `paciente` y `consulta` ✅.
+
+## `DESIGN.md`
+- Componentes compartidos: **agregado `shared/view-toggle.tsx`** (selector mosaico/lista) + su
+  hook `use-view-mode` (preferencia en localStorage, usado en difusión y notas).
+- Conteo de stubs **14 → 13** (nota y lista de inconsistencia #5); `difusion/post-list.tsx`
+  removido de los ejemplos con aclaración de que ya se implementó.
+
+## `PENDIENTES.md`
+**Quitado / corregido:**
+- Stubs **14 → 13** en Bloque A y Bloque C; `post-list.tsx` marcado como implementado.
+- "Esquema sin migración fuente": aclarado que `campos_extra` **sí** tiene fuente (022).
+
+**Agregado — Bloque A:** ítem de `notificaciones` sin migración; ítem de **lint preexistente**
+(`no-explicit-any` en `consulta-detail.tsx`, alt-text/any en `consulta-template.tsx`).
+
+**Agregado — Bloque B (Seguridad):**
+- **Migración de región de Supabase antes de producción** (EE.UU. → UE; Ley 25.326, transferencia
+  internacional; bloqueante de go-live; requiere plan Pro).
+- **Revocar RLS `pedidos_delete` / `certificados_delete`** (defensa en profundidad; el borrado
+  físico ya se quitó de la app pero las políticas siguen en la base).
+- Minimización de datos en `/verificar`: **ya estaba** documentada en detalle (líneas ~78-90);
+  se dejó una referencia cruzada, no se duplicó.
+
+**Notas de honestidad:**
+- Los ítems "PDF de HC que no descargaba" y "bug de fecha/hora del turnero" **no figuraban** en
+  `PENDIENTES.md` (deben haberse resuelto sin haber quedado listados), así que **no hubo nada que
+  quitar** por ellos. Los cambios sí están reflejados en el "Estado de desarrollo" de `CLAUDE.md`.
+- La tabla `notificaciones` **sí existe** en el código (confirmado): se documentó como ⚠ Verificar
+  sin inventar su estructura, como pedía la consigna.
+
+---
+
 # P5 — Archivar pacientes + solo-anular documentos (IMPLEMENTADO)
 
 > **Estado: completo.** `npx tsc --noEmit` y `npx next build` limpios (exit 0).

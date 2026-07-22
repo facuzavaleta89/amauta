@@ -125,12 +125,15 @@ fuerza texto blanco (`.bg-destructive { color:#fff }`).
 
 **Componentes compartidos de dominio:** `shared/qr-verificacion.tsx` (Server
 Component que genera el QR con `qrcode` y deriva la URL base con `headers()`),
-`shared/page-header`, etc.
+`shared/page-header`, `shared/view-toggle.tsx` (selector **mosaico / lista**, Client
+Component controlado; se combina con el hook `use-view-mode` que persiste la
+preferencia en `localStorage` — usado en difusión y notas), etc.
 
-> ⚠ Hay **14 archivos stub** (`export default function Placeholder(){return null}`)
+> ⚠ Hay **13 archivos stub** (`export default function Placeholder(){return null}`)
 > en `components/` y `lib/pdf/` (p. ej. `turnero/turno-card`, `pacientes/evolucion-charts`,
-> `pacientes/estudios-upload`, `shared/confirm-dialog`, `difusion/post-*`) que **no se
-> usan**. Son código muerto a eliminar (ver `PENDIENTES.md`).
+> `pacientes/estudios-upload`, `shared/confirm-dialog`, `difusion/{post-editor, send-modal}`)
+> que **no se usan**. Son código muerto a eliminar (ver `PENDIENTES.md`).
+> (`difusion/post-list.tsx` ya **no** es stub: se implementó.)
 
 ---
 
@@ -199,5 +202,5 @@ calendario tiñe el highlight según la acción (`.mode-turno` verde / `.mode-bl
    tokens en `/onboarding` y `/verificar`.
 3. **Fuente mono** (`--font-geist-mono`) referenciada pero no cargada.
 4. **`turnos.color` (HEX `#3B82F6`)** en desuso frente a las clases `.categoria-*`.
-5. **14 componentes stub** sin usar (código muerto que ensucia la carpeta de UI).
+5. **13 componentes stub** sin usar (código muerto que ensucia la carpeta de UI).
 6. **Dark mode a medias:** tokens definidos sin toggle en la UI.
