@@ -129,11 +129,23 @@ Component que genera el QR con `qrcode` y deriva la URL base con `headers()`),
 Component controlado; se combina con el hook `use-view-mode` que persiste la
 preferencia en `localStorage` — usado en difusión y notas), etc.
 
-> ⚠ Hay **13 archivos stub** (`export default function Placeholder(){return null}`)
+**Estudios — patrones visuales (tanda de Storage):** el listado de estudios
+(`pacientes/estudios-list.tsx`) usa **íconos por tipo de archivo** de `lucide-react`
+(`ImageIcon` para imágenes, `FileText` para PDF/otros) sobre un chip redondeado
+`bg-primary/10 text-primary`, y dos acciones `ghost`/`icon` por fila (**Ver** con `Eye`,
+**Descargar** con `Download`) más **Eliminar** (`Trash2` destructivo, solo médico). La
+acción **Ver** abre un **modal de previsualización** sobre el `dialog` de shadcn
+(`max-w-3xl`): imágenes con `<img>` (`max-h-[70vh] object-contain`), PDFs embebidos en
+`<iframe>` (`h-[70vh]`) con salidas de respaldo ("Abrir en pestaña nueva" / "Descargar")
+para el caso móvil, donde el `<iframe>` de PDF es poco fiable. Es la primera previsualización
+embebida de archivos del proyecto (el stub `shared/file-preview` sigue sin usarse).
+
+> ⚠ Hay **12 archivos stub** (`export default function Placeholder(){return null}`)
 > en `components/` y `lib/pdf/` (p. ej. `turnero/turno-card`, `pacientes/evolucion-charts`,
-> `pacientes/estudios-upload`, `shared/confirm-dialog`, `difusion/{post-editor, send-modal}`)
+> `shared/{confirm-dialog, file-preview}`, `difusion/{post-editor, send-modal}`)
 > que **no se usan**. Son código muerto a eliminar (ver `PENDIENTES.md`).
-> (`difusion/post-list.tsx` ya **no** es stub: se implementó.)
+> (`difusion/post-list.tsx` y `pacientes/estudios-upload.tsx` ya **no** son stubs: se
+> implementaron; el segundo en la tanda de Storage.)
 
 ---
 
@@ -202,5 +214,5 @@ calendario tiñe el highlight según la acción (`.mode-turno` verde / `.mode-bl
    tokens en `/onboarding` y `/verificar`.
 3. **Fuente mono** (`--font-geist-mono`) referenciada pero no cargada.
 4. **`turnos.color` (HEX `#3B82F6`)** en desuso frente a las clases `.categoria-*`.
-5. **13 componentes stub** sin usar (código muerto que ensucia la carpeta de UI).
+5. **12 componentes stub** sin usar (código muerto que ensucia la carpeta de UI).
 6. **Dark mode a medias:** tokens definidos sin toggle en la UI.

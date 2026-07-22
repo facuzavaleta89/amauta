@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→025).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→026).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -10,7 +10,10 @@
 -- tabla), 024 (pacientes.archivado_at + índice idx_pacientes_activos), 025
 -- (endurecimiento de seguridad: verificar_documento sin datos sensibles + permisos,
 -- drop de RLS huérfanas en consultas, drop de DELETE en pedidos/certificados,
--- search_path en log_turno_cambio).
+-- search_path en log_turno_cambio), 026 (infraestructura de Storage: bucket privado
+-- `estudios` con límite 10 MB y MIME acotado + 4 políticas RLS sobre storage.objects
+-- aisladas por tenant; endurecimiento de las 4 políticas de la tabla `estudios` para
+-- exigir check_permiso 'ver_historia_clinica' — ver sección STORAGE al final).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -827,15 +830,22 @@ CREATE POLICY "consultas_delete" ON public.consultas
   FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico' AND medico_id = auth.uid());
 
 -- ── estudios ────────────────────────────────────────────────────────────────
+-- Endurecidas en la migración 026: select/insert/update exigen ahora
+-- check_permiso 'ver_historia_clinica' (antes cualquier asistente del tenant
+-- accedía — mismo hueco que tenía consultas antes de la 025). El delete queda
+-- exclusivo del médico. El predicado de tenant usa get_medico_id() en las cuatro.
 CREATE POLICY "estudios_select" ON public.estudios
-  FOR SELECT USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
+  FOR SELECT USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "estudios_insert" ON public.estudios
-  FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
+  FOR INSERT WITH CHECK (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "estudios_update" ON public.estudios
-  FOR UPDATE USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
+  FOR UPDATE USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "estudios_delete" ON public.estudios
   FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = auth.uid()));
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 
 -- ── evoluciones ─────────────────────────────────────────────────────────────
 CREATE POLICY "evoluciones_select" ON public.evoluciones
@@ -963,6 +973,58 @@ CREATE POLICY "lecturas_select_own" ON public.mensajes_lecturas
   FOR SELECT USING (user_id = auth.uid());
 CREATE POLICY "lecturas_insert_own" ON public.mensajes_lecturas
   FOR INSERT WITH CHECK (user_id = auth.uid());
+
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │ STORAGE — bucket privado `estudios` (migración 026)                        │
+-- └──────────────────────────────────────────────────────────────────────────┘
+-- Único bucket creado por migración. Los buckets `documentos` y `difusion` NO
+-- existen todavía (ver PENDIENTES.md → Bloque A).
+--
+-- Bucket PRIVADO (public = false): los objetos solo se acceden vía RLS / proxy del
+-- servidor, nunca por URL pública. Límite 10 MB por archivo; MIME acotado a
+-- pdf/jpeg/png/webp (validado también en el bucket, no solo en la app).
+--   Ruta de los objetos: {medico_id}/{paciente_id}/{uuid}.{ext}
+--   El medico_id va PRIMERO a propósito: las políticas aíslan por tenant comparando
+--   la primera carpeta contra get_medico_id(), sin JOIN contra `pacientes`.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('estudios', 'estudios', false, 10485760,
+        ARRAY['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+-- Políticas RLS sobre storage.objects (bucket `estudios`), rol authenticated.
+-- select/insert/update: dentro del tenant + con permiso ver_historia_clinica.
+-- delete: solo el MÉDICO dueño del tenant. NO se usa auth.role()='authenticated' a
+-- secas (eso dejaría a cualquier tenant descargar conociendo el path).
+-- storage.foldername(name)[1] es el medico_id (primer segmento de la ruta).
+CREATE POLICY "estudios_objects_select" ON storage.objects
+  FOR SELECT TO authenticated USING (
+    bucket_id = 'estudios'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND public.check_permiso(auth.uid(), 'ver_historia_clinica'));
+CREATE POLICY "estudios_objects_insert" ON storage.objects
+  FOR INSERT TO authenticated WITH CHECK (
+    bucket_id = 'estudios'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND public.check_permiso(auth.uid(), 'ver_historia_clinica'));
+CREATE POLICY "estudios_objects_update" ON storage.objects
+  FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'estudios'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND public.check_permiso(auth.uid(), 'ver_historia_clinica'))
+  WITH CHECK (
+    bucket_id = 'estudios'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND public.check_permiso(auth.uid(), 'ver_historia_clinica'));
+CREATE POLICY "estudios_objects_delete" ON storage.objects
+  FOR DELETE TO authenticated USING (
+    bucket_id = 'estudios'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND public.get_user_role(auth.uid()) = 'medico');
+
 
 -- ============================================================================
 -- FIN DEL SNAPSHOT

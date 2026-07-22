@@ -87,7 +87,7 @@ del usuario actual.
 | `pacientes` | Pacientes (DNI único). `archivado_at` → archivar en vez de borrar | `creado_por` |
 | `historia_clinica` | HC base 1:1 por paciente, **vacía** al crear (no es una actuación) | vía `pacientes` |
 | `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología). `campos_extra` (JSONB) ad-hoc | `medico_id` |
-| `estudios` | Archivos adjuntos (bucket privado) | vía `pacientes` |
+| `estudios` | Archivos adjuntos por paciente (subir/ver/descargar/borrar **implementado**). Bucket privado `estudios` (migración 026), ruta `{medico_id}/{paciente_id}/{uuid}.{ext}` | vía `pacientes` |
 | `evoluciones` | Series de laboratorio/antropometría (legacy, gráficos) | vía `pacientes` |
 | `turnos` | Agenda. `categoria`, `origen`, `consulta_id` (Bloque 4) | `medico_id` |
 | `bloqueos_agenda` | Bloqueos de horario | `medico_id` |
@@ -173,6 +173,14 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
    turnos, pedidos, certificados, recetas — la HC vacía no cuenta). Archivar / desarchivar /
    eliminar es **exclusivo del médico** (validado en el endpoint, no solo por RLS).
    Criterio exacto: `DELETE /api/pacientes/[id]` (conteo con admin client).
+10. **Estudios (archivos adjuntos):** subir/ver/descargar requieren `ver_historia_clinica`
+    (médico siempre; asistente solo con el permiso). **Borrar es exclusivo del médico**
+    (chequeo de rol en el endpoint + RLS). Bucket privado `estudios` (migración 026); la
+    descarga se sirve por **proxy** del endpoint (`GET /api/estudios/[id]`, `?disposition=
+    inline|attachment`), sin exponer la URL de Storage al navegador. La subida va por **Route
+    Handler + FormData** (no Server Action: tope de ~1 MB). Los estudios **cuentan como
+    actuación** (regla 9: un paciente con estudios no se puede borrar físicamente). En
+    paciente **archivado** se ven y descargan, pero **no** se suben ni borran (regla 9).
 
 ---
 
@@ -195,8 +203,19 @@ Tanda de pulidos posterior (P1–P5):
 5. **Pacientes/documentos:** archivar en vez de borrar (`archivado_at`, migración 024);
    documentos solo se anulan (ver reglas de negocio 5 y 9).
 
+Tanda de **Storage** (migración 026, ver regla de negocio 10):
+- **Estudios complementarios por paciente** — subida (Route Handler + FormData, rollback del
+  objeto si falla el insert), listado, **previsualización** (modal: imágenes con `<img>`, PDFs
+  con `<iframe>`), descarga (proxy del endpoint, patrón blob) y borrado (solo médico).
+- Bucket **privado** `estudios` (10 MB, MIME pdf/jpeg/png/webp) con 4 políticas RLS sobre
+  `storage.objects` aisladas por tenant; endurecidas también las 4 de la tabla `estudios`
+  (ahora exigen `ver_historia_clinica`). Nuevos: `lib/supabase/storage.ts`,
+  `lib/validations/estudio.schema.ts`, `api/estudios/route.ts` + `api/estudios/[id]/route.ts`,
+  `components/pacientes/estudios-{upload,list}.tsx`, `pacientes/[id]/estudios/page.tsx`.
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
-Seguridad, Estético) y la sección "Recetas" (bloqueada por certificación ANMAT).
+Seguridad, Estético), la **persistencia de PDFs** de pedidos/certificados (buckets
+`documentos`/`difusion` aún no creados) y la sección "Recetas" (bloqueada por certificación ANMAT).
 
 ---
 
@@ -234,3 +253,11 @@ Seguridad, Estético) y la sección "Recetas" (bloqueada por certificación ANMA
    puede ejecutarla); se dropearon dos RLS huérfanas en `consultas` que salteaban los
    permisos, el `DELETE` de `pedidos`/`certificados` (solo se anulan) y `log_turno_cambio`
    fija `search_path`.
+9. **Migración 026 (Storage):** crea el bucket privado `estudios` (10 MB, MIME
+   pdf/jpeg/png/webp) y sus 4 políticas RLS sobre `storage.objects`, aisladas por tenant
+   comparando el **primer segmento** del path (`storage.foldername(name)[1]` = `medico_id`)
+   contra `get_medico_id()` y atadas a `ver_historia_clinica` (el `DELETE` además exige rol
+   médico). Endurece las 4 políticas de la tabla `estudios` (antes cualquier asistente del
+   tenant accedía; ahora exigen `check_permiso('ver_historia_clinica')`, mismo hueco que tenía
+   `consultas` antes de la 025). Reconstruida en `schema.sql` → sección STORAGE. **Único bucket
+   creado por migración:** `documentos` y `difusion` aún no existen.

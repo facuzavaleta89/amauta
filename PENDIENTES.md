@@ -22,6 +22,19 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 - **Recetas:** bloqueadas por certificación ANMAT. `src/app/api/recetas/route.ts` es
   stub y `src/lib/pdf/receta-template.tsx` es un placeholder vacío (esperado; dejar
   documentado que está en pausa).
+- **Persistencia de PDFs de pedidos y certificados (fuera de la tanda de Storage):** hoy los
+  PDF **no se guardan** en ningún bucket — se **regeneran al descargar** desde el endpoint del
+  servidor. Efecto secundario importante: usan los **datos ACTUALES del médico** (firma, sello,
+  matrículas, título, logo), no los del **momento de la emisión** — problema de la *"firma
+  viva"*. Si el médico cambia su firma/matrícula, los documentos ya emitidos se reimprimen con
+  la firma nueva, lo que puede no ser deseable legalmente. Pendiente: definir si el PDF debe
+  **congelarse al emitir** (persistirlo en un bucket privado `documentos`) o snapshotear los
+  datos del emisor en la fila. Requiere crear el bucket **`documentos`** (no existe todavía).
+- **Buckets `documentos` y `difusion`:** la tanda de Storage creó **solo** `estudios`
+  (migración 026). `documentos` (para PDFs persistidos de pedidos/certificados) y `difusion`
+  (imágenes de posts — `difusion_posts.imagen_path` es andamiaje muerto por ahora) **no
+  existen ni se usan**. Cuando se creen, versionar el bucket y sus políticas RLS por tenant
+  con el mismo patrón que `estudios` (ver Bloque B → Storage).
 
 ### Esquema sin migración fuente (reproducibilidad)
 Estos objetos existen en Supabase pero **no tienen `CREATE`/`ALTER` en
@@ -58,12 +71,15 @@ levantado solo desde migraciones quedaría incompleto. Crear las migraciones fal
   en vez de las uniones literales (`UserRole`, acciones del audit). Ajustar a literales.
 
 ### Limpieza de código muerto
-- **13 componentes stub** `export default function Placeholder(){return null}`, sin
-  imports en ningún lado: `turnero/turno-card`, `pacientes/{patient-tabs, evolucion-charts,
-  estudios-upload}`, `dashboard/weekly-calendar`, `shared/{role-guard, loading-spinner,
-  file-preview, confirm-dialog, error-boundary}`, `difusion/{post-editor, send-modal}`,
+- **12 componentes stub** `export default function Placeholder(){return null}`, sin
+  imports en ningún lado: `turnero/turno-card`, `pacientes/{patient-tabs, evolucion-charts}`,
+  `dashboard/weekly-calendar`, `shared/{role-guard, loading-spinner, file-preview,
+  confirm-dialog, error-boundary}`, `difusion/{post-editor, send-modal}`,
   `lib/pdf/receta-template`. Eliminarlos o implementarlos.
-  (`difusion/post-list.tsx` **ya se implementó** — era el 14.º stub.)
+  (`difusion/post-list.tsx` y `pacientes/estudios-upload.tsx` **ya se implementaron** — este
+  último en la tanda de Storage; también son reales `estudios-list.tsx` y
+  `pacientes/[id]/estudios/page.tsx`, que ya no son stubs. `shared/file-preview` **sigue**
+  siendo stub: el modal de previsualización de estudios se resolvió inline en `estudios-list`.)
 - **Barrel redundante:** `src/types/supabase.ts` re-exporta un subconjunto de dominios;
   ahora existe `src/types/index.ts` como barrel completo. Consolidar imports hacia
   `@/types` y evaluar deprecar `supabase.ts`.
@@ -104,11 +120,16 @@ Información Pública**). Hallazgos:
   scraping/enumeración de documentos.
 
 ### Aislamiento por tenant a nivel base de datos
-- **Storage (buckets `estudios` / `documentos` / `difusion`):** las políticas de Storage
-  **no están versionadas** en migraciones (la migración 003 las deja como nota manual del
-  dashboard) y la nota sugiere permitir `SELECT` con `auth.role() = 'authenticated'`. Si
-  quedó así, **cualquier usuario autenticado de otro tenant** podría descargar archivos
-  conociendo el `storage_path`. Auditar y restringir las políticas de Storage por tenant.
+- **✅ RESUELTO para `estudios` (migración 026, 2026-07-22) — políticas de Storage por tenant.**
+  El bucket `estudios` se creó **por migración** (privado, 10 MB, MIME pdf/jpeg/png/webp) con
+  4 políticas RLS sobre `storage.objects` que **no** usan `auth.role() = 'authenticated'` a
+  secas: aíslan por tenant comparando el primer segmento del path
+  (`storage.foldername(name)[1]` = `medico_id`) contra `get_medico_id()`, atadas a
+  `ver_historia_clinica` (el `DELETE` además exige rol médico). Además se **endurecieron las 4
+  políticas de la tabla `estudios`** (antes cualquier asistente del tenant accedía; ahora
+  exigen `check_permiso('ver_historia_clinica')`). Reconstruido en `schema.sql` → sección
+  STORAGE. **Pendiente todavía:** los buckets `documentos` y `difusion` **no existen** (no se
+  crearon en esta tanda); cuando se agreguen, versionar sus políticas con el mismo patrón.
 - **RLS de tablas:** el modelo con `get_medico_id()` + `check_permiso()` está bien
   aplicado en las tablas de datos (ver `schema.sql`). Verificar dos huecos:
   - **Difusión** no tiene permiso granular: cualquier asistente vinculado ve/crea posts
@@ -179,7 +200,7 @@ Unificación visual y pulido de interfaz. Detalle y ubicaciones en `DESIGN.md`
   `globals.css` pero **no se carga** en ningún layout. Cargar la fuente o quitar el token.
 - **`turnos.color` (HEX `#3B82F6`)** quedó en desuso frente a las clases `.categoria-*`
   del turnero; limpiar el default o reutilizarlo coherentemente.
-- **Componentes stub sin usar** (los 13 del Bloque A) ensucian `components/ui` y demás
+- **Componentes stub sin usar** (los 12 del Bloque A) ensucian `components/ui` y demás
   carpetas; eliminarlos también mejora la prolijidad visual del árbol de UI.
 - **Dark mode a medias:** hay un set completo de tokens `.dark` en `globals.css` pero la
   app no expone un toggle de tema. Decidir: implementar el toggle o retirar los tokens.
