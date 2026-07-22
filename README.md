@@ -41,11 +41,12 @@ cp .env.example .env.local
 
 # 3. Preparar la base de datos
 #   Aplicá las migraciones de supabase/migrations/ a tu proyecto Supabase
-#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 021).
+#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 026).
 #   Para una vista consolidada del esquema, ver schema.sql (referencia, no reemplaza
 #   las migraciones).
-#   Además, creá los buckets de Storage privados usados por la app: "estudios"
-#   y "documentos" (y "difusion" si se usa imagen en posts).
+#   El bucket de Storage "estudios" (privado) se crea por migración (026), junto con
+#   sus políticas RLS por tenant; no hace falta crearlo a mano. Los buckets
+#   "documentos" y "difusion" TODAVÍA no existen ni se usan (ver PENDIENTES.md).
 
 # 4. Levantar el servidor de desarrollo
 npm run dev

@@ -1,147 +1,85 @@
-# RESPUESTA — Storage (código de la aplicación: estudios)
+# RESPUESTA — Actualización de documentación (tanda de Storage)
 
-> Implementada la subida / listado / visualización / borrado de estudios complementarios
-> por paciente sobre el bucket privado `estudios` (migración 026, ya ejecutada).
-> **`npx tsc --noEmit` y `npx next build` pasan limpios (exit 0).** No ejecuté nada
-> contra Supabase.
+> Solo documentación. **No toqué `src/` ni `supabase/migrations/`** ni ejecuté nada contra
+> Supabase. Todo lo documentado se verificó leyendo la migración 026 y el código real.
 
 ---
 
-## Archivos creados
+## `schema.sql`
 
-- `src/lib/supabase/storage.ts` — helper central de Storage (constantes, path builder,
-  signed URLs).
-- `src/lib/validations/estudio.schema.ts` — Zod de metadatos + validación de archivo
-  reutilizable cliente/servidor.
-- `src/app/api/estudios/[id]/route.ts` — `GET` (signed URL 60s) y `DELETE` (solo médico).
-- `src/components/pacientes/estudios-list.tsx` — listado con ver/descargar y borrar.
+- **Encabezado:** rango de migraciones actualizado a **001→026**; agregado el resumen de la
+  026 (bucket privado `estudios` + 4 políticas sobre `storage.objects` + endurecimiento de las
+  4 políticas de la tabla `estudios`) a la lista de "migraciones recientes reflejadas".
+- **Políticas de la tabla `estudios` (RLS):** reescritas las 4 con sus predicados reales de la
+  026 — `select/insert/update` ahora exigen `check_permiso(auth.uid(), 'ver_historia_clinica')`
+  además del tenant; `delete` queda en `get_user_role() = 'medico'`. **Corrección de fondo:** el
+  snapshot anterior tenía el `delete` con `creado_por = auth.uid()`; la migración 026 usa
+  `get_medico_id()` (consistente con el resto). Ahora coincide con la fuente.
+- **Nueva sección STORAGE** (antes de "FIN DEL SNAPSHOT"): documenta el `INSERT` del bucket
+  `estudios` (privado, `file_size_limit` 10485760, MIME pdf/jpeg/png/webp) y las **4 políticas
+  sobre `storage.objects`** con sus expresiones reales (`storage.foldername(name)[1] =
+  get_medico_id()::text` + permiso; `delete` solo médico). Aclara que `documentos`/`difusion`
+  no existen.
 
-## Archivos modificados
+## `CLAUDE.md`
 
-- `src/app/api/estudios/route.ts` — reemplazado el stub por `GET` (listar) + `POST` (subir).
-- `src/components/pacientes/estudios-upload.tsx` — reemplazado el stub por el formulario real.
-- `src/app/(app)/pacientes/[id]/estudios/page.tsx` — reemplazado el stub por el Server
-  Component (guard de permiso + fetch + render).
-- `src/app/(app)/pacientes/[id]/page.tsx` — nuevo link "Estudios" (ícono `FolderOpen`) junto
-  a "Historia clínica"; import de `FolderOpen`.
-- `src/app/api/pacientes/[id]/route.ts` — corregido el path de limpieza de Storage a
-  `{medico_id}/{paciente_id}/...` y mejorado el logging.
+- **Modelo de datos:** fila de `estudios` actualizada — funcionalidad **implementada**
+  (subir/ver/descargar/borrar), bucket privado `estudios` (026), ruta
+  `{medico_id}/{paciente_id}/{uuid}.{ext}`.
+- **Reglas de negocio:** nueva **regla 10** (estudios): permisos (`ver_historia_clinica` para
+  ver/descargar/subir; borrar solo médico), descarga por **proxy** sin exponer la URL de
+  Storage, subida por Route Handler + FormData, estudios como actuación, comportamiento con
+  paciente archivado.
+- **Estado de desarrollo:** agregado el bloque "Tanda de Storage (026)" con lo implementado y
+  los archivos nuevos; el "Pendiente" ahora nombra la persistencia de PDFs y los buckets
+  `documentos`/`difusion` faltantes.
+- **Notas y deuda técnica:** nueva **nota 9** describiendo la migración 026 (aislamiento por
+  primer segmento del path, endurecimiento de `estudios`, único bucket creado).
 
-## Tipos
+## `PENDIENTES.md`
 
-`Estudio` y `EstudioInsert` ya existían en `src/types/pedido.ts` y alcanzan tal cual. **No
-creé tipos nuevos:** la respuesta de la signed URL (`{ url, file_name, error }`) es una forma
-de respuesta puntual de un endpoint, y el proyecto no tipa las respuestas de API en un archivo
-de dominio (las consume inline). Agregar un tipo global para eso hubiera sido inconsistente
-con el resto. Respeté la organización por dominio (no consolidé nada).
+- **Bloque B → Storage:** marcado **✅ RESUELTO para `estudios` (026)**: políticas versionadas
+  y por tenant (ya no el riesgo de `auth.role()='authenticated'`), + endurecimiento de la tabla.
+  Se deja explícito que `documentos`/`difusion` siguen pendientes.
+- **Bloque A → stubs:** recuento corregido de **13 → 12**; quitado `pacientes/estudios-upload`
+  de la lista y aclarado que `estudios-list.tsx` y `pacientes/[id]/estudios/page.tsx` tampoco
+  son stubs. (También corregido el "los 13" del Bloque C → "los 12".)
+- **Bloque A → nuevos pendientes:** agregada la **persistencia de PDFs** de pedidos/certificados
+  con el problema de la **"firma viva"** (hoy se regeneran al descargar y usan los datos
+  ACTUALES del médico, no los del momento de la emisión), y la ausencia de los buckets
+  `documentos` y `difusion`.
 
----
+## `README.md`
 
-## Decisiones de diseño
+- Rango de migraciones **001 → 021** → **001 → 026**.
+- Paso de Storage: el bucket **`estudios` se crea por migración (026)** con sus políticas; ya
+  **no** hay que crearlo a mano. Aclarado que **`documentos` y `difusion` todavía no existen
+  ni se usan**.
 
-### Cliente de sesión vs admin en cada operación de Storage
-Criterio: **usar el cliente de sesión (`server.ts`) siempre que la RLS pueda hacer de defensa
-real**, y `admin.ts` (bypass RLS) solo donde es imprescindible.
+## `DESIGN.md`
 
-| Operación | Cliente | Por qué |
-|---|---|---|
-| Subir objeto (`upload`) | **sesión** | La política `estudios_objects_insert` valida tenant (`foldername[1] = get_medico_id()`) + `ver_historia_clinica`. RLS es defensa real. |
-| Insertar fila en `estudios` | **sesión** | `estudios_insert` valida permiso + tenant. |
-| Listar estudios (`GET`) | **sesión** | `estudios_select` aísla por tenant + permiso. |
-| Signed URL (`GET [id]`) | **sesión** | `createSignedUrl` pasa por `estudios_objects_select`: solo firma objetos del propio tenant y con permiso. |
-| Borrar fila + objeto (`DELETE`) | **sesión** | `estudios_delete` / `estudios_objects_delete` exigen rol médico + tenant. Además valido rol en código. |
-| Leer `pacientes.archivado_at` y pertenencia al tenant | **admin** | Único uso justificado: quien tiene `ver_historia_clinica` puede **no** tener `ver_pacientes`; un SELECT por RLS sobre `pacientes` daría un **404 falso**. Se acota con `.eq('creado_por', tenantMedicoId)`. Mismo patrón que `POST /api/consultas`. |
-
-### Validación en el servidor (no confiar en el cliente)
-- Permiso `ver_historia_clinica` validado en cada endpoint vía `getTenantContext` (patrón de
-  `api/consultas`), **además** de la RLS.
-- El archivo se valida con su **tamaño y MIME reales** (`file.size` / `file.type` del `File`
-  del FormData), no con lo que declara el cliente. El mismo `validateEstudioFile` corre en el
-  cliente (feedback rápido) y en el servidor (autoridad).
-- Paciente **archivado** → `POST` y `DELETE` devuelven 409 (regla de negocio 9). Lectura y
-  descarga siguen permitidas.
-
-### Subida por Route Handler + FormData
-Como pediste, la subida va por Route Handler con `FormData` (no Server Action, que tiene el
-tope de ~1 MB). Límite real: 10 MB, enforced en tres capas — cliente, servidor y
-`file_size_limit` del bucket.
-
-### Rollback y consistencia
-- **`POST`**: si el archivo se sube pero el `INSERT` en `estudios` falla, se borra el objeto
-  recién subido para no dejar huérfanos (y se loguea si el rollback fallara).
-- **`DELETE`**: se borra **primero la fila** (fuente de verdad de la app) y luego el objeto.
-  Si el borrado del objeto falla, el estudio ya desapareció para el usuario (sistema
-  consistente) y queda un objeto huérfano **registrado en el log** para limpieza posterior.
-  Elegí este orden sobre el inverso porque el fallo alternativo (fila que apunta a un objeto
-  ya borrado) daría un "ver" roto al usuario.
-
-### Ruta de objetos
-`{medico_id}/{paciente_id}/{uuid}.{ext}`. La extensión sale del nombre original (minúsculas,
-`jpeg`→`jpg`) y, si no es reconocible, se deriva del MIME. El `uuid` evita colisiones; el
-nombre original se preserva en la columna `file_name`.
+- Recuento de stubs **13 → 12** (en la nota de componentes y en la lista de inconsistencias);
+  ejemplos de stubs actualizados; aclarado que `estudios-upload.tsx` ya se implementó.
+- Nuevo párrafo **"Estudios — patrones visuales"**: íconos por tipo de archivo
+  (`ImageIcon`/`FileText` sobre chip `bg-primary/10`), acciones Ver/Descargar/Eliminar, y el
+  **modal de previsualización** (`dialog` de shadcn, `<img>` para imágenes / `<iframe>` para
+  PDF con salidas de respaldo en móvil). Se nota que el stub `shared/file-preview` sigue sin uso.
 
 ---
 
-## Hallazgos (verificados, no requirieron arreglo extra)
+## Inconsistencias encontradas entre documentación y código
 
-- **El conteo de actuaciones del borrado de pacientes YA incluía `estudios`**
-  (`src/app/api/pacientes/[id]/route.ts:200-208`, array `tablasHijas`). Un paciente con
-  estudios ya no era borrable; no hubo que corregir el conteo, solo el path de limpieza.
-- **No toqué** turnero, mensajería, difusión ni recetas. **No creé** los buckets `documentos`
-  ni `difusion`. **No** hay persistencia de PDFs (otra tanda). **No** guardé nada como base64.
-- `difusion_posts.imagen_path` sigue siendo andamiaje muerto (fuera de alcance).
-
-Sin hallazgos nuevos graves.
-
----
-
-## Tests manuales en el navegador
-
-### Flujo feliz (como médico)
-1. Entrar a un paciente → botón **"Estudios"** (junto a "Historia clínica") → abre la página.
-2. Subir un **PDF** (< 10 MB): completar nombre/tipo/fecha, subir → toast "Estudio subido",
-   aparece en la lista con ícono de documento, tamaño legible y fecha.
-3. Subir una **imagen** (JPG/PNG/WebP) → aparece con ícono de imagen.
-4. Click en **descargar** (ícono ↓) → abre el archivo en pestaña nueva (signed URL 60s).
-5. Como médico, **borrar** un estudio → confirmación → desaparece de la lista; el archivo deja
-   de ser accesible.
-
-### Validaciones de archivo
-6. Intentar subir un archivo **> 10 MB** → error en el cliente ("supera el límite de 10 MB");
-   no se envía.
-7. Intentar subir un tipo **no permitido** (ej. `.docx`, `.zip`) → el `accept` lo filtra y, si
-   se fuerza, el cliente y el servidor lo rechazan ("Solo PDF, JPG, PNG o WebP").
-8. Subir sin nombre → error "El nombre del estudio es requerido".
-
-### Permisos (clave)
-9. **Asistente CON `ver_historia_clinica`**: puede entrar a Estudios, ver, descargar y subir.
-   **No** ve el botón de borrar (es exclusivo del médico); si llamara al `DELETE` igual, el
-   servidor responde 403.
-10. **Asistente SIN `ver_historia_clinica`**: al entrar a `/pacientes/[id]/estudios` debe ser
-    redirigido a **`/sin-acceso`**. Los endpoints `GET`/`POST`/`DELETE` responden 403.
-11. **Aislamiento entre tenants**: con el usuario del médico A, un `GET /api/estudios/[id]` de
-    un estudio del médico B debe dar 404 (RLS), y su signed URL no debe poder generarse.
-
-### Paciente archivado (regla de negocio 9)
-12. En un paciente **archivado**: la página de Estudios muestra el aviso "no se pueden subir"
-    y el formulario deshabilitado; **la lista se ve y se puede descargar**.
-13. Forzar `POST /api/estudios` con paciente archivado → 409. Forzar `DELETE` → 409.
-14. El link "Estudios" en la ficha **sigue funcionando** aunque el paciente esté archivado.
-
-### Borrado de paciente + limpieza de Storage
-15. Un paciente **con estudios NO se puede borrar** definitivamente (409 "tiene actuaciones";
-    archivalo). *(Para probar el borrado con limpieza haría falta un paciente sin ninguna otra
-    actuación pero con un objeto suelto en Storage; en uso normal no ocurre porque el estudio
-    crea fila. La limpieza por prefijo `{medico_id}/{paciente_id}` quedó corregida por si
-    hubiera huérfanos.)*
-
-### Regresión
-16. Descargar PDFs de pedidos/certificados/consulta/HC sigue funcionando (no toqué esos flujos).
-
----
-
-## Estado
-
-- Código de estudios **implementado y compilando** (`tsc` y `build` limpios).
-- Pendiente: tu ronda de **tests manuales** en el navegador (sobre todo permisos y archivado),
-  que no puedo ejecutar yo. Avisame si querés que ajuste algo tras probarlo.
+1. **`schema.sql` tenía la política `estudios_delete` con `creado_por = auth.uid()`**, pero la
+   migración 026 (fuente) usa `get_medico_id()`. Corregido en el snapshot. (Para el médico
+   ambos coinciden — su `id` es el tenant — así que no había bug funcional, pero el snapshot no
+   reflejaba la fuente.)
+2. **La nota de stubs decía "13" y seguía listando `pacientes/estudios-upload`**, que ya está
+   implementado. El conteo real hoy es **12** (verificado con `grep -rl "function Placeholder"
+   src/` → 12 archivos). Ojo: `shared/file-preview` **sigue** siendo stub — la previsualización
+   de estudios se resolvió inline en `estudios-list.tsx`, no reutilizando ese componente.
+3. **README y PENDIENTES asumían que los buckets se crean a mano** y trataban
+   `estudios`/`documentos`/`difusion` como un bloque homogéneo. Tras la 026 hay una asimetría
+   real: `estudios` existe (por migración), los otros dos **no**. Documentado explícitamente en
+   los cinco archivos para que no se vuelva a asumir que `documentos`/`difusion` existen.
+4. **`schema.sql` no tenía ninguna sección de Storage** pese a que la tabla `estudios` ya
+   mencionaba el "bucket privado". Ahora el bucket y sus políticas figuran en el snapshot.
