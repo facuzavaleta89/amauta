@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { HCCompletaPDF } from '@/lib/pdf/consulta-template'
+import { cargarMedicoFirmante } from '@/lib/pdf/documentos'
 import React from 'react'
 import type { DocumentProps } from '@react-pdf/renderer'
-import type { Matricula } from '@/types/roles'
 import { sanitizePdfFilename } from '@/lib/utils'
 
 interface RouteParams {
@@ -71,14 +70,6 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       return new NextResponse('No hay consultas finalizadas para exportar', { status: 404 })
     }
 
-    // Médico firmante: admin client (ya autorizamos el acceso arriba)
-    const admin = createAdminClient()
-    const { data: medico } = await admin
-      .from('profiles')
-      .select('full_name, titulo, matriculas, firma_url, logo_url')
-      .eq('id', ctx.tenantMedicoId)
-      .single()
-
     const obra = paciente.obras_sociales as unknown as { nombre: string } | null
     const pacienteData = {
       nombre_completo: paciente.nombre_completo,
@@ -87,13 +78,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       obra_social_nombre: obra?.nombre ?? paciente.obra_social_otro ?? null,
       numero_afiliado: paciente.numero_afiliado ?? null,
     }
-    const medicoData = {
-      full_name: medico?.full_name ?? 'Médico',
-      titulo: medico?.titulo ?? null,
-      matriculas: Array.isArray(medico?.matriculas) ? (medico.matriculas as Matricula[]) : [],
-      firma_url: medico?.firma_url ?? null,
-      logo_url: medico?.logo_url ?? null,
-    }
+    // Médico firmante: helper compartido (admin client; ya autorizamos el acceso arriba)
+    const medicoData = await cargarMedicoFirmante(ctx.tenantMedicoId)
 
     const buffer = await renderToBuffer(
       React.createElement(HCCompletaPDF, {

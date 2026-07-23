@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→026).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→028).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -13,7 +13,12 @@
 -- search_path en log_turno_cambio), 026 (infraestructura de Storage: bucket privado
 -- `estudios` con límite 10 MB y MIME acotado + 4 políticas RLS sobre storage.objects
 -- aisladas por tenant; endurecimiento de las 4 políticas de la tabla `estudios` para
--- exigir check_permiso 'ver_historia_clinica' — ver sección STORAGE al final).
+-- exigir check_permiso 'ver_historia_clinica' — ver sección STORAGE al final),
+-- 027 (persistencia de PDFs: bucket privado `documentos` con límite 5 MB y MIME
+-- solo application/pdf + 3 políticas RLS sobre storage.objects aisladas por tenant —
+-- select/insert/update, SIN delete a propósito; ver sección STORAGE), 028 (columna
+-- `emisor_snapshot JSONB` en pedidos y certificados: foto de los datos del médico
+-- firmante al emitir, para que el documento sea fiel e inmutable).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -349,8 +354,12 @@ CREATE TABLE public.pedidos (
   estudios_pedidos   TEXT NOT NULL,
   fecha_pedido       DATE NOT NULL DEFAULT CURRENT_DATE,
   indicaciones       TEXT,
-  pdf_path           TEXT,
+  pdf_path           TEXT,            -- ruta del PDF congelado en el bucket `documentos` (migración 027)
   pdf_generado_at    TIMESTAMPTZ,
+  -- migración 028: foto del médico firmante al emitir. Shape (= prop `medico` de la
+  -- plantilla PDF): { full_name, titulo, matriculas:[{tipo,numero}], firma_url, logo_url }.
+  -- El preview HTML y la regeneración del PDF leen de acá, no de `profiles` en vivo.
+  emisor_snapshot    JSONB,
   firmado_por        UUID NOT NULL REFERENCES public.profiles(id),
   codigo_verificacion TEXT UNIQUE NOT NULL DEFAULT upper(substring(md5(random()::text) from 1 for 12)),
   estado             TEXT NOT NULL DEFAULT 'emitido' CHECK (estado IN ('emitido', 'revocado')),
@@ -377,8 +386,12 @@ CREATE TABLE public.certificados (
   fecha_inicio_reposo DATE,
   fecha_certificado  DATE NOT NULL DEFAULT CURRENT_DATE,
   valido_hasta       DATE,                    -- si < hoy → "expirado" (lógica de display)
-  pdf_path           TEXT,
+  pdf_path           TEXT,            -- ruta del PDF congelado en el bucket `documentos` (migración 027)
   pdf_generado_at    TIMESTAMPTZ,
+  -- migración 028: foto del médico firmante al emitir. Shape (= prop `medico` de la
+  -- plantilla PDF): { full_name, titulo, matriculas:[{tipo,numero}], firma_url, logo_url }.
+  -- El preview HTML y la regeneración del PDF leen de acá, no de `profiles` en vivo.
+  emisor_snapshot    JSONB,
   firmado_por        UUID NOT NULL REFERENCES public.profiles(id),
   codigo_verificacion TEXT UNIQUE NOT NULL DEFAULT upper(substring(md5(random()::text) from 1 for 12)),
   estado             TEXT NOT NULL DEFAULT 'emitido' CHECK (estado IN ('emitido', 'revocado')),
@@ -975,11 +988,12 @@ CREATE POLICY "lecturas_insert_own" ON public.mensajes_lecturas
   FOR INSERT WITH CHECK (user_id = auth.uid());
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ STORAGE — bucket privado `estudios` (migración 026)                        │
+-- │ STORAGE — buckets privados `estudios` (mig. 026) y `documentos` (mig. 027) │
 -- └──────────────────────────────────────────────────────────────────────────┘
--- Único bucket creado por migración. Los buckets `documentos` y `difusion` NO
--- existen todavía (ver PENDIENTES.md → Bloque A).
+-- Dos buckets creados por migración. El bucket `difusion` (imágenes de posts) NO
+-- existe todavía (ver PENDIENTES.md → Bloque A).
 --
+-- ── Bucket `estudios` (migración 026) ───────────────────────────────────────
 -- Bucket PRIVADO (public = false): los objetos solo se acceden vía RLS / proxy del
 -- servidor, nunca por URL pública. Límite 10 MB por archivo; MIME acotado a
 -- pdf/jpeg/png/webp (validado también en el bucket, no solo en la app).
@@ -1024,6 +1038,61 @@ CREATE POLICY "estudios_objects_delete" ON storage.objects
     bucket_id = 'estudios'
     AND (storage.foldername(name))[1] = public.get_medico_id()::text
     AND public.get_user_role(auth.uid()) = 'medico');
+
+
+-- ── Bucket `documentos` (migración 027) ─────────────────────────────────────
+-- PDFs CONGELADOS de pedidos y certificados. El PDF se genera una sola vez al
+-- emitir y se sube acá; las descargas sirven ese objeto tal cual (documento fiel e
+-- inmutable). Bucket PRIVADO, límite 5 MB, MIME solo application/pdf.
+--   Ruta de los objetos: {medico_id}/{tipo}/{documento_id}.pdf, con tipo ∈ {pedido,
+--   certificado}. Path DETERMINÍSTICO (sin UUID aleatorio): regenerar pisa el mismo
+--   objeto vía upsert. El medico_id va PRIMERO: las políticas aíslan por tenant
+--   comparando la primera carpeta contra get_medico_id().
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('documentos', 'documentos', false, 5242880, ARRAY['application/pdf'])
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+-- Políticas RLS sobre storage.objects (bucket `documentos`), rol authenticated.
+-- select: tenant + (ver_pedidos OR ver_certificados). La autorización fina la hace
+-- el endpoint: consulta la fila con el cliente de sesión (RLS de la tabla exige el
+-- permiso específico) antes de bajar el objeto, así que conocer el path ya implica
+-- tener el permiso correcto. insert/update: tenant + (crear_pedidos OR crear_certificados).
+-- UPDATE hace falta porque la subida usa upsert:true sobre el path determinístico.
+CREATE POLICY "documentos_objects_select" ON storage.objects
+  FOR SELECT TO authenticated USING (
+    bucket_id = 'documentos'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND (public.check_permiso(auth.uid(), 'ver_pedidos')
+      OR public.check_permiso(auth.uid(), 'ver_certificados')));
+CREATE POLICY "documentos_objects_insert" ON storage.objects
+  FOR INSERT TO authenticated WITH CHECK (
+    bucket_id = 'documentos'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND (public.check_permiso(auth.uid(), 'crear_pedidos')
+      OR public.check_permiso(auth.uid(), 'crear_certificados')));
+CREATE POLICY "documentos_objects_update" ON storage.objects
+  FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'documentos'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND (public.check_permiso(auth.uid(), 'crear_pedidos')
+      OR public.check_permiso(auth.uid(), 'crear_certificados')))
+  WITH CHECK (
+    bucket_id = 'documentos'
+    AND (storage.foldername(name))[1] = public.get_medico_id()::text
+    AND (public.check_permiso(auth.uid(), 'crear_pedidos')
+      OR public.check_permiso(auth.uid(), 'crear_certificados')));
+-- ⚠ NO hay política de DELETE para `documentos`, Y ES DELIBERADO (regla de negocio 5):
+--   los documentos emitidos no se borran nunca, solo se anulan (estado='revocado').
+--   Sin política, RLS niega el DELETE por defecto para `authenticated`. Difiere de
+--   `estudios`, que sí permite DELETE al médico (un adjunto se pudo subir por error;
+--   un instrumento firmado ya circuló).
+--   Nota operativa: los objetos de Storage NO se borran por SQL directo — un trigger
+--   de protección (storage.protect_delete) bloquea DELETE FROM storage.objects. Se
+--   borran por la API de Storage o el Dashboard.
 
 
 -- ============================================================================

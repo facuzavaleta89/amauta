@@ -92,8 +92,8 @@ del usuario actual.
 | `turnos` | Agenda. `categoria`, `origen`, `consulta_id` (Bloque 4) | `medico_id` |
 | `bloqueos_agenda` | Bloqueos de horario | `medico_id` |
 | `turnos_audit_log` | Log de cambios de turnos (trigger) | vía `turnos` |
-| `pedidos` | Pedidos de estudios + PDF + QR (`codigo_verificacion`, `estado`) | vía `pacientes` |
-| `certificados` | Certificados + PDF + QR + `valido_hasta` | vía `pacientes` |
+| `pedidos` | Pedidos de estudios + PDF + QR (`codigo_verificacion`, `estado`). PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
+| `certificados` | Certificados + PDF + QR + `valido_hasta`. PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
 | `recetas` | Estructura lista; emisión **bloqueada** (ANMAT pendiente) | vía `pacientes` |
 | `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos | `medico_id` |
 | `solicitudes_asistente` | Workflow de vinculación (onboarding) | — |
@@ -163,6 +163,13 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
    **No se borran nunca — solo se anulan** (el borrado físico se quitó de app: endpoints
    y UI). Certificados: si `valido_hasta < hoy` → "expirado" (solo display, no cambia
    `estado`). Cada uno tiene `codigo_verificacion` para la página pública `/verificar/[codigo]`.
+   **El PDF se congela al emitir:** se genera **una vez** y se persiste en el bucket privado
+   `documentos` (`pdf_path`); las descargas sirven ese objeto **inmutable** (no se regenera
+   con los datos actuales del médico). El **estado vive en la base**, no en el PDF: anular
+   solo cambia `estado='revocado'` (nunca toca el PDF congelado), y quien escanea el QR ve el
+   estado actual en `/verificar/[codigo]`. Al descargar un documento revocado, la UI **avisa**
+   con un diálogo (el PDF servido es el original, sin marca de anulación). Los datos del médico
+   del documento salen del **`emisor_snapshot`** (ver regla 11), no de `profiles` en vivo.
 6. **Firma:** solo el médico tiene `firma_url`; los asistentes no pueden firmar.
 7. **Recetas:** solo el médico las ve; la creación está bloqueada (ANMAT pendiente).
 8. **Asistente sin vínculo** → redirigido a onboarding, no puede usar la app.
@@ -181,6 +188,20 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
     Handler + FormData** (no Server Action: tope de ~1 MB). Los estudios **cuentan como
     actuación** (regla 9: un paciente con estudios no se puede borrar físicamente). En
     paciente **archivado** se ven y descargan, pero **no** se suben ni borran (regla 9).
+11. **`emisor_snapshot` (foto del emisor):** al emitir un pedido o certificado se guarda en
+    `emisor_snapshot` (JSONB) una **foto de los datos del médico firmante** en ese momento —
+    `{ full_name, titulo, matriculas, firma_url, logo_url }`, el mismo shape que consume la
+    prop `medico` de las plantillas PDF. El **preview HTML** de `/pedidos/[id]` y
+    `/certificados/[id]` y la **regeneración del PDF** leen de ahí, **no** de `profiles` en
+    vivo, para que preview y PDF **coincidan siempre** y el documento sea reconstruible fiel
+    aunque se pierda el objeto de Storage (resuelve el problema de la *"firma viva"*). El
+    snapshot es **obligatorio al emitir**: si no se puede cargar el médico, el documento **no
+    se emite** (500) — a diferencia del congelado del PDF, que es best-effort (un Storage caído
+    no impide emitir; el documento queda con `pdf_path` NULL y se regenera al vuelo desde el
+    snapshot). Un documento **sin snapshot es un bug**: el preview muestra un aviso ámbar (no
+    cae a `profiles`) y la regeneración del PDF **falla explícita**. **No hay backfill:** el GET
+    nunca escribe `pdf_path` ni `emisor_snapshot`. `recetas` **no** tiene la columna (emisión
+    bloqueada por ANMAT); habrá que sumarla cuando se habilite.
 
 ---
 
@@ -213,9 +234,27 @@ Tanda de **Storage** (migración 026, ver regla de negocio 10):
   `lib/validations/estudio.schema.ts`, `api/estudios/route.ts` + `api/estudios/[id]/route.ts`,
   `components/pacientes/estudios-{upload,list}.tsx`, `pacientes/[id]/estudios/page.tsx`.
 
+Tanda de **Persistencia de PDFs** (migraciones 027–028, ver reglas de negocio 5 y 11):
+- **PDF congelado al emitir** en el bucket privado `documentos` (5 MB, solo `application/pdf`,
+  migración 027), ruta `{medico_id}/{tipo}/{documento_id}.pdf` (determinística → upsert). 3
+  políticas RLS sobre `storage.objects` por tenant (select/insert/update); **sin DELETE** a
+  propósito (los documentos no se borran, regla 5). Descarga: si `pdf_path` existe se sirve el
+  objeto por proxy; si no, se regenera al vuelo (best-effort al emitir, con timeout de 8 s).
+- **`emisor_snapshot`** (JSONB, migración 028) en `pedidos`/`certificados`: foto del médico al
+  emitir; preview y PDF leen de ahí (regla 11). Los 19 documentos de prueba previos se borraron
+  (script suelto `LIMPIEZA-documentos-prueba.sql`, fuera de `supabase/migrations/`), así que hoy
+  todos los documentos tienen snapshot.
+- Se **cerró el hueco de la regla 9** en los POST de pedidos/certificados: ahora rechazan (409)
+  emitir a un paciente archivado (antes solo lo bloqueaba la UI).
+- Nuevos/cambios: `lib/pdf/documentos.ts` (generación + persistencia reutilizable), extensión de
+  `lib/supabase/storage.ts` (`DOCUMENTOS_BUCKET`, `buildDocumentoPath`, `DocumentoTipo`),
+  `emisor_snapshot`/`EmisorSnapshot` en `types/pedido.ts`, POST/GET de pedidos y certificados,
+  páginas de detalle (leen snapshot), `pedido-pdf`/`certificado-pdf` (diálogo de descarga de
+  revocados + banner de "sin emisor"), y `.env.example` (`NEXT_PUBLIC_SITE_URL`).
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
-Seguridad, Estético), la **persistencia de PDFs** de pedidos/certificados (buckets
-`documentos`/`difusion` aún no creados) y la sección "Recetas" (bloqueada por certificación ANMAT).
+Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
+ya existen por migración) y la sección "Recetas" (bloqueada por certificación ANMAT).
 
 ---
 
@@ -259,5 +298,20 @@ Seguridad, Estético), la **persistencia de PDFs** de pedidos/certificados (buck
    contra `get_medico_id()` y atadas a `ver_historia_clinica` (el `DELETE` además exige rol
    médico). Endurece las 4 políticas de la tabla `estudios` (antes cualquier asistente del
    tenant accedía; ahora exigen `check_permiso('ver_historia_clinica')`, mismo hueco que tenía
-   `consultas` antes de la 025). Reconstruida en `schema.sql` → sección STORAGE. **Único bucket
-   creado por migración:** `documentos` y `difusion` aún no existen.
+   `consultas` antes de la 025). Reconstruida en `schema.sql` → sección STORAGE.
+10. **Migraciones 027–028 (Persistencia de PDFs):** la **027** crea el bucket privado
+    `documentos` (5 MB, solo `application/pdf`) con 3 políticas por tenant sobre
+    `storage.objects` — select (`ver_pedidos` OR `ver_certificados`), insert/update
+    (`crear_pedidos` OR `crear_certificados`) — y **sin DELETE a propósito** (los documentos
+    no se borran, regla 5). La **028** agrega `emisor_snapshot JSONB` (nullable) a `pedidos` y
+    `certificados` (no a `recetas`). Ambas reconstruidas en `schema.sql`. La limpieza de datos
+    de prueba vive en `LIMPIEZA-documentos-prueba.sql` (raíz, **fuera** de
+    `supabase/migrations/`, un solo uso). **Aprendizaje operativo:** los objetos de Storage
+    **no** se borran por SQL directo (el trigger `storage.protect_delete` bloquea
+    `DELETE FROM storage.objects`); se borran por la API de Storage o el Dashboard.
+11. **`NEXT_PUBLIC_SITE_URL` (requerida en producción):** URL base de los QR de verificación
+    de documentos. Antes se derivaba del header `Host` (que el cliente controla); con PDFs
+    congelados un `Host` falsificado grabaría un QR **envenenado permanente**, así que la env
+    var tiene **prioridad** y el header quedó solo como fallback (ver `getBaseUrl` en
+    `src/lib/pdf/documentos.ts`). Configurada en Vercel (production/preview/development) y en
+    `.env.example` / `.env.local`. Prod: `https://amauta-salud.vercel.app`.

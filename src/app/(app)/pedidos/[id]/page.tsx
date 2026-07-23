@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { PedidoDocView } from '@/components/pedidos/pedido-pdf'
 import { QRVerificacion } from '@/components/shared/qr-verificacion'
 import type { Metadata } from 'next'
 import type { UserRole, Matricula } from '@/types/roles'
+import type { EmisorSnapshot } from '@/types/pedido'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -38,13 +38,11 @@ export default async function PedidoDetailPage({ params }: Props) {
 
   if (error || !pedido) notFound()
 
-  // Cargar datos del médico firmante con admin client para evitar RLS restrictivo sobre perfiles
-  const admin = createAdminClient()
-  const { data: medico } = await admin
-    .from('profiles')
-    .select('full_name, titulo, matriculas, firma_url, logo_url')
-    .eq('id', pedido.firmado_por)
-    .single()
+  // Datos del médico: del SNAPSHOT congelado al emitir, NO de profiles en vivo.
+  // Así el preview coincide siempre con el PDF descargado. Un documento sin snapshot
+  // es un bug (tras la migración 028 todos lo tienen): se avisa, no se cae a profiles.
+  const emisor = pedido.emisor_snapshot as EmisorSnapshot | null
+  const sinEmisor = !emisor
 
   // Rol del usuario actual
   const { data: { user } } = await supabase.auth.getUser()
@@ -56,13 +54,13 @@ export default async function PedidoDetailPage({ params }: Props) {
 
   const userRole = (profile?.role ?? 'asistente') as UserRole
 
-  const matriculas: Matricula[] = Array.isArray(medico?.matriculas) ? medico.matriculas : []
+  const matriculas: Matricula[] = Array.isArray(emisor?.matriculas) ? emisor!.matriculas : []
   const matriculaFormatted = matriculas.length > 0
     ? matriculas.map((m) => `${m.tipo} ${m.numero}`).join('  |  ')
     : null
-  const displayName = medico
-    ? (medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name)
-    : 'Médico'
+  const displayName = emisor
+    ? (emisor.titulo ? `${emisor.titulo} ${emisor.full_name}` : emisor.full_name)
+    : '—'
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
@@ -74,8 +72,9 @@ export default async function PedidoDetailPage({ params }: Props) {
         pedido={pedido}
         medicoNombre={displayName}
         medicoMatricula={matriculaFormatted}
-        medicoFirma={medico?.firma_url ?? null}
-        medicoLogo={medico?.logo_url ?? null}
+        medicoFirma={emisor?.firma_url ?? null}
+        medicoLogo={emisor?.logo_url ?? null}
+        sinEmisor={sinEmisor}
         userRole={userRole}
       />
     </div>

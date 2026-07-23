@@ -74,3 +74,46 @@ export function buildEstudioPath(
   const ext = resolveExtension(originalName, mimeType)
   return `${medicoId}/${pacienteId}/${crypto.randomUUID()}.${ext}`
 }
+
+// ============================================================================
+// Bucket privado `documentos` — PDFs congelados de pedidos y certificados.
+// ----------------------------------------------------------------------------
+// Convenciones fijadas por la migración 027:
+//   · Bucket privado `documentos`, límite 5 MB, MIME: solo application/pdf.
+//   · Ruta de los objetos: {medico_id}/{tipo}/{documento_id}.pdf
+//     El medico_id es el PRIMER segmento porque las políticas RLS de storage.objects
+//     lo comparan contra get_medico_id() para aislar por tenant (igual que `estudios`).
+//
+// El PDF se congela UNA sola vez, al emitir el documento (POST). En la descarga,
+// si `pdf_path` existe se sirve ese objeto; si es NULL se regenera al vuelo SIN
+// persistir (no hay backfill: los documentos viejos siguen mutando a propósito).
+// ============================================================================
+
+/** Nombre del bucket privado de documentos (debe coincidir con la migración 027). */
+export const DOCUMENTOS_BUCKET = 'documentos'
+
+/** Límite de tamaño por archivo: 5 MB (igual que file_size_limit del bucket). */
+export const DOCUMENTOS_MAX_FILE_SIZE = 5 * 1024 * 1024 // 5242880 bytes
+
+/**
+ * Tipos de documento que pueden congelarse en el bucket `documentos`.
+ * `receta` queda previsto para no reescribir esto el día que se habilite (ANMAT),
+ * pero HOY está fuera de alcance: no hay plantilla ni emisión de recetas.
+ */
+export type DocumentoTipo = 'pedido' | 'certificado' | 'receta'
+
+/**
+ * Construye la ruta del objeto: {medico_id}/{tipo}/{documento_id}.pdf.
+ *
+ * A diferencia de `buildEstudioPath`, el path es DETERMINÍSTICO (sin UUID aleatorio):
+ * el `documento_id` ya es único, y usarlo como nombre hace que regenerar el PDF del
+ * mismo documento pise el MISMO objeto vía `upsert: true` en vez de dejar huérfanos.
+ * Esto es lo que vuelve idempotente un reintento de emisión.
+ */
+export function buildDocumentoPath(
+  medicoId: string,
+  tipo: DocumentoTipo,
+  documentoId: string,
+): string {
+  return `${medicoId}/${tipo}/${documentoId}.pdf`
+}

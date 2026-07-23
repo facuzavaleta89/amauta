@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { renderToBuffer } from '@react-pdf/renderer'
-import { PedidoPDFTemplate } from '@/lib/pdf/pedido-template'
-import React from 'react'
-import type { DocumentProps } from '@react-pdf/renderer'
+import { DOCUMENTOS_BUCKET } from '@/lib/supabase/storage'
+import { generarPdfDocumento, getBaseUrl } from '@/lib/pdf/documentos'
 import { sanitizePdfFilename } from '@/lib/utils'
+import type { Pedido } from '@/types/pedido'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -19,7 +17,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return new NextResponse('No autorizado', { status: 401 })
 
-    // Cargar el pedido
+    // Cargar el pedido (RLS aísla por tenant y exige ver_pedidos)
     const { data: pedido, error: pedidoError } = await supabase
       .from('pedidos')
       .select('*')
@@ -30,53 +28,30 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       return new NextResponse('Pedido no encontrado', { status: 404 })
     }
 
-    // Cargar datos del médico firmante con admin client para evitar RLS
-    const admin = createAdminClient()
-    const { data: medico } = await admin
-      .from('profiles')
-      .select('full_name, titulo, matriculas, firma_url, logo_url')
-      .eq('id', pedido.firmado_por)
-      .single()
-
-    // Generar la URL de verificación
-    const host = _req.headers.get('host') || 'localhost:3000'
-    const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
-    const verificationUrl = `${protocol}://${host}/verificar/${pedido.codigo_verificacion}`
-
-    // Generar el código QR
-    let qrCodeUrl: string | null = null
-    try {
-      const QRCode = require('qrcode')
-      qrCodeUrl = await QRCode.toDataURL(verificationUrl, { margin: 1, width: 120 })
-    } catch (qrErr) {
-      console.error('Error generating QR code:', qrErr)
+    const nombreArchivo = sanitizePdfFilename(`pedido_${pedido.paciente_nombre}_${pedido.fecha_pedido}.pdf`)
+    const headers = {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${nombreArchivo}"`,
+      'Cache-Control': 'no-store',
     }
 
-    const buffer = await renderToBuffer(
-      React.createElement(PedidoPDFTemplate, {
-        pedido,
-        medico: {
-          full_name: medico?.full_name ?? 'Médico',
-          titulo: medico?.titulo ?? null,
-          matriculas: Array.isArray(medico?.matriculas) ? medico.matriculas : [],
-          firma_url: medico?.firma_url ?? null,
-          logo_url: medico?.logo_url ?? null,
-        },
-        qrCodeUrl,
-      }) as React.ReactElement<DocumentProps>
-    )
+    // ── 1) PDF congelado: servir el objeto del bucket (proxy, sin exponer la URL) ──
+    if (pedido.pdf_path) {
+      const { data: blob, error: dlErr } = await supabase.storage
+        .from(DOCUMENTOS_BUCKET)
+        .download(pedido.pdf_path)
 
-    const rawNombre = `pedido_${pedido.paciente_nombre}_${pedido.fecha_pedido}.pdf`
-    const nombreArchivo = sanitizePdfFilename(rawNombre)
+      if (!dlErr && blob) {
+        const arrayBuffer = await blob.arrayBuffer()
+        return new NextResponse(new Uint8Array(arrayBuffer), { status: 200, headers })
+      }
+      // No romper la descarga: log y caer al fallback de regeneración.
+      console.error('[GET /api/pedidos/[id]/pdf] pdf_path presente pero la descarga falló; regenerando:', pedido.pdf_path, dlErr)
+    }
 
-    return new NextResponse(buffer as any, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${nombreArchivo}"`,
-        'Cache-Control': 'no-store',
-      },
-    })
+    // ── 2) Fallback: regenerar al vuelo. NO se escribe pdf_path (sin backfill). ──
+    const buffer = await generarPdfDocumento('pedido', pedido as Pedido, getBaseUrl(_req))
+    return new NextResponse(new Uint8Array(buffer), { status: 200, headers })
   } catch (err) {
     console.error('[GET /api/pedidos/[id]/pdf]', err)
     return new NextResponse('Error al generar PDF', { status: 500 })
