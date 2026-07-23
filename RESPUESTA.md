@@ -1,85 +1,94 @@
-# RESPUESTA — Actualización de documentación (tanda de Storage)
+# RESPUESTA — Documentación de la tanda de persistencia de PDFs
 
-> Solo documentación. **No toqué `src/` ni `supabase/migrations/`** ni ejecuté nada contra
-> Supabase. Todo lo documentado se verificó leyendo la migración 026 y el código real.
+> Solo documentación. **No toqué `src/` ni `supabase/migrations/`.** No ejecuté nada
+> contra Supabase. Verifiqué cada afirmación contra el código/migraciones reales.
+> Fecha: 2026-07-23 · Rama: `main`.
 
 ---
 
-## `schema.sql`
+## Qué actualicé en cada documento
 
-- **Encabezado:** rango de migraciones actualizado a **001→026**; agregado el resumen de la
-  026 (bucket privado `estudios` + 4 políticas sobre `storage.objects` + endurecimiento de las
-  4 políticas de la tabla `estudios`) a la lista de "migraciones recientes reflejadas".
-- **Políticas de la tabla `estudios` (RLS):** reescritas las 4 con sus predicados reales de la
-  026 — `select/insert/update` ahora exigen `check_permiso(auth.uid(), 'ver_historia_clinica')`
-  además del tenant; `delete` queda en `get_user_role() = 'medico'`. **Corrección de fondo:** el
-  snapshot anterior tenía el `delete` con `creado_por = auth.uid()`; la migración 026 usa
-  `get_medico_id()` (consistente con el resto). Ahora coincide con la fuente.
-- **Nueva sección STORAGE** (antes de "FIN DEL SNAPSHOT"): documenta el `INSERT` del bucket
-  `estudios` (privado, `file_size_limit` 10485760, MIME pdf/jpeg/png/webp) y las **4 políticas
-  sobre `storage.objects`** con sus expresiones reales (`storage.foldername(name)[1] =
-  get_medico_id()::text` + permiso; `delete` solo médico). Aclara que `documentos`/`difusion`
-  no existen.
+### `schema.sql`
+- **Encabezado:** rango de migraciones `001→026` → **`001→028`**; agregué el resumen de la
+  **027** (bucket `documentos`, 3 políticas, sin DELETE) y la **028** (`emisor_snapshot`).
+- **Tabla `pedidos` y `certificados`:** agregué la columna **`emisor_snapshot JSONB`** con el
+  shape documentado inline, y aclaré que `pdf_path` apunta al bucket `documentos` (mig. 027).
+- **Sección STORAGE:** renombré el bloque a "buckets `estudios` (026) y `documentos` (027)",
+  y **agregué el sub-bloque `documentos`**: el `INSERT` del bucket (5 MB, solo `application/pdf`)
+  y sus **3 políticas** (`documentos_objects_{select,insert,update}`) con el aislamiento por
+  tenant, más el comentario explícito de que **la ausencia de DELETE es deliberada** (regla 5)
+  y la nota operativa del trigger `storage.protect_delete`.
 
-## `CLAUDE.md`
+### `CLAUDE.md`
+- **Modelo de datos:** filas `pedidos`/`certificados` ahora mencionan el PDF congelado en
+  `documentos` (`pdf_path`) y `emisor_snapshot`.
+- **Regla de negocio 5 (documentos):** el PDF se congela al emitir y es inmutable; el estado
+  vive en la base (anular no toca el PDF) y se consulta por el QR; aviso al descargar revocados;
+  los datos del médico salen del snapshot.
+- **Regla de negocio 11 (nueva) — `emisor_snapshot`:** qué es, por qué existe, que preview y
+  PDF leen de ahí, que es obligatorio al emitir (vs. PDF best-effort), qué pasa si falta (bug
+  visible, sin caer a `profiles`), sin backfill, y que `recetas` no la tiene.
+- **Estado de desarrollo:** nuevo bloque "Tanda de Persistencia de PDFs (migraciones 027–028)"
+  y actualicé la línea de **Pendiente** (ya no falta `documentos`; solo `difusion`).
+- **Notas técnicas 10 y 11 (nuevas):** migraciones 027–028 + aprendizaje del trigger
+  `storage.protect_delete`; y `NEXT_PUBLIC_SITE_URL` como requerida en producción con el porqué.
 
-- **Modelo de datos:** fila de `estudios` actualizada — funcionalidad **implementada**
-  (subir/ver/descargar/borrar), bucket privado `estudios` (026), ruta
-  `{medico_id}/{paciente_id}/{uuid}.{ext}`.
-- **Reglas de negocio:** nueva **regla 10** (estudios): permisos (`ver_historia_clinica` para
-  ver/descargar/subir; borrar solo médico), descarga por **proxy** sin exponer la URL de
-  Storage, subida por Route Handler + FormData, estudios como actuación, comportamiento con
-  paciente archivado.
-- **Estado de desarrollo:** agregado el bloque "Tanda de Storage (026)" con lo implementado y
-  los archivos nuevos; el "Pendiente" ahora nombra la persistencia de PDFs y los buckets
-  `documentos`/`difusion` faltantes.
-- **Notas y deuda técnica:** nueva **nota 9** describiendo la migración 026 (aislamiento por
-  primer segmento del path, endurecimiento de `estudios`, único bucket creado).
+### `PENDIENTES.md`
+- **Bloque A:** cerré el ítem de **persistencia de PDFs** (✅ RESUELTO), incluyendo el problema
+  de la **"firma viva"**. Agregué el ✅ RESUELTO del **incumplimiento de la regla 9** en los POST
+  (chequeo de `archivado_at` → 409). Reduje el ítem de buckets a que **solo falta `difusion`**.
+  Agregué el pendiente de que **`recetas` necesitará su `emisor_snapshot`** cuando se habilite.
+- **Bloque B (Storage):** agregué el ✅ RESUELTO para `documentos` (migración 027) con el detalle
+  de las 3 políticas y la ausencia deliberada de DELETE; el "pendiente" quedó solo en `difusion`.
 
-## `PENDIENTES.md`
+### `README.md`
+- Rango de migraciones `001 → 026` → **`001 → 028`**.
+- Nota de buckets: `estudios` (026) y `documentos` (027) se crean por migración; solo `difusion`
+  no existe.
+- Tabla de variables de entorno: agregué **`NEXT_PUBLIC_SITE_URL`** como ✅ requerida, con la
+  explicación (QR de verificación; con PDFs congelados no puede derivarse del `Host`).
 
-- **Bloque B → Storage:** marcado **✅ RESUELTO para `estudios` (026)**: políticas versionadas
-  y por tenant (ya no el riesgo de `auth.role()='authenticated'`), + endurecimiento de la tabla.
-  Se deja explícito que `documentos`/`difusion` siguen pendientes.
-- **Bloque A → stubs:** recuento corregido de **13 → 12**; quitado `pacientes/estudios-upload`
-  de la lista y aclarado que `estudios-list.tsx` y `pacientes/[id]/estudios/page.tsx` tampoco
-  son stubs. (También corregido el "los 13" del Bloque C → "los 12".)
-- **Bloque A → nuevos pendientes:** agregada la **persistencia de PDFs** de pedidos/certificados
-  con el problema de la **"firma viva"** (hoy se regeneran al descargar y usan los datos
-  ACTUALES del médico, no los del momento de la emisión), y la ausencia de los buckets
-  `documentos` y `difusion`.
+### `DESIGN.md`
+- En "Componentes de UI reutilizables", agregué **"Documentos — patrones visuales"**: los
+  **banners de estado a lo ancho** del preview (el rojo de "anulado" preexistente y el nuevo
+  **ámbar de "sin datos del emisor"** con `AlertCircle`), y el **`alert-dialog` de confirmación**
+  al descargar un documento revocado. Marqué que los ámbar/rojo son clases crudas (mismo
+  pendiente de tokens `success/warning/info` ya listado en Inconsistencias).
 
-## `README.md`
+---
 
-- Rango de migraciones **001 → 021** → **001 → 026**.
-- Paso de Storage: el bucket **`estudios` se crea por migración (026)** con sus políticas; ya
-  **no** hay que crearlo a mano. Aclarado que **`documentos` y `difusion` todavía no existen
-  ni se usan**.
+## Cómo verifiqué (no documenté nada a ciegas)
 
-## `DESIGN.md`
-
-- Recuento de stubs **13 → 12** (en la nota de componentes y en la lista de inconsistencias);
-  ejemplos de stubs actualizados; aclarado que `estudios-upload.tsx` ya se implementó.
-- Nuevo párrafo **"Estudios — patrones visuales"**: íconos por tipo de archivo
-  (`ImageIcon`/`FileText` sobre chip `bg-primary/10`), acciones Ver/Descargar/Eliminar, y el
-  **modal de previsualización** (`dialog` de shadcn, `<img>` para imágenes / `<iframe>` para
-  PDF con salidas de respaldo en móvil). Se nota que el stub `shared/file-preview` sigue sin uso.
+- Leí las tablas `pedidos`/`certificados` y la sección STORAGE reales de `schema.sql` antes de
+  editar; las 3 políticas de `documentos` las transcribí con el mismo patrón que las de
+  `estudios` ya presentes, coherentes con lo ejecutado en la 027.
+- Confirmé en `025_seguridad_datos_sensibles.sql` que el DELETE de `pedidos`/`certificados`
+  está dropeado (sostiene "los documentos no se borran").
+- El banner ámbar (`bg-amber-50 dark:bg-amber-950/20`, `text-amber-800/200`, ícono
+  `AlertCircle`) y el diálogo de descarga de revocados los describí a partir del código que
+  quedó en `pedido-pdf.tsx`/`certificado-pdf.tsx`.
+- La ruta `{medico_id}/{tipo}/{documento_id}.pdf` y el shape del snapshot coinciden con
+  `buildDocumentoPath` y `EmisorSnapshot` del código.
+- Numeración: reglas de negocio y notas técnicas de `CLAUDE.md` quedaron ambas 1→11 sin
+  colisiones (verificado con grep).
 
 ---
 
 ## Inconsistencias encontradas entre documentación y código
 
-1. **`schema.sql` tenía la política `estudios_delete` con `creado_por = auth.uid()`**, pero la
-   migración 026 (fuente) usa `get_medico_id()`. Corregido en el snapshot. (Para el médico
-   ambos coinciden — su `id` es el tenant — así que no había bug funcional, pero el snapshot no
-   reflejaba la fuente.)
-2. **La nota de stubs decía "13" y seguía listando `pacientes/estudios-upload`**, que ya está
-   implementado. El conteo real hoy es **12** (verificado con `grep -rl "function Placeholder"
-   src/` → 12 archivos). Ojo: `shared/file-preview` **sigue** siendo stub — la previsualización
-   de estudios se resolvió inline en `estudios-list.tsx`, no reutilizando ese componente.
-3. **README y PENDIENTES asumían que los buckets se crean a mano** y trataban
-   `estudios`/`documentos`/`difusion` como un bloque homogéneo. Tras la 026 hay una asimetría
-   real: `estudios` existe (por migración), los otros dos **no**. Documentado explícitamente en
-   los cinco archivos para que no se vuelva a asumir que `documentos`/`difusion` existen.
-4. **`schema.sql` no tenía ninguna sección de Storage** pese a que la tabla `estudios` ya
-   mencionaba el "bucket privado". Ahora el bucket y sus políticas figuran en el snapshot.
+1. **`PENDIENTES.md` — desajuste `Certificado.tipo` (Bloque A, ~línea 61):** el pendiente dice
+   que `src/types/pedido.ts` tipa `Certificado.tipo` como no-nullable mientras la base lo hizo
+   nullable (mig. 017). Sigue **vigente**: en el código actual `Certificado.tipo` es
+   `CertificadoTipo` (no `| null`). No lo toqué (fuera del alcance de esta tanda), lo dejo
+   señalado. Nota: mientras trabajaba en `types/pedido.ts` la tanda anterior, no se corrigió
+   este punto — sigue como deuda.
+2. **`DESIGN.md` — `shared/qr-verificacion.tsx` "deriva la URL base con `headers()`"
+   (~línea 127):** sigue siendo cierto para **ese** Server Component (la card de QR de la página
+   de detalle no cambió). Pero conviene tener presente que la **generación del PDF/documento**
+   ahora usa `getBaseUrl` con prioridad a `NEXT_PUBLIC_SITE_URL` (no `headers()`). No es una
+   contradicción —son dos caminos distintos— pero si en el futuro se unifican, el QR de esa card
+   debería migrar también a `NEXT_PUBLIC_SITE_URL`. Lo dejo anotado, no lo edité.
+3. **Ninguna afirmación obsoleta quedó en pie** sobre "`documentos` no existe" ni sobre el rango
+   `001→026`: barrí los cinco documentos con grep y están todos actualizados.
+
+Nada de esto bloquea la tanda; son señalamientos para futuras iteraciones.

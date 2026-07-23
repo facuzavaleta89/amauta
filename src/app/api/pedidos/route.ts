@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { pedidoSchema } from '@/lib/validations/pedido.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { congelarPdfDocumento, getBaseUrl, construirEmisorSnapshot } from '@/lib/pdf/documentos'
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -86,12 +88,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Datos inválidos', details: result.error.format() }, { status: 400 })
     }
 
+    // ── Rechazar emisión para pacientes archivados (regla de negocio 9) ──────
+    // Un paciente archivado no admite escritura (emitir documentos incluido). Se lee
+    // con admin client (bypass RLS): quien emite puede no tener ver_pacientes, y el
+    // chequeo debe ser confiable. Se acota al tenant. (Patrón de POST /api/consultas.)
+    const admin = createAdminClient()
+    const { data: pac, error: pacError } = await admin
+      .from('pacientes')
+      .select('archivado_at')
+      .eq('id', result.data.paciente_id)
+      .eq('creado_por', tenantMedicoId)
+      .single()
+
+    if (pacError || !pac) {
+      return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
+    }
+    if (pac.archivado_at) {
+      return NextResponse.json(
+        { error: 'El paciente está archivado. Desarchivalo para emitir documentos.' },
+        { status: 409 },
+      )
+    }
+
+    // ── Snapshot del emisor: OBLIGATORIO (a diferencia del PDF, que es best-effort) ──
+    // Sin datos del médico no hay documento válido. Si la carga falla, NO se emite.
+    let emisorSnapshot
+    try {
+      emisorSnapshot = await construirEmisorSnapshot(tenantMedicoId)
+    } catch (snapErr) {
+      console.error('[POST /api/pedidos] no se pudo cargar el emisor:', snapErr)
+      return NextResponse.json(
+        { error: 'No se pudieron cargar los datos del médico firmante; el documento no se emitió.' },
+        { status: 500 },
+      )
+    }
+
     const { data, error } = await supabase
       .from('pedidos')
       .insert({
         ...result.data,
         firmado_por: tenantMedicoId,
         fecha_pedido: result.data.fecha_pedido || new Date().toISOString().slice(0, 10),
+        emisor_snapshot: emisorSnapshot,
       })
       .select()
       .single()
@@ -100,6 +138,12 @@ export async function POST(request: NextRequest) {
       console.error('[POST /api/pedidos] DB error:', error)
       return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
     }
+
+    // ── Congelar el PDF al emitir (best-effort) ──────────────────────────────
+    // congelarPdfDocumento nunca lanza y corre bajo timeout: si Storage falla o
+    // tarda, el pedido queda emitido con pdf_path NULL y la descarga lo regenera.
+    const pdfPath = await congelarPdfDocumento('pedido', data, tenantMedicoId, supabase, getBaseUrl(request))
+    if (pdfPath) data.pdf_path = pdfPath
 
     return NextResponse.json({ data }, { status: 201 })
   } catch (err) {

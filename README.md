@@ -41,12 +41,12 @@ cp .env.example .env.local
 
 # 3. Preparar la base de datos
 #   Aplicá las migraciones de supabase/migrations/ a tu proyecto Supabase
-#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 026).
+#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 028).
 #   Para una vista consolidada del esquema, ver schema.sql (referencia, no reemplaza
 #   las migraciones).
-#   El bucket de Storage "estudios" (privado) se crea por migración (026), junto con
-#   sus políticas RLS por tenant; no hace falta crearlo a mano. Los buckets
-#   "documentos" y "difusion" TODAVÍA no existen ni se usan (ver PENDIENTES.md).
+#   Los buckets de Storage "estudios" (privado, migración 026) y "documentos" (privado,
+#   migración 027) se crean por migración, junto con sus políticas RLS por tenant; no hace
+#   falta crearlos a mano. El bucket "difusion" TODAVÍA no existe ni se usa (ver PENDIENTES.md).
 
 # 4. Levantar el servidor de desarrollo
 npm run dev
@@ -68,6 +68,7 @@ Definidas en `.env.local` (ver [`.env.example`](./.env.example)). **Nunca** comm
 | `NEXT_PUBLIC_SUPABASE_URL` | ✅ | URL pública del proyecto Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Clave anon/public (segura para el cliente) |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Clave service role — **secreta, bypass RLS**, solo server |
+| `NEXT_PUBLIC_SITE_URL` | ✅ | URL base de la app para los **QR de verificación** de documentos (`/verificar/[codigo]`). Requerida: los PDF se congelan al emitir, así que el QR se graba de forma permanente y no debe derivarse del header `Host` (falsificable). Prod: `https://amauta-salud.vercel.app`; local: `http://localhost:3000` |
 | `CRON_SECRET` | ✅ | Protege `/api/cron/recordatorios` (genera con `openssl rand -base64 32`) |
 | `RESEND_API_KEY` | ⬜ | API key de Resend (email), si se activa el envío |
 | `WHATSAPP_API_TOKEN` | ⬜ | Token de WhatsApp Cloud API, si se activa |

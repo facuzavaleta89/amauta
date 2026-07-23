@@ -140,6 +140,19 @@ acción **Ver** abre un **modal de previsualización** sobre el `dialog` de shad
 para el caso móvil, donde el `<iframe>` de PDF es poco fiable. Es la primera previsualización
 embebida de archivos del proyecto (el stub `shared/file-preview` sigue sin usarse).
 
+**Documentos (pedidos/certificados) — patrones visuales (tanda de persistencia de PDFs):**
+en el preview del documento (`pedido-pdf.tsx` / `certificado-pdf.tsx`) se usan **banners de
+estado a lo ancho** en el borde superior de la card, todos con el mismo layout (`px-8 py-3`,
+centrado, `flex items-center justify-center gap-2` + ícono `lucide` a la izquierda):
+el de **anulado** en tono destructivo (`bg-red-50 dark:bg-red-950/20` + `Ban`, preexistente) y
+el nuevo de **"sin datos del emisor"** en tono de **advertencia ámbar** (`bg-amber-50
+dark:bg-amber-950/20`, texto `amber-800/200`, ícono `AlertCircle`) — se muestra solo cuando el
+documento no tiene `emisor_snapshot` (un bug: nunca cae a `profiles`). Además, la acción
+**Descargar PDF** de un documento **revocado** se envuelve en un `alert-dialog` de confirmación
+(el resto de las descargas es directo); el PDF servido es el original, sin marca de anulación.
+⚠ Estos ámbar/rojo son clases crudas de Tailwind, no tokens semánticos — mismo pendiente de
+`success/warning/info` señalado en Inconsistencias.
+
 > ⚠ Hay **12 archivos stub** (`export default function Placeholder(){return null}`)
 > en `components/` y `lib/pdf/` (p. ej. `turnero/turno-card`, `pacientes/evolucion-charts`,
 > `shared/{confirm-dialog, file-preview}`, `difusion/{post-editor, send-modal}`)

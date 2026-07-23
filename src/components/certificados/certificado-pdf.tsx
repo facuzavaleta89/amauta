@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { differenceInYears } from 'date-fns'
 import {
   Download, Loader2, ArrowLeft,
-  User, Calendar, Award, Clock, Ban,
+  User, Calendar, Award, Clock, Ban, AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatFecha, formatFechaLarga } from '@/lib/utils'
@@ -32,6 +32,8 @@ interface CertificadoDocViewProps {
   medicoMatricula?: string | null
   medicoFirma?: string | null
   medicoLogo?: string | null
+  /** True si el documento no tiene emisor_snapshot (bug): se muestra un aviso. */
+  sinEmisor?: boolean
   userRole: 'medico' | 'asistente'
 }
 
@@ -42,6 +44,7 @@ export function CertificadoDocView({
   medicoMatricula,
   medicoFirma,
   medicoLogo,
+  sinEmisor,
   userRole,
 }: CertificadoDocViewProps) {
   const router = useRouter()
@@ -147,14 +150,43 @@ export function CertificadoDocView({
             </AlertDialog>
           )}
 
-          <Button onClick={descargarPDF} disabled={isDownloading} className="gap-2">
-            {isDownloading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
-            {isDownloading ? 'Generando...' : 'Descargar PDF'}
-          </Button>
+          {estado === 'revocado' ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button disabled={isDownloading} className="gap-2">
+                  {isDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  {isDownloading ? 'Generando...' : 'Descargar PDF'}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Descargar documento anulado?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Este documento fue anulado. El PDF que vas a descargar es el original tal como se emitió y no lleva marca de anulación. Quien escanee el QR verá que está revocado.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={descargarPDF}>
+                    Descargar igual
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : (
+            <Button onClick={descargarPDF} disabled={isDownloading} className="gap-2">
+              {isDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {isDownloading ? 'Generando...' : 'Descargar PDF'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -164,6 +196,13 @@ export function CertificadoDocView({
           <div className="bg-red-50 dark:bg-red-950/20 border-b border-red-200 dark:border-red-900/40 px-8 py-3 text-center text-sm font-semibold text-red-800 dark:text-red-200 flex items-center justify-center gap-2">
             <Ban className="h-4.5 w-4.5" />
             Este documento ha sido anulado y no es válido para su uso.
+          </div>
+        )}
+
+        {sinEmisor && (
+          <div className="bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-900/40 px-8 py-3 text-center text-sm font-semibold text-amber-800 dark:text-amber-200 flex items-center justify-center gap-2">
+            <AlertCircle className="h-4.5 w-4.5" />
+            Este documento no tiene datos del emisor registrados. No se generó correctamente: contactá al administrador.
           </div>
         )}
 

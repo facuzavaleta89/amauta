@@ -22,19 +22,28 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 - **Recetas:** bloqueadas por certificación ANMAT. `src/app/api/recetas/route.ts` es
   stub y `src/lib/pdf/receta-template.tsx` es un placeholder vacío (esperado; dejar
   documentado que está en pausa).
-- **Persistencia de PDFs de pedidos y certificados (fuera de la tanda de Storage):** hoy los
-  PDF **no se guardan** en ningún bucket — se **regeneran al descargar** desde el endpoint del
-  servidor. Efecto secundario importante: usan los **datos ACTUALES del médico** (firma, sello,
-  matrículas, título, logo), no los del **momento de la emisión** — problema de la *"firma
-  viva"*. Si el médico cambia su firma/matrícula, los documentos ya emitidos se reimprimen con
-  la firma nueva, lo que puede no ser deseable legalmente. Pendiente: definir si el PDF debe
-  **congelarse al emitir** (persistirlo en un bucket privado `documentos`) o snapshotear los
-  datos del emisor en la fila. Requiere crear el bucket **`documentos`** (no existe todavía).
-- **Buckets `documentos` y `difusion`:** la tanda de Storage creó **solo** `estudios`
-  (migración 026). `documentos` (para PDFs persistidos de pedidos/certificados) y `difusion`
-  (imágenes de posts — `difusion_posts.imagen_path` es andamiaje muerto por ahora) **no
-  existen ni se usan**. Cuando se creen, versionar el bucket y sus políticas RLS por tenant
-  con el mismo patrón que `estudios` (ver Bloque B → Storage).
+- **✅ RESUELTO (migraciones 027–028, 2026-07-23) — Persistencia de PDFs + "firma viva".**
+  El PDF ahora se **congela al emitir** en el bucket privado `documentos` (`pdf_path`) y las
+  descargas sirven ese objeto **inmutable**; ya no se regeneran con los datos actuales del
+  médico. Además se **snapshotean los datos del emisor** en la fila (`emisor_snapshot`, JSONB):
+  el preview HTML y la regeneración del PDF leen de ahí, no de `profiles` en vivo, así que
+  **preview y PDF coinciden** y el documento queda reconstruible fiel aunque se pierda el
+  objeto de Storage. El problema de la *"firma viva"* (documentos históricos reimpresos con la
+  firma/matrícula nueva) queda **cerrado**. Sin backfill: los documentos de prueba previos se
+  borraron, así que todos los actuales tienen snapshot. Código: `lib/pdf/documentos.ts`, POST/GET
+  de pedidos y certificados, páginas de detalle, `pedido-pdf`/`certificado-pdf`. Reglas de
+  negocio 5 y 11 en `CLAUDE.md`; buckets/columna en `schema.sql`.
+- **✅ RESUELTO (POST de pedidos/certificados, 2026-07-23) — regla de negocio 9.** Los POST de
+  emisión **no validaban `archivado_at`**: se podía emitir un documento a un paciente archivado
+  por API directa (la UI ya lo bloqueaba, pero el servidor no). Ahora rechazan con **409**,
+  copiando el patrón de `POST /api/consultas`. Era un incumplimiento preexistente de la regla 9.
+- **Bucket `difusion`:** las tandas de Storage crearon `estudios` (migración 026) y `documentos`
+  (migración 027). Falta **`difusion`** (imágenes de posts — `difusion_posts.imagen_path` es
+  andamiaje muerto por ahora): **no existe ni se usa**. Cuando se cree, versionar el bucket y sus
+  políticas RLS por tenant con el mismo patrón que `estudios`/`documentos` (ver Bloque B → Storage).
+- **`recetas` necesitará su `emisor_snapshot`:** la columna se agregó (mig. 028) solo a
+  `pedidos` y `certificados`. Cuando se habilite la emisión de recetas (bloqueada por ANMAT),
+  sumar la misma columna a `recetas` y escribir el snapshot al emitir, igual que en los otros dos.
 
 ### Esquema sin migración fuente (reproducibilidad)
 Estos objetos existen en Supabase pero **no tienen `CREATE`/`ALTER` en
@@ -128,8 +137,16 @@ Información Pública**). Hallazgos:
   `ver_historia_clinica` (el `DELETE` además exige rol médico). Además se **endurecieron las 4
   políticas de la tabla `estudios`** (antes cualquier asistente del tenant accedía; ahora
   exigen `check_permiso('ver_historia_clinica')`). Reconstruido en `schema.sql` → sección
-  STORAGE. **Pendiente todavía:** los buckets `documentos` y `difusion` **no existen** (no se
-  crearon en esta tanda); cuando se agreguen, versionar sus políticas con el mismo patrón.
+  STORAGE.
+- **✅ RESUELTO para `documentos` (migración 027, 2026-07-23) — políticas de Storage por tenant.**
+  El bucket `documentos` (privado, 5 MB, solo `application/pdf`) se creó **por migración**, con 3
+  políticas RLS sobre `storage.objects` aisladas por tenant (mismo patrón: `foldername(name)[1]`
+  = `medico_id` contra `get_medico_id()`): select exige `ver_pedidos` OR `ver_certificados`;
+  insert/update exigen `crear_pedidos` OR `crear_certificados`. **Sin política de DELETE a
+  propósito** (regla 5: los documentos no se borran, solo se anulan) — difiere de `estudios`, que
+  sí permite DELETE al médico. Reconstruido en `schema.sql` → sección STORAGE. **Pendiente
+  todavía:** el bucket `difusion` **no existe**; cuando se agregue, versionar sus políticas con
+  el mismo patrón.
 - **RLS de tablas:** el modelo con `get_medico_id()` + `check_permiso()` está bien
   aplicado en las tablas de datos (ver `schema.sql`). Verificar dos huecos:
   - **Difusión** no tiene permiso granular: cualquier asistente vinculado ve/crea posts

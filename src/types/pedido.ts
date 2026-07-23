@@ -4,6 +4,22 @@
 // recetas y evoluciones
 // ============================================================
 
+import type { Matricula } from '@/types/roles'
+
+// ── SNAPSHOT DEL EMISOR ───────────────────────────────────────
+// Foto de los datos del médico firmante al emitir un documento (migración 028).
+// Se guarda en `emisor_snapshot` de pedidos/certificados; el preview HTML y la
+// regeneración del PDF leen de acá, no de `profiles` en vivo, para que el documento
+// sea fiel e inmutable. El shape es EXACTAMENTE el que consume la prop `medico` de
+// las plantillas PDF, para poder pasarlo sin transformarlo.
+export interface EmisorSnapshot {
+  full_name: string
+  titulo: string | null
+  matriculas: Matricula[]
+  firma_url: string | null
+  logo_url: string | null
+}
+
 // ── PEDIDOS DE ESTUDIOS ───────────────────────────────────────
 
 export interface Pedido {
@@ -20,6 +36,7 @@ export interface Pedido {
   indicaciones: string | null
   pdf_path: string | null
   pdf_generado_at: string | null
+  emisor_snapshot: EmisorSnapshot | null   // datos del médico congelados al emitir
   firmado_por: string            // uuid del médico que firma
   codigo_verificacion: string
   estado: 'emitido' | 'revocado'
@@ -39,6 +56,7 @@ export interface PedidoInsert {
   fecha_pedido?: string
   indicaciones?: string
   firmado_por: string
+  emisor_snapshot?: EmisorSnapshot
 }
 
 export interface PedidoUpdate extends Partial<PedidoInsert> {
@@ -73,6 +91,7 @@ export interface Certificado {
   valido_hasta: string | null
   pdf_path: string | null
   pdf_generado_at: string | null
+  emisor_snapshot: EmisorSnapshot | null   // datos del médico congelados al emitir
   firmado_por: string
   codigo_verificacion: string
   estado: 'emitido' | 'revocado'
@@ -95,6 +114,7 @@ export interface CertificadoInsert {
   fecha_certificado?: string
   valido_hasta?: string
   firmado_por: string
+  emisor_snapshot?: EmisorSnapshot
 }
 
 export interface CertificadoUpdate extends Partial<CertificadoInsert> {

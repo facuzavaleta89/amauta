@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { CertificadoDocView } from '@/components/certificados/certificado-pdf'
 import { QRVerificacion } from '@/components/shared/qr-verificacion'
 import type { Metadata } from 'next'
 import type { UserRole, Matricula } from '@/types/roles'
+import type { EmisorSnapshot } from '@/types/pedido'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -37,13 +37,11 @@ export default async function CertificadoDetailPage({ params }: Props) {
 
   if (error || !certificado) notFound()
 
-  // Cargar datos del médico firmante con admin client para evitar RLS restrictivo sobre perfiles
-  const admin = createAdminClient()
-  const { data: medico } = await admin
-    .from('profiles')
-    .select('full_name, titulo, matriculas, firma_url, logo_url')
-    .eq('id', certificado.firmado_por)
-    .single()
+  // Datos del médico: del SNAPSHOT congelado al emitir, NO de profiles en vivo.
+  // Así el preview coincide siempre con el PDF descargado. Un documento sin snapshot
+  // es un bug (tras la migración 028 todos lo tienen): se avisa, no se cae a profiles.
+  const emisor = certificado.emisor_snapshot as EmisorSnapshot | null
+  const sinEmisor = !emisor
 
   const { data: { user } } = await supabase.auth.getUser()
   const { data: profile } = await supabase
@@ -54,13 +52,13 @@ export default async function CertificadoDetailPage({ params }: Props) {
 
   const userRole = (profile?.role ?? 'asistente') as UserRole
 
-  const matriculas: Matricula[] = Array.isArray(medico?.matriculas) ? medico.matriculas : []
+  const matriculas: Matricula[] = Array.isArray(emisor?.matriculas) ? emisor!.matriculas : []
   const matriculaFormatted = matriculas.length > 0
     ? matriculas.map((m) => `${m.tipo} ${m.numero}`).join('  |  ')
     : null
-  const displayName = medico
-    ? (medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name)
-    : 'Médico'
+  const displayName = emisor
+    ? (emisor.titulo ? `${emisor.titulo} ${emisor.full_name}` : emisor.full_name)
+    : '—'
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
@@ -72,8 +70,9 @@ export default async function CertificadoDetailPage({ params }: Props) {
         certificado={certificado}
         medicoNombre={displayName}
         medicoMatricula={matriculaFormatted}
-        medicoFirma={medico?.firma_url ?? null}
-        medicoLogo={medico?.logo_url ?? null}
+        medicoFirma={emisor?.firma_url ?? null}
+        medicoLogo={emisor?.logo_url ?? null}
+        sinEmisor={sinEmisor}
         userRole={userRole}
       />
     </div>
