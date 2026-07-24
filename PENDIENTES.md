@@ -45,53 +45,67 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   `pedidos` y `certificados`. Cuando se habilite la emisión de recetas (bloqueada por ANMAT),
   sumar la misma columna a `recetas` y escribir el snapshot al emitir, igual que en los otros dos.
 
+### Bugs menores detectados
+- **Filename de certificados sin tipo → `certificado_null_...`.** La elección de `tipo` se quitó
+  de la UI (`src/components/certificados/certificado-form.tsx` no lo ofrece), así que la columna
+  llega **siempre `null`** (es nullable sin default desde la migración 017). El nombre del PDF se
+  arma interpolando ese campo, y el null se coerciona a la cadena `"null"`:
+  `src/app/api/certificados/[id]/pdf/route.ts:32` y
+  `src/components/certificados/certificado-pdf.tsx:70`
+  (`certificado_${certificado.tipo}_…`). Corregir la construcción del nombre en ambos lugares
+  (omitir el segmento cuando `tipo` es null, o usar `tipo_descripcion` como fallback).
+
 ### Esquema sin migración fuente (reproducibilidad)
-Estos objetos existen en Supabase pero **no tienen `CREATE`/`ALTER` en
-`supabase/migrations/`** (se aplicaron directo en el dashboard). Un entorno nuevo
-levantado solo desde migraciones quedaría incompleto. Crear las migraciones faltantes:
-- Tabla **`consultas`** completa (reconstruida en `schema.sql` desde `types/consulta.ts`).
-  Su columna `campos_extra` **sí** tiene fuente (migración `022`); el resto de la tabla no.
-- Tabla **`notificaciones`** completa: existe en la base y se usa en el código
-  (`notificaciones/page.tsx`, `api/turnero`, `api/cron/recordatorios`). Su estructura ya
-  se **verificó contra la base real y se reconstruyó en `schema.sql`** (id, medico_id,
-  titulo, mensaje, tipo, leida, payload, created_at + políticas). **Sigue sin migración
-  fuente:** falta crear el `CREATE TABLE` versionado en `supabase/migrations/`.
-- Columnas de Bloque 4 en **`turnos`**: `categoria`, `origen`, `consulta_id`.
-- Columnas en **`profiles`**: `titulo`, `matriculas` (jsonb), `logo_url`.
+- **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
+  Bloque 4 de `turnos` (`categoria/origen/consulta_id` + sus 3 CHECK) y
+  `profiles.titulo/matriculas/logo_url` ya tienen su `CREATE` versionado en
+  `supabase/migrations/`. La migración es idempotente (no cambió nada contra la base actual) y
+  crea los objetos en un entorno nuevo.
+- **⚠ PENDIENTE NUEVO — Consolidación de baseline de migraciones.** La 030 logra que el
+  **estado final** sea reproducible, pero la **secuencia** NO es ejecutable desde una base
+  vacía: las migraciones **013, 014, 015, 022 y 025** referencian `public.consultas` (RLS y
+  `ALTER`) y la tabla recién se crea en la **030**, así que correr el set desde cero falla en
+  la 013. Es una limitación **preexistente** a esta tanda. Resolverlo implica una
+  consolidación de baseline: mover los `CREATE` al principio del historial, o generar un
+  `000_baseline.sql` aplicable y reordenar. Trabajo aparte, no hecho.
+- **✅ RESUELTO (2026-07-24) — desalineación 030 ↔ base en ÍNDICES.** El archivo de la
+  migración 030 había quedado con los índices de una versión previa (nombres
+  `idx_consultas_paciente`/`idx_consultas_medico`, sin el de `fecha_hora`, y sin ninguno de
+  `notificaciones`), porque la versión que se ejecutó fue una corregida a mano. Se **alineó el
+  archivo** con lo realmente aplicado: ahora crea los 6 índices explícitos con los nombres y
+  definiciones reales (`consultas_{paciente_id,medico_id,fecha_hora}_idx` y
+  `idx_notificaciones_{medico,leida,created}`), verificados contra `pg_indexes`. Confirmado
+  contra la base: **no hay índices duplicados**; son exactamente 8 contando los dos `*_pkey`.
 - **Migración vacía:** `supabase/migrations/20260326204733_fix_rls_recursion.sql`
-  tiene **0 bytes**. Completarla con su contenido real o eliminarla del historial.
+  tiene **0 bytes**. Su intención (recursión RLS en `profiles`) ya está cubierta por la
+  `014` + `019`/`021`. Eliminarla del historial o dejar un comentario no-op.
 
 ### Desajustes tipo TypeScript ↔ esquema DB
-(No corregidos por consigna; anotados para revisión.)
+- **✅ RESUELTOS (2026-07-23).** Los cinco desajustes vigentes se corrigieron:
+  `Certificado.tipo` → `CertificadoTipo | null` (cascada: la prop `tipo` de
+  `CertificadoPDFProps` en `certificado-template.tsx` pasó a `string | null`);
+  `TurnoAuditLog.accion` perdió el `| string` (el trigger `log_turno_cambio` solo emite los 4
+  literales); los joins `remitente/destinatario.role` de `types/mensaje.ts` usan `UserRole`;
+  se creó la interface `MensajeLectura` (refleja la **proyección** del join —`user_id`,
+  `leido_at`—, no la tabla completa, porque el select embebido no trae `mensaje_id` y el
+  update optimista de `bandeja.tsx` construye objetos con solo esos dos campos); y se corrigió
+  el comentario de `HistoriaClinica.proximo_control` a "ISO timestamptz".
 - ~~**`TurnoEstado` incluye `'pendiente_confirmar'`** que no existiría en el ENUM.~~
   **✅ FALSO DESAJUSTE (verificado 2026-07-22):** el ENUM `turno_estado` de la base **sí**
   tiene 7 valores e incluye `'pendiente_confirmar'`. El código (`types/turno.ts`,
   `turno.schema.ts`) está alineado con la base. `schema.sql` corregido para reflejarlo.
-- **`Certificado.tipo` tipado no-nullable** (`src/types/pedido.ts:67`) pero la
-  migración 017 hizo la columna **nullable y sin default**. El tipo debería ser
-  `CertificadoTipo | null`.
-- **`mensajes_lecturas` sin interface propia:** solo aparece como join inline en
-  `MensajeInterno.lecturas` (`src/types/mensaje.ts:24`). Falta un `MensajeLectura`
-  (agregarlo dentro de `mensaje.ts`, respetando la agrupación por dominio).
-- **`historia_clinica.proximo_control`** es `TIMESTAMPTZ` (migración 016) pero
-  `HistoriaClinica.proximo_control` lo comenta como "ISO date" (`src/types/pedido.ts:235`).
-- **Uniones debilitadas a `string`:** `TurnoAuditLog.accion` (`src/types/turno.ts:89`)
-  y los joins `remitente/destinatario.role` (`src/types/mensaje.ts:21-22`) usan `string`
-  en vez de las uniones literales (`UserRole`, acciones del audit). Ajustar a literales.
 
 ### Limpieza de código muerto
-- **12 componentes stub** `export default function Placeholder(){return null}`, sin
-  imports en ningún lado: `turnero/turno-card`, `pacientes/{patient-tabs, evolucion-charts}`,
+- **✅ RESUELTO (2026-07-23) — 16 archivos eliminados.** Los **11** componentes stub sin
+  imports (`turnero/turno-card`, `pacientes/{patient-tabs, evolucion-charts}`,
   `dashboard/weekly-calendar`, `shared/{role-guard, loading-spinner, file-preview,
-  confirm-dialog, error-boundary}`, `difusion/{post-editor, send-modal}`,
-  `lib/pdf/receta-template`. Eliminarlos o implementarlos.
-  (`difusion/post-list.tsx` y `pacientes/estudios-upload.tsx` **ya se implementaron** — este
-  último en la tanda de Storage; también son reales `estudios-list.tsx` y
-  `pacientes/[id]/estudios/page.tsx`, que ya no son stubs. `shared/file-preview` **sigue**
-  siendo stub: el modal de previsualización de estudios se resolvió inline en `estudios-list`.)
-- **Barrel redundante:** `src/types/supabase.ts` re-exporta un subconjunto de dominios;
-  ahora existe `src/types/index.ts` como barrel completo. Consolidar imports hacia
-  `@/types` y evaluar deprecar `supabase.ts`.
+  confirm-dialog, error-boundary}`, `difusion/{post-editor, send-modal}`), los **4** hooks
+  stub (`use-auth`, `use-pacientes`, `use-role`, `use-turnos`) y el **barrel redundante**
+  `src/types/supabase.ts` (0 consumidores; `types/index.ts` es el barrel completo).
+  `use-view-mode.ts` se conservó (tiene lógica real).
+- **Queda 1 stub, a propósito:** `src/lib/pdf/receta-template.tsx`. Se **mantuvo** como
+  marcador del template de recetas, bloqueado por ANMAT pero a implementar cuando se
+  certifique. Eliminarlo o implementarlo cuando se desbloquee la funcionalidad.
 
 ### Lint preexistente (deuda técnica menor)
 - **Errores/warnings de lint preexistentes** (no introducidos por los cambios recientes,
@@ -224,3 +238,16 @@ Unificación visual y pulido de interfaz. Detalle y ubicaciones en `DESIGN.md`
 - **Contraste / accesibilidad:** verificar contraste de los tintes de categoría del
   turnero (10–12% de opacidad) y de `muted-foreground` sobre `muted`, sobre todo en la
   página pública de verificación.
+- **Layout inconsistente entre secciones** (observado en el navegador). Las páginas del área
+  autenticada no comparten un patrón único de encabezado ni de ancho:
+  - **Correctas / de referencia:** dashboard, pacientes, turnero, pedidos y certificados —
+    ocupan el espacio disponible y su título tiene el mismo tamaño.
+  - **Difusión:** el título usa un **tamaño de fuente mayor** que el resto y muestra un
+    **ícono de altavoz** que ninguna otra sección tiene.
+  - **Notas:** consistente con el grupo de referencia.
+  - **Notificaciones y mensajes:** se ven con **márgenes laterales**, más centradas/angostas
+    que el resto.
+  - **Criterio a definir y aplicar:** (a) o **todas** las secciones llevan ícono en el título
+    —y coherente con el ícono del sidebar— o **ninguna**; (b) unificar **ancho, márgenes y
+    tamaño del título** en todas. Conviene resolverlo con el componente compartido
+    `shared/page-header` para que el patrón quede en un solo lugar.

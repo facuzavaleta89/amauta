@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→028).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→030).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -18,7 +18,18 @@
 -- solo application/pdf + 3 políticas RLS sobre storage.objects aisladas por tenant —
 -- select/insert/update, SIN delete a propósito; ver sección STORAGE), 028 (columna
 -- `emisor_snapshot JSONB` en pedidos y certificados: foto de los datos del médico
--- firmante al emitir, para que el documento sea fiel e inmutable).
+-- firmante al emitir, para que el documento sea fiel e inmutable),
+-- 029 (corrección de DRIFT de seguridad en RLS: las políticas de la base habían sido
+-- modificadas a mano hacia versiones más permisivas que las migraciones fuente —
+-- recetas insert/update/delete, evoluciones update/delete e historia_delete vuelven a
+-- exigir rol médico, normalizadas a TO authenticated; + migración del trigger
+-- consultas_updated_at a set_updated_at() y drop de la duplicada
+-- update_updated_at_column(); drop de get_user_role() sin argumentos; drop de la
+-- política duplicada de notificaciones; fix del DEFAULT de profiles.role, que era
+-- 'secretario' y violaba su propio CHECK), 030 (recreación de los objetos que existían
+-- en la base SIN CREATE versionado: tablas `consultas` y `notificaciones` completas,
+-- columnas turnos.categoria/origen/consulta_id + sus 3 CHECK, y columnas
+-- profiles.titulo/matriculas/logo_url).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -27,15 +38,16 @@
 -- Reconstruido para reflejar la forma ACTUAL de cada tabla (con todas las
 -- columnas agregadas en bloques posteriores), no la historia de migraciones.
 --
--- ⚠ Verificar: algunos objetos NO tienen migración fuente en supabase/migrations/
---   (fueron aplicados directamente en Supabase). Están marcados con
---   "-- ⚠ SIN MIGRACIÓN FUENTE" y su forma se dedujo de los tipos TS y del uso
---   en el código. Ver PENDIENTES.md → Bloque A.
---     · Tabla `consultas` completa (su columna `campos_extra` sí tiene fuente: migración 022)
---     · Columnas `turnos.categoria`, `turnos.origen`, `turnos.consulta_id`
---     · Columnas `profiles.titulo`, `profiles.matriculas`, `profiles.logo_url`
---     · Tabla `notificaciones` (sin migración fuente; su estructura se verificó
---       contra la base real y se reconstruye — ver su sección más abajo)
+-- ✅ Desde la migración 030 TODOS los objetos tienen su CREATE versionado en
+--    supabase/migrations/ (ya no quedan objetos "sin migración fuente").
+--
+-- ⚠ LIMITACIÓN DE ORDEN (conocida y aceptada): el ESTADO FINAL está versionado, pero
+--    la SECUENCIA de migraciones NO es ejecutable desde una base vacía. Las
+--    migraciones 013, 014, 015, 022 y 025 referencian `public.consultas` (RLS y ALTER)
+--    y la tabla recién se crea en la 030, así que correr el set desde cero falla en la
+--    013. Es una limitación PREEXISTENTE; resolverla requiere una consolidación de
+--    baseline (mover los CREATE al principio del historial), que es un trabajo aparte
+--    y no está hecho. Ver PENDIENTES.md → Bloque A.
 -- ============================================================================
 
 
@@ -103,9 +115,9 @@ CREATE TABLE public.profiles (
   -- Identidad profesional del médico (se estampan en los PDF).
   matricula   TEXT,                          -- @deprecated → usar matriculas (jsonb)
   firma_url   TEXT,                           -- Firma digitalizada (base64/URL)
-  titulo      TEXT,                           -- ⚠ SIN MIGRACIÓN FUENTE — Dr./Dra./Lic./...
-  matriculas  JSONB DEFAULT '[]'::jsonb,      -- ⚠ SIN MIGRACIÓN FUENTE — [{tipo:'MP'|'MN'|'ME', numero}]
-  logo_url    TEXT,                           -- ⚠ SIN MIGRACIÓN FUENTE — sello/logo (base64)
+  titulo      TEXT,                           -- migración 030 — Dr./Dra./Lic./...
+  matriculas  JSONB DEFAULT '[]'::jsonb,      -- migración 030 — [{tipo:'MP'|'MN'|'ME', numero}]
+  logo_url    TEXT,                           -- migración 030 — sello/logo (base64)
 
   -- Permisos legacy (Bloque 2). Reemplazados por los granulares de abajo.
   puede_ver_historias  BOOLEAN DEFAULT FALSE, -- @deprecated
@@ -189,11 +201,13 @@ CREATE TABLE public.historia_clinica (
 CREATE INDEX idx_historia_paciente ON public.historia_clinica(paciente_id);
 
 -- ── consultas ───────────────────────────────────────────────────────────────
--- ⚠ SIN MIGRACIÓN FUENTE. Reconstruida desde src/types/consulta.ts + uso en
--- src/app/api/consultas/. Consultas cronológicas del nuevo modelo de HC
+-- Versionada por la migración 030. Consultas cronológicas del nuevo modelo de HC
 -- (Bloque 1), específicas para diabetología. medico_id = tenant key.
+-- Tipos y nullability VERIFICADOS contra la base real (difieren de lo que este
+-- archivo documentaba antes: talla_cm y temperatura tienen escala 1, y los cinco
+-- parámetros metabólicos son (6,2), no (5,1); created_at/updated_at son NULLABLE).
 CREATE TABLE public.consultas (
-  id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   paciente_id            UUID NOT NULL REFERENCES public.pacientes(id) ON DELETE CASCADE,
   medico_id              UUID NOT NULL REFERENCES public.profiles(id),  -- tenant key
   fecha_hora             TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -202,18 +216,18 @@ CREATE TABLE public.consultas (
   anamnesis              TEXT,
   -- Examen físico
   peso_kg                NUMERIC(5,2),
-  talla_cm               NUMERIC(5,2),
+  talla_cm               NUMERIC(5,1),
   ta_sistolica           INTEGER,
   ta_diastolica          INTEGER,
   frecuencia_cardiaca    INTEGER,
-  temperatura            NUMERIC(4,2),
+  temperatura            NUMERIC(4,1),
   -- Parámetros metabólicos
-  glucemia_ayunas        NUMERIC(5,1),
-  glucemia_postprandial  NUMERIC(5,1),
+  glucemia_ayunas        NUMERIC(6,2),
+  glucemia_postprandial  NUMERIC(6,2),
   hba1c                  NUMERIC(4,2),
-  trigliceridos          NUMERIC(5,1),
-  colesterol_ldl         NUMERIC(5,1),
-  colesterol_hdl         NUMERIC(5,1),
+  trigliceridos          NUMERIC(6,2),
+  colesterol_ldl         NUMERIC(6,2),
+  colesterol_hdl         NUMERIC(6,2),
   -- Diagnóstico y plan
   diagnostico            TEXT,
   plan_terapeutico       TEXT,
@@ -226,11 +240,15 @@ CREATE TABLE public.consultas (
   campos_extra           JSONB NOT NULL DEFAULT '[]'::jsonb,
   -- Estado: 'finalizada' es inmutable desde la UI
   estado                 TEXT NOT NULL DEFAULT 'borrador' CHECK (estado IN ('borrador', 'finalizada')),
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+  -- NULLABLE en la base (no NOT NULL), con default now()
+  created_at             TIMESTAMPTZ DEFAULT now(),
+  updated_at             TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX idx_consultas_paciente ON public.consultas(paciente_id);
-CREATE INDEX idx_consultas_medico   ON public.consultas(medico_id);
+-- Índices verificados contra pg_indexes de la base real; la migración 030 los crea
+-- con estos mismos nombres y definiciones.
+CREATE INDEX consultas_paciente_id_idx ON public.consultas(paciente_id);
+CREATE INDEX consultas_medico_id_idx   ON public.consultas(medico_id);
+CREATE INDEX consultas_fecha_hora_idx  ON public.consultas(fecha_hora DESC);
 
 -- ── estudios ────────────────────────────────────────────────────────────────
 -- Archivos de estudios complementarios (bucket privado "estudios") por paciente.
@@ -283,7 +301,8 @@ CREATE INDEX idx_evoluciones_paciente_fecha ON public.evoluciones(paciente_id, f
 
 -- ── turnos ──────────────────────────────────────────────────────────────────
 -- Agenda de turnos. medico_id = tenant key. Las columnas categoria/origen/
--- consulta_id son del Bloque 4 y NO tienen migración fuente.
+-- consulta_id son del Bloque 4 y las versionó la migración 030 (junto con sus
+-- tres CHECK, incluido check_paciente_id_required_for_turno_medico).
 CREATE TABLE public.turnos (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   paciente_id   UUID REFERENCES public.pacientes(id) ON DELETE SET NULL,
@@ -297,13 +316,19 @@ CREATE TABLE public.turnos (
   recordatorio_enviado BOOLEAN DEFAULT false,
   medico_id     UUID NOT NULL REFERENCES public.profiles(id),  -- tenant key
   agendado_por  UUID NOT NULL REFERENCES public.profiles(id),
-  -- ⚠ SIN MIGRACIÓN FUENTE (Bloque 4):
+  -- Bloque 4 (versionadas por la migración 030). Nombres reales de los CHECK:
+  --   check_turnos_categoria · turnos_origen_check · check_paciente_id_required_for_turno_medico
   categoria     TEXT NOT NULL DEFAULT 'turno_medico'
+                CONSTRAINT check_turnos_categoria
                 CHECK (categoria IN ('turno_medico','curso','personal','administrativo','recordatorio')),
-  origen        TEXT NOT NULL DEFAULT 'manual' CHECK (origen IN ('manual','desde_hc')),
+  origen        TEXT NOT NULL DEFAULT 'manual'
+                CONSTRAINT turnos_origen_check CHECK (origen IN ('manual','desde_hc')),
   consulta_id   UUID REFERENCES public.consultas(id) ON DELETE SET NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Un turno de categoría 'turno_medico' exige paciente asociado.
+  CONSTRAINT check_paciente_id_required_for_turno_medico
+    CHECK (categoria <> 'turno_medico' OR paciente_id IS NOT NULL)
 );
 CREATE INDEX idx_turnos_fecha    ON public.turnos(fecha_inicio);
 CREATE INDEX idx_turnos_rango    ON public.turnos(fecha_inicio, fecha_fin);
@@ -529,13 +554,11 @@ CREATE INDEX mensajes_lecturas_user_idx ON public.mensajes_lecturas(user_id);
 
 
 -- ── notificaciones ──────────────────────────────────────────────────────────
--- ⚠ SIN MIGRACIÓN FUENTE: la tabla se aplicó directo en Supabase (no hay CREATE en
--- supabase/migrations/). La estructura de abajo se VERIFICÓ contra la base real y se
--- reconstruye fielmente. Avisos del sistema para el médico. Referencias en el código:
+-- Versionada por la migración 030. Avisos del sistema para el médico.
+-- Referencias en el código:
 --   · SELECT  → src/app/(app)/notificaciones/page.tsx        (.eq('medico_id', ...))
 --   · INSERT  → src/app/api/turnero/route.ts                 (turno agendado por asistente)
 --   · INSERT  → src/app/api/cron/recordatorios/route.ts      (recordatorio 24hs enviado)
--- TODO: crear la migración fuente para versionarla. Ver PENDIENTES.md → Bloque A.
 CREATE TABLE public.notificaciones (
   id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   medico_id  UUID        NOT NULL REFERENCES public.profiles(id),
@@ -546,17 +569,27 @@ CREATE TABLE public.notificaciones (
   payload    JSONB,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+-- Índices verificados contra pg_indexes de la base real; la migración 030 los crea
+-- con estos mismos nombres y definiciones.
+CREATE INDEX idx_notificaciones_medico  ON public.notificaciones(medico_id);
+CREATE INDEX idx_notificaciones_leida   ON public.notificaciones(medico_id, leida);
+CREATE INDEX idx_notificaciones_created ON public.notificaciones(created_at DESC);
+
 ALTER TABLE public.notificaciones ENABLE ROW LEVEL SECURITY;
 
 -- RLS de notificaciones (el médico solo ve/gestiona las propias).
--- ⚠ La auditoría confirmó los NOMBRES de las políticas (notificaciones_select/insert/
---   update/delete) + una duplicada "Medicos ven sus propias notificaciones" (redundante
---   con el SELECT). Los PREDICADOS de abajo son una reconstrucción plausible
---   (medico_id = auth.uid()), no verificados uno a uno contra la base.
+-- ⚠ ASIMETRÍA INTENCIONAL: el INSERT usa get_medico_id() y los otros tres auth.uid().
+--   Es a propósito: un ASISTENTE inserta la notificación EN NOMBRE de su médico al
+--   agendar un turno (src/app/api/turnero/route.ts) → get_medico_id() resuelve al id
+--   del médico del tenant y el WITH CHECK lo permite. Con auth.uid() ese insert
+--   fallaría. Los select/update/delete sí usan auth.uid(): solo el propio médico lee
+--   y gestiona sus notificaciones.
+--   (La migración 029 dropeó la política duplicada "Medicos ven sus propias
+--    notificaciones", redundante con notificaciones_select.)
 CREATE POLICY "notificaciones_select" ON public.notificaciones
   FOR SELECT USING (medico_id = auth.uid());
 CREATE POLICY "notificaciones_insert" ON public.notificaciones
-  FOR INSERT WITH CHECK (medico_id = auth.uid());
+  FOR INSERT WITH CHECK (medico_id = get_medico_id());
 CREATE POLICY "notificaciones_update" ON public.notificaciones
   FOR UPDATE USING (medico_id = auth.uid());
 CREATE POLICY "notificaciones_delete" ON public.notificaciones
@@ -821,9 +854,12 @@ CREATE POLICY "historia_insert" ON public.historia_clinica
 CREATE POLICY "historia_update" ON public.historia_clinica
   FOR UPDATE USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = historia_clinica.paciente_id AND creado_por = get_medico_id()));
+-- Restaurada por la migración 029 (la base había perdido el chequeo de rol médico).
+-- Borrar una HC es exclusivo del médico: la Ley 26.529 obliga a conservarla.
 CREATE POLICY "historia_delete" ON public.historia_clinica
-  FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = historia_clinica.paciente_id AND creado_por = auth.uid()));
+  FOR DELETE TO authenticated USING (
+    public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = historia_clinica.paciente_id AND creado_por = public.get_medico_id()));
 
 -- ── consultas ───────────────────────────────────────────────────────────────
 -- ⚠ La migración 025 dropeó dos políticas huérfanas (medico_full_access,
@@ -865,12 +901,18 @@ CREATE POLICY "evoluciones_select" ON public.evoluciones
   FOR SELECT USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "evoluciones_insert" ON public.evoluciones
   FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()));
+-- update/delete restaurados por la migración 029 (la base había perdido el chequeo
+-- de rol médico): modificar/eliminar evoluciones es exclusivo del médico.
 CREATE POLICY "evoluciones_update" ON public.evoluciones
-  FOR UPDATE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = auth.uid()));
+  FOR UPDATE TO authenticated
+  USING (public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = public.get_medico_id()))
+  WITH CHECK (public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = public.get_medico_id()));
 CREATE POLICY "evoluciones_delete" ON public.evoluciones
-  FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = auth.uid()));
+  FOR DELETE TO authenticated
+  USING (public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = public.get_medico_id()));
 
 -- ── turnos ──────────────────────────────────────────────────────────────────
 CREATE POLICY "turnos_select" ON public.turnos
@@ -924,28 +966,44 @@ CREATE POLICY "certificados_update" ON public.certificados
 
 -- ── recetas ─────────────────────────────────────────────────────────────────
 -- Los asistentes solo pueden VER; crear/modificar/eliminar es exclusivo del médico.
+-- insert/update/delete restaurados por la migración 029 (la base había perdido el
+-- chequeo de rol médico). Con la emisión bloqueada por ANMAT y sin endpoint de
+-- escritura, la RLS es la ÚNICA defensa de esta tabla.
 CREATE POLICY "recetas_select" ON public.recetas
   FOR SELECT USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "recetas_insert" ON public.recetas
-  FOR INSERT WITH CHECK (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = auth.uid()));
+  FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()));
 CREATE POLICY "recetas_update" ON public.recetas
-  FOR UPDATE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = auth.uid()));
+  FOR UPDATE TO authenticated
+  USING (public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()))
+  WITH CHECK (public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()));
 CREATE POLICY "recetas_delete" ON public.recetas
-  FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = auth.uid()));
+  FOR DELETE TO authenticated
+  USING (public.get_user_role(auth.uid()) = 'medico'
+    AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()));
 
 -- ── difusion_posts ──────────────────────────────────────────────────────────
--- Asistentes pueden ver/crear (borrador); publicar/editar/eliminar es del médico.
+-- ⚠ PERMISIVAS A PROPÓSITO (decisión de producto, NO es un error de documentación).
+--   Las cuatro políticas validan SOLO el tenant: cualquier miembro del tenant
+--   (incluidos los asistentes) puede ver, crear, EDITAR y ELIMINAR posts. Los posts de
+--   difusión son comunicación del consultorio, no datos clínicos, y el código de la app
+--   ya lo asume: src/app/api/difusion/[id]/route.ts (PATCH y DELETE) valida únicamente
+--   la pertenencia al tenant, sin chequear rol.
+--   Por eso la migración 029 —que restauró el rol médico en recetas/evoluciones/
+--   historia_clinica— NO tocó difusión deliberadamente. Si alguna vez se quisiera
+--   restringir, hay que agregar un permiso granular de difusión (hoy no existe).
 CREATE POLICY "difusion_select" ON public.difusion_posts
   FOR SELECT USING (medico_id = get_medico_id());
 CREATE POLICY "difusion_insert" ON public.difusion_posts
   FOR INSERT WITH CHECK (medico_id = get_medico_id());
 CREATE POLICY "difusion_update" ON public.difusion_posts
-  FOR UPDATE USING (medico_id = auth.uid() AND public.get_user_role(auth.uid()) = 'medico');
+  FOR UPDATE USING (medico_id = get_medico_id());
 CREATE POLICY "difusion_delete" ON public.difusion_posts
-  FOR DELETE USING (medico_id = auth.uid() AND public.get_user_role(auth.uid()) = 'medico');
+  FOR DELETE USING (medico_id = get_medico_id());
 
 -- ── difusion_envios ─────────────────────────────────────────────────────────
 CREATE POLICY "envios_select" ON public.difusion_envios

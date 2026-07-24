@@ -35,6 +35,20 @@
 --     colesterol_hdl        base numeric(6,2)  — schema.sql decía (5,1)
 --   Además created_at/updated_at son NULLABLE en la base (schema.sql los ponía NOT
 --   NULL). Se reproduce la base tal cual.
+--
+-- ✅ ÍNDICES VERIFICADOS CONTRA `pg_indexes` DE LA BASE REAL (no son inventados).
+--   Los nombres y definiciones de abajo se consultaron directamente sobre la base antes
+--   de aplicar esta migración. Son exactamente estos 8, ni uno más:
+--     consultas:      consultas_pkey (UNIQUE, id)
+--                     consultas_paciente_id_idx  btree (paciente_id)
+--                     consultas_medico_id_idx    btree (medico_id)
+--                     consultas_fecha_hora_idx   btree (fecha_hora DESC)
+--     notificaciones: notificaciones_pkey (UNIQUE, id)
+--                     idx_notificaciones_medico  btree (medico_id)
+--                     idx_notificaciones_leida   btree (medico_id, leida)
+--                     idx_notificaciones_created btree (created_at DESC)
+--   (Los *_pkey los crea el PRIMARY KEY de cada tabla; los otros 6 se crean
+--   explícitamente en esta migración.) Verificado: la base NO tiene índices duplicados.
 -- ============================================================================
 
 
@@ -100,8 +114,10 @@ CREATE TABLE IF NOT EXISTS public.consultas (
   campos_extra           JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 
-CREATE INDEX IF NOT EXISTS idx_consultas_paciente ON public.consultas(paciente_id);
-CREATE INDEX IF NOT EXISTS idx_consultas_medico   ON public.consultas(medico_id);
+-- Índices con los nombres y definiciones REALES de la base (ver nota del encabezado).
+CREATE INDEX IF NOT EXISTS consultas_paciente_id_idx ON public.consultas USING btree (paciente_id);
+CREATE INDEX IF NOT EXISTS consultas_medico_id_idx   ON public.consultas USING btree (medico_id);
+CREATE INDEX IF NOT EXISTS consultas_fecha_hora_idx  ON public.consultas USING btree (fecha_hora DESC);
 
 ALTER TABLE public.consultas ENABLE ROW LEVEL SECURITY;
 
@@ -151,8 +167,7 @@ CREATE POLICY "consultas_delete" ON public.consultas
 -- │ 2. Tabla `notificaciones`                                                  │
 -- └──────────────────────────────────────────────────────────────────────────┘
 -- Avisos del sistema para el médico (turno agendado por asistente, recordatorio
--- enviado). medico_id = tenant. Sin índices (la auditoría no encontró ninguno; ver
--- RESPUESTA.md → sugerencia, NO agregada acá).
+-- enviado). medico_id = tenant. Tiene 3 índices (ver más abajo).
 CREATE TABLE IF NOT EXISTS public.notificaciones (
   id         UUID        NOT NULL DEFAULT gen_random_uuid()
                            CONSTRAINT notificaciones_pkey PRIMARY KEY,
@@ -168,6 +183,13 @@ CREATE TABLE IF NOT EXISTS public.notificaciones (
 );
 
 ALTER TABLE public.notificaciones ENABLE ROW LEVEL SECURITY;
+
+-- Índices con los nombres y definiciones REALES de la base (ver nota del encabezado).
+-- La tabla se consulta siempre filtrando por medico_id (listado y campanita de no
+-- leídas), de ahí el índice simple, el compuesto con `leida` y el de orden cronológico.
+CREATE INDEX IF NOT EXISTS idx_notificaciones_medico  ON public.notificaciones USING btree (medico_id);
+CREATE INDEX IF NOT EXISTS idx_notificaciones_leida   ON public.notificaciones USING btree (medico_id, leida);
+CREATE INDEX IF NOT EXISTS idx_notificaciones_created ON public.notificaciones USING btree (created_at DESC);
 
 -- Las 4 políticas tal como quedaron tras la 029 (que dropeó la duplicada).
 -- ⚠ ASIMETRÍA INTENCIONAL: el INSERT usa get_medico_id() y los otros tres auth.uid().

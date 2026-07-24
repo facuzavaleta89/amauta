@@ -252,6 +252,21 @@ Tanda de **Persistencia de PDFs** (migraciones 027–028, ver reglas de negocio 
   páginas de detalle (leen snapshot), `pedido-pdf`/`certificado-pdf` (diálogo de descarga de
   revocados + banner de "sin emisor"), y `.env.example` (`NEXT_PUBLIC_SITE_URL`).
 
+Tanda de **Reproducibilidad y limpieza del esquema** (migraciones 029–030, ver notas
+técnicas 6, 12, 13 y 14):
+- **029:** corrigió un **drift de seguridad** en RLS (la base se había vuelto más permisiva
+  que las migraciones fuente) y limpió duplicados (función `update_updated_at_column`,
+  `get_user_role()` sin args, política duplicada de notificaciones, DEFAULT roto de
+  `profiles.role`).
+- **030:** versionó los objetos huérfanos (`consultas`, `notificaciones`, columnas de
+  `turnos` y `profiles`). El estado final ya es reproducible; la secuencia desde cero **no**.
+- **Repo:** se corrigieron 6 desajustes TS↔esquema (`Certificado.tipo` nullable,
+  `TurnoAuditLog.accion` sin `| string`, `role: UserRole` en los joins de mensajes, nueva
+  interface `MensajeLectura`, comentario de `proximo_control`) y se eliminaron **16 archivos**
+  de código muerto (11 componentes stub + 4 hooks stub + el barrel redundante
+  `types/supabase.ts`). Se **mantuvo** `lib/pdf/receta-template.tsx` como marcador del
+  template de recetas (bloqueado por ANMAT).
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
 ya existen por migración) y la sección "Recetas" (bloqueada por certificación ANMAT).
@@ -270,9 +285,10 @@ ya existen por migración) y la sección "Recetas" (bloqueada por certificación
 
 ## Notas y deuda técnica
 
-1. **Hooks:** 4 de 5 en `src/hooks/*` siguen stubs (11 bytes: `use-auth`, `use-pacientes`,
-   `use-role`, `use-turnos`) — la lógica vive en Server Components/Actions. Excepción:
-   `use-view-mode.ts` sí tiene lógica real (preferencia mosaico/lista en localStorage).
+1. **Hooks:** los 4 stubs (`use-auth`, `use-pacientes`, `use-role`, `use-turnos`) se
+   **eliminaron** en la tanda de reproducibilidad; la lógica vive en Server
+   Components/Actions. Queda solo `use-view-mode.ts`, que tiene lógica real (preferencia
+   mosaico/lista en localStorage).
 2. **Permisos legacy:** `puede_ver_historias` / `puede_editar_agenda` (Bloque 2) fueron
    reemplazados por los 12 granulares; siguen en la tabla por compatibilidad.
 3. **`profiles.matricula`** (TEXT) deprecada → usar `matriculas` (JSONB).
@@ -280,12 +296,12 @@ ya existen por migración) y la sección "Recetas" (bloqueada por certificación
    **No crear `middleware.ts`.** Para rutas públicas, editar `publicRoutes` en `proxy.ts`.
 5. **Admin client para permisos:** el médico actualiza permisos del asistente vía
    `admin.ts` (bypass RLS), porque `profiles_update_own` solo permite el perfil propio.
-6. **Esquema sin migración fuente:** la tabla `consultas` (su columna `campos_extra` **sí**
-   tiene fuente: migración 022), la tabla `notificaciones`, las columnas de Bloque 4 en
-   `turnos` (`categoria/origen/consulta_id`) y `profiles.titulo/matriculas/logo_url` se
-   aplicaron directo en Supabase. `schema.sql` **los reconstruye a todos** (incluida
-   `notificaciones`, ya verificada contra la base), pero les falta la migración fuente
-   versionada; ver `PENDIENTES.md` → Bloque A.
+6. **✅ Esquema sin migración fuente — RESUELTO (migración 030).** `consultas`,
+   `notificaciones`, las columnas de Bloque 4 de `turnos` y `profiles.titulo/matriculas/
+   logo_url` ya tienen su `CREATE` versionado. **Limitación conocida:** el ESTADO FINAL es
+   reproducible, pero la SECUENCIA de migraciones **no** corre desde una base vacía (013,
+   014, 015, 022 y 025 referencian `consultas` y la tabla recién se crea en la 030 → falla
+   en la 013). Requiere una consolidación de baseline, no hecha; ver `PENDIENTES.md` → Bloque A.
 7. **Migración vacía:** `20260326204733_fix_rls_recursion.sql` tiene 0 bytes.
 8. **Migración 025 (seguridad):** `verificar_documento` ya **no expone** DNI completo ni
    contenido clínico (devuelve DNI enmascarado, fija `search_path`, y solo `service_role`
@@ -315,3 +331,25 @@ ya existen por migración) y la sección "Recetas" (bloqueada por certificación
     var tiene **prioridad** y el header quedó solo como fallback (ver `getBaseUrl` en
     `src/lib/pdf/documentos.ts`). Configurada en Vercel (production/preview/development) y en
     `.env.example` / `.env.local`. Prod: `https://amauta-salud.vercel.app`.
+12. **Migración 029 (drift de RLS):** las políticas de la base habían sido modificadas **a
+    mano** hacia versiones más permisivas que las migraciones fuente. Como Supabase expone las
+    tablas por **PostgREST**, un asistente podía escribir directo salteando la app. La 029
+    restauró el chequeo de rol médico en `recetas` (insert/update/delete), `evoluciones`
+    (update/delete) e `historia_delete` — el más grave, porque un asistente podía **borrar
+    historias clínicas** que la Ley 26.529 obliga a conservar —, todas normalizadas a
+    `TO authenticated`. Además: migró el trigger `consultas_updated_at` de
+    `update_updated_at_column()` a `set_updated_at()` y dropeó la duplicada (era la única
+    SECURITY INVOKER sin `search_path` fijo); dropeó `get_user_role()` **sin argumentos**
+    (huérfana; se conserva la de `user_id uuid`); dropeó la política duplicada
+    `"Medicos ven sus propias notificaciones"`; y corrigió el DEFAULT de `profiles.role`, que
+    era `'secretario'` y **violaba su propio CHECK**.
+13. **Migración 030 (objetos huérfanos):** versionó lo que existía en la base sin `CREATE`:
+    tablas `consultas` y `notificaciones` completas, columnas `turnos.categoria/origen/
+    consulta_id` + sus 3 CHECK, y `profiles.titulo/matriculas/logo_url`. Idempotente. Ver la
+    limitación de orden en la nota 6.
+14. **Difusión: permisiva a propósito.** Las 4 políticas de `difusion_posts` validan **solo el
+    tenant**: cualquier asistente vinculado puede ver, crear, **editar y eliminar** posts. Es
+    una **decisión de producto**, no un descuido: los posts son comunicación del consultorio,
+    no datos clínicos, y `src/app/api/difusion/[id]/route.ts` (PATCH y DELETE) ya valida solo
+    la pertenencia al tenant. Por eso la 029 **no** tocó difusión. Restringirlo en el futuro
+    requeriría un permiso granular de difusión (hoy no existe).
