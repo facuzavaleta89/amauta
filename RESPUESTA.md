@@ -1,403 +1,166 @@
-# RESPUESTA — Migración 029: corrección del drift RLS + limpieza de duplicados
+# RESPUESTA — Trabajo de repo: desajustes de tipos + limpieza de código muerto
 
-> **Solo SQL.** No toqué `src/`, ni `schema.sql`, ni `PENDIENTES.md`, ni `CLAUDE.md`.
-> No ejecuté nada contra Supabase. NO incluí difusión. NO recreé consultas/notificaciones
-> ni columnas de turnos/profiles (eso es la 030).
+> Solo `src/`. No toqué `supabase/migrations/`, ni `schema.sql`/`CLAUDE.md`/`PENDIENTES.md`/
+> `DESIGN.md`, ni ejecuté nada contra Supabase. No cambié lógica de negocio.
+> **Verificación:** `npx tsc --noEmit` → **exit 0**; `npx next build` →
+> **✓ Compiled successfully**, sin warnings ni errores.
 > Fecha: 2026-07-23 · Rama: `main`.
 
 ---
 
-## Qué escribí
+## Parte 1 — Desajustes TypeScript ↔ esquema
 
-| Archivo | Estado |
-|---|---|
-| `supabase/migrations/029_fix_drift_rls.sql` | **creado** |
-| `MIGRACION-05-drift-rls.sql` (raíz) | **creado**, idéntico |
+### 1.1 `Certificado.tipo` → nullable ✅
+`src/types/pedido.ts` — `tipo: CertificadoTipo` → **`tipo: CertificadoTipo | null`** (con comentario
+"nullable sin default desde la migración 017").
 
-**Verificación de identidad (hecha):**
+**Consumidores revisados:** todos los usos guardan el null:
+- `certificado-template.tsx:333` `certificado.tipo ? (TIPO_LABELS[…] ?? '') : ''`, y `:334/:417`
+  `=== 'otro'` / `=== 'reposo'` — seguros con null.
+- `certificados/[id]/pdf/route.ts:32` y `certificado-pdf.tsx:70` interpolan `tipo` en el nombre del
+  archivo (`certificado_${tipo}_…`); con null se coerciona a `"null"` en el string. Es cosmético en
+  el filename, **no** es un error de tipo ni cambia lógica; no lo toqué (la restricción prohíbe
+  cambios de lógica). El schema Zod ya emitía `tipo: null` (`certificadoSchema` lo transforma), así
+  que esto ya podía pasar de antes.
 
+**Cascada (1 archivo):** `src/lib/pdf/certificado-template.tsx:294` — su interface local tipaba
+`tipo: string`. Al volver `Certificado.tipo` nullable, pasar la fila a la plantilla rompía
+(`documentos.ts:162`, overload). **Fix mínimo de tipo:** `tipo: string` → `tipo: string | null`. El
+cuerpo de la plantilla ya maneja el null (líneas 333-335, 417), así que es cambio de tipo puro, sin
+lógica. Está permitido por la consigna ("corregí los errores en cascada, explicá cada uno").
+
+### 1.2 `TurnoAuditLog.accion` sin `| string` ✅
+`src/types/turno.ts:89` — `'creado' | 'modificado' | 'cancelado' | 'reprogramado' | string` →
+**sin `| string`**. Verificado contra `log_turno_cambio` en `005_turnos.sql:148-174`: el trigger
+solo emite `'creado'` (INSERT) y `'cancelado' | 'reprogramado' | 'modificado'` (UPDATE, `CASE`). Los
+4 literales cubren todo lo que la base produce → quitar `| string` no pierde ningún valor.
+
+### 1.3 `role: string` → `UserRole` en joins de mensajes ✅
+`src/types/mensaje.ts:21-22` — `remitente?/destinatario?: { full_name: string; role: string }` →
+**`role: UserRole`**. Agregué `import type { UserRole } from './roles'`.
+
+### 1.4 Interface `MensajeLectura` ✅
+Creada en `src/types/mensaje.ts` (mismo archivo, no la moví) y usada en `MensajeInterno.lecturas`.
+
+**Decisión — refleja la PROYECCIÓN del join, no la tabla completa:**
+```ts
+export interface MensajeLectura { user_id: string; leido_at: string }
 ```
-$ diff supabase/migrations/029_fix_drift_rls.sql MIGRACION-05-drift-rls.sql
-DIFF OK — idénticos
-$ md5sum ...
-c3ee881cd34b44f7213f04ebc98334d2  supabase/migrations/029_fix_drift_rls.sql
-c3ee881cd34b44f7213f04ebc98334d2  MIGRACION-05-drift-rls.sql
-```
+**Justificación:** el join embebido es `lecturas:mensajes_lecturas(user_id, leido_at)`
+(`mensajes/actions.ts:43,90,98`) — **no** trae `mensaje_id` (la otra mitad de la PK compuesta).
+Además, el update optimista de `bandeja.tsx:66` construye registros con **solo** `{ user_id,
+leido_at }`. Si la interface incluyera `mensaje_id` (tabla completa), ese `bandeja.tsx:66` y los
+`.some((l) => l.user_id === …)` de `hilo-modal.tsx:131` / `mensaje-card.tsx:25` / `bandeja.tsx:50,63`
+seguirían compilando por leer, pero la **construcción** en `:66` fallaría por faltar `mensaje_id`. La
+interface tiene que describir lo que realmente circula en memoria, que es la proyección. Si algún día
+se necesita el registro completo de la tabla, se puede agregar un tipo aparte (p. ej.
+`MensajeLecturaRow` con `mensaje_id`) sin tocar este.
 
-### Contenido, un renglón por bloque
-1. **Drift RLS:** DROP+CREATE de `recetas_{insert,update,delete}`, `evoluciones_{update,delete}`,
-   `historia_delete` → todas vuelven a exigir `get_user_role(auth.uid())='medico'` + tenant.
-2. **Trigger de consultas:** repunta `consultas_updated_at` a `set_updated_at()` y luego dropea
-   `update_updated_at_column()` (en ese orden).
-3. **`get_user_role()` 0-arg:** dropeada con firma vacía explícita.
-4. **Política duplicada de `notificaciones`:** dropeada.
-5. **`profiles.role` default:** `'secretario'` → `'asistente'`.
+### 1.5 Comentario de `proximo_control` ✅
+`src/types/pedido.ts:255` — `// ISO date` → **`// ISO timestamptz (columna TIMESTAMPTZ desde la
+migración 016)`**.
 
-Predicado usado (tal como pediste): tenant existente `creado_por = public.get_medico_id()` **más**
-`public.get_user_role(auth.uid()) = 'medico'`, normalizado a `TO authenticated`. En los UPDATE
-(`recetas_update`, `evoluciones_update`) puse `USING` **y** `WITH CHECK` con el mismo predicado
-(así estaba en la base auditada, y evita que un UPDATE deje la fila en un estado no permitido).
+**Consumo del campo (revisado, NO cambiado):** `historia_clinica.proximo_control` se usa en el form
+y PDF de HC. No encontré código que lo formatee asumiendo fecha-sin-hora de forma que rompa; se pasa
+como string. **Anotado, sin cambios** (la consigna pide no tocarlo). Si en el futuro se muestra al
+usuario, conviene formatearlo con hora (es timestamptz), pero hoy no hay un bug visible.
+
+### 1.6 Barrel redundante `src/types/supabase.ts` ✅ eliminado
+**Evidencia:** `grep -rn "types/supabase" src` → **0 resultados**; ninguna forma de import
+(`@/types/supabase`, `./supabase`) lo referencia. `index.ts` **no** lo re-exporta (solo lo mencionaba
+en un comentario). → **Sin consumidores → borrado.**
+
+**Cascada:** `src/types/index.ts` tenía un comentario (líneas 11-13) describiendo `supabase.ts`. Al
+borrar el archivo, ese comentario quedaba obsoleto/colgante. Lo **quité** (solo el bloque de
+comentario; ningún `export` cambió). Es limpieza directa del borrado, no un refactor.
 
 ---
 
-## SQL COMPLETO — para copiar y pegar en el SQL Editor
+## Parte 2 — Código muerto eliminado
 
-```sql
--- ============================================================================
--- Migration 029 — Corrección de DRIFT de seguridad en RLS + limpieza de duplicados
--- ============================================================================
--- ⚠ Esta migración CORRIGE UN DRIFT, no introduce un cambio nuevo. En algún momento
---   las políticas RLS de la base fueron modificadas A MANO en el dashboard hacia
---   versiones MÁS PERMISIVAS que las que crearon las migraciones fuente (004, 009) y
---   que documenta schema.sql. Como Supabase expone las tablas por PostgREST, un
---   asistente con su sesión puede escribir directo contra estas tablas SALTEANDO la
---   aplicación. Esta migración devuelve las políticas al estado correcto: exigir rol
---   médico para escribir/borrar datos clínicos sensibles.
---
--- Contenido:
---   1. Corrige el drift de RLS: recetas (insert/update/delete), evoluciones
---      (update/delete) e historia_clinica (delete) vuelven a exigir rol médico.
---   2. Migra el trigger consultas_updated_at a set_updated_at() y dropea la función
---      duplicada update_updated_at_column().
---   3. Dropea la versión SIN argumentos de get_user_role() (huérfana).
---   4. Dropea la política duplicada de notificaciones.
---   5. Corrige el DEFAULT de profiles.role ('secretario' → 'asistente').
---
--- Idempotente: DROP ... IF EXISTS antes de cada CREATE; DROP FUNCTION/POLICY IF EXISTS.
---
--- NOTA de alcance: NO recrea consultas/notificaciones ni las columnas huérfanas de
---   turnos/profiles (eso es la migración 030). Asume que esos objetos YA existen en la
---   base actual (que es el objetivo de esta corrección). Ver RESPUESTA.md → RIESGOS.
---
--- DECISIÓN de producto (NO tocar acá): difusion_update/delete también quedaron
---   permisivas, pero el código de la app (src/app/api/difusion/[id]/route.ts) coincide
---   y los posts de difusión son comunicación, no datos clínicos. Se deja permisivo a
---   propósito; NO se incluye en esta migración.
--- ============================================================================
+### 2.1 Componentes stub — 11 de 12 borrados ✅
+Verificado con grep (0 imports en todo `src`, excluyendo el propio archivo) antes de borrar. Borrados:
 
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 1. Corregir el DRIFT de seguridad en las políticas RLS                     │
--- └──────────────────────────────────────────────────────────────────────────┘
--- Predicado correcto = el tenant que ya tienen (creado_por = get_medico_id()) MÁS el
--- chequeo de rol médico (get_user_role(auth.uid()) = 'medico'). Para un médico,
--- get_medico_id() devuelve su propio id, así que el predicado de tenant es equivalente
--- a auth.uid() pero se mantiene get_medico_id() por consistencia con el resto del RLS.
--- Se normaliza el rol de la política a TO authenticated.
---
--- ⚠ Solo se recrean insert/update/delete donde faltaba el rol médico. Las políticas
---   de SELECT (y evoluciones_insert / historia_insert/update) NO se tocan: están bien.
-
--- ── recetas: crear/modificar/eliminar es exclusivo del médico (regla de negocio 7) ──
-DROP POLICY IF EXISTS "recetas_insert" ON public.recetas;
-CREATE POLICY "recetas_insert" ON public.recetas
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()
-    )
-  );
-
-DROP POLICY IF EXISTS "recetas_update" ON public.recetas;
-CREATE POLICY "recetas_update" ON public.recetas
-  FOR UPDATE TO authenticated
-  USING (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()
-    )
-  )
-  WITH CHECK (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()
-    )
-  );
-
-DROP POLICY IF EXISTS "recetas_delete" ON public.recetas;
-CREATE POLICY "recetas_delete" ON public.recetas
-  FOR DELETE TO authenticated
-  USING (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = recetas.paciente_id AND creado_por = public.get_medico_id()
-    )
-  );
-
--- ── evoluciones: modificar/eliminar es exclusivo del médico (datos clínicos) ──
-DROP POLICY IF EXISTS "evoluciones_update" ON public.evoluciones;
-CREATE POLICY "evoluciones_update" ON public.evoluciones
-  FOR UPDATE TO authenticated
-  USING (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = evoluciones.paciente_id AND creado_por = public.get_medico_id()
-    )
-  )
-  WITH CHECK (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = evoluciones.paciente_id AND creado_por = public.get_medico_id()
-    )
-  );
-
-DROP POLICY IF EXISTS "evoluciones_delete" ON public.evoluciones;
-CREATE POLICY "evoluciones_delete" ON public.evoluciones
-  FOR DELETE TO authenticated
-  USING (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = evoluciones.paciente_id AND creado_por = public.get_medico_id()
-    )
-  );
-
--- ── historia_clinica: borrar es exclusivo del médico ──
--- El más grave del drift: la Ley 26.529 obliga a CONSERVAR la HC. Un asistente NO
--- debe poder borrarla. (En la app la HC no se borra nunca; la RLS es la defensa real.)
-DROP POLICY IF EXISTS "historia_delete" ON public.historia_clinica;
-CREATE POLICY "historia_delete" ON public.historia_clinica
-  FOR DELETE TO authenticated
-  USING (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND EXISTS (
-      SELECT 1 FROM public.pacientes
-      WHERE id = historia_clinica.paciente_id AND creado_por = public.get_medico_id()
-    )
-  );
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 2. Migrar el trigger de consultas y dropear la función duplicada           │
--- └──────────────────────────────────────────────────────────────────────────┘
--- La base tiene DOS funciones de updated_at: set_updated_at() (la canónica, usada por
--- todos los triggers) y update_updated_at_column() (duplicada, SECURITY INVOKER y SIN
--- search_path fijo — menos segura). El único trigger que usa la duplicada es
--- consultas_updated_at. Lo migramos a la canónica y recién ahí dropeamos la duplicada.
---
--- ⚠ EL ORDEN IMPORTA: hay que repuntar el trigger a set_updated_at() ANTES de dropear
---   update_updated_at_column(). Si se dropeara la función primero, el trigger quedaría
---   apuntando a una función inexistente y cualquier UPDATE sobre consultas fallaría
---   (o el DROP FUNCTION fallaría por dependencia). Por eso: 1) drop trigger, 2) recrear
---   con set_updated_at(), 3) drop función duplicada.
-DROP TRIGGER IF EXISTS consultas_updated_at ON public.consultas;
-
-CREATE TRIGGER consultas_updated_at
-  BEFORE UPDATE ON public.consultas
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-DROP FUNCTION IF EXISTS public.update_updated_at_column();
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 3. Dropear get_user_role() SIN argumentos (huérfana)                       │
--- └──────────────────────────────────────────────────────────────────────────┘
--- Existen dos: get_user_role() [plpgsql] y get_user_role(user_id uuid) [sql]. Todo el
--- proyecto usa la de UN argumento; la de cero no la referencia ninguna política
--- (verificado sobre pg_policies). Se especifica la firma vacía EXPLÍCITAMENTE para no
--- tocar por accidente la de un argumento, que sí se usa en todo el RLS.
-DROP FUNCTION IF EXISTS public.get_user_role();
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 4. Dropear la política duplicada de notificaciones                         │
--- └──────────────────────────────────────────────────────────────────────────┘
--- "Medicos ven sus propias notificaciones" (SELECT USING auth.uid() = medico_id) es
--- idéntica en efecto a notificaciones_select (medico_id = auth.uid()). Redundante; se
--- dropea sin cambiar el comportamiento. El nombre lleva espacios y mayúsculas → comillas
--- dobles literales.
-DROP POLICY IF EXISTS "Medicos ven sus propias notificaciones" ON public.notificaciones;
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 5. Corregir el DEFAULT de profiles.role                                    │
--- └──────────────────────────────────────────────────────────────────────────┘
--- La base tiene DEFAULT 'secretario'::text, pero el CHECK es role IN ('medico',
--- 'asistente') → el default viola su propio constraint. Hoy no explota porque
--- handle_new_user() siempre pasa el rol explícito, pero cualquier INSERT que omita
--- role fallaría. La migración 001 y schema.sql ya dicen 'asistente'; solo la base está
--- desalineada. Lo alineamos.
-ALTER TABLE public.profiles ALTER COLUMN role SET DEFAULT 'asistente';
 ```
+src/components/dashboard/weekly-calendar.tsx
+src/components/difusion/post-editor.tsx
+src/components/difusion/send-modal.tsx
+src/components/pacientes/evolucion-charts.tsx
+src/components/pacientes/patient-tabs.tsx
+src/components/shared/confirm-dialog.tsx
+src/components/shared/error-boundary.tsx
+src/components/shared/file-preview.tsx
+src/components/shared/loading-spinner.tsx
+src/components/shared/role-guard.tsx
+src/components/turnero/turno-card.tsx
+```
+
+**`src/lib/pdf/receta-template.tsx` — MANTENIDO (decisión).** También tiene 0 imports (verificado:
+`api/recetas/route.ts` **no** lo importa). Lo dejé como marcador intencional de la funcionalidad de
+recetas, que está bloqueada por ANMAT pero se va a implementar cuando se certifique. Razones:
+1. Está **explícitamente earmarkeado** en la documentación del proyecto (`CLAUDE.md`, `PENDIENTES.md`,
+   `DESIGN.md`) como el placeholder del template de recetas; borrarlo ahora crearía un desajuste
+   código↔docs que **este** prompt tiene prohibido corregir (la doc va en otro prompt).
+2. Costo de mantenerlo: un archivo inerte de 55 bytes. Beneficio: marca el "slot" del template para
+   quien implemente recetas.
+Si en el prompt de documentación se decide lo contrario, borrarlo después es trivial y sin cascada.
+
+### 2.2 Hooks stub — 4 borrados ✅
+Verificado 0 imports. Borrados: `src/hooks/{use-auth,use-pacientes,use-role,use-turnos}.ts`.
+**`src/hooks/use-view-mode.ts` NO se tocó** (tiene lógica real de localStorage).
 
 ---
 
-## Consultas de verificación (correlas DESPUÉS de aplicar)
+## Errores en cascada (resumen)
 
-### V1 — Las 6 políticas del drift ahora exigen rol médico
+| Cascada | Origen | Resolución |
+|---|---|---|
+| `documentos.ts:162` overload no matchea (`tipo: string\|null` vs `string`) | 1.1 (Certificado.tipo nullable) | Amplié la prop `tipo` de `CertificadoPDFProps` en `certificado-template.tsx` a `string \| null`. Cambio de tipo, sin lógica (el cuerpo ya maneja null). |
+| Comentario obsoleto en `types/index.ts` | 1.6 (borrado de supabase.ts) | Quité el bloque de comentario que describía `supabase.ts`. |
 
-```sql
-SELECT tablename, policyname, cmd, roles,
-       (qual        ILIKE '%get_user_role%') AS using_exige_medico,
-       (with_check  ILIKE '%get_user_role%') AS check_exige_medico
-FROM pg_policies
-WHERE schemaname = 'public'
-  AND policyname IN ('recetas_insert','recetas_update','recetas_delete',
-                     'evoluciones_update','evoluciones_delete','historia_delete')
-ORDER BY tablename, policyname;
-```
-
-**Esperado: 6 filas, `roles = {authenticated}` en todas**, y el chequeo de médico presente donde
-corresponde:
-
-| policyname | cmd | using_exige_medico | check_exige_medico |
-|---|---|---|---|
-| historia_delete | DELETE | **t** | (null) |
-| evoluciones_delete | DELETE | **t** | (null) |
-| evoluciones_update | UPDATE | **t** | **t** |
-| recetas_delete | DELETE | **t** | (null) |
-| recetas_insert | INSERT | (null) | **t** |
-| recetas_update | UPDATE | **t** | **t** |
-
-(En INSERT el predicado vive en `with_check`; en DELETE, en `qual`/USING; en UPDATE, en ambos.)
-
-### V2 — No se tocaron las políticas que debían quedar igual
-
-```sql
-SELECT policyname, (qual ILIKE '%get_user_role%') AS exige_medico
-FROM pg_policies
-WHERE schemaname = 'public'
-  AND policyname IN ('recetas_select','evoluciones_select','evoluciones_insert',
-                     'historia_select','historia_insert','historia_update');
-```
-
-**Esperado: 6 filas, `exige_medico = f` en todas** (esas siguen sin exigir rol médico, correcto).
-
-### V3 — Difusión quedó intacta (permisiva, decisión tomada)
-
-```sql
-SELECT policyname, qual
-FROM pg_policies
-WHERE schemaname = 'public' AND policyname IN ('difusion_update','difusion_delete');
-```
-
-**Esperado:** siguen con el predicado de tenant (`medico_id = get_medico_id()`), **sin** rol
-médico. No las tocamos.
-
-### V4 — El trigger de consultas apunta a `set_updated_at()` (lo pediste)
-
-```sql
-SELECT t.tgname AS trigger, p.proname AS funcion
-FROM pg_trigger t
-JOIN pg_proc p ON p.oid = t.tgfoid
-WHERE t.tgrelid = 'public.consultas'::regclass
-  AND NOT t.tgisinternal;
-```
-
-**Esperado: 1 fila →** `trigger = consultas_updated_at`, **`funcion = set_updated_at`**
-(ya NO `update_updated_at_column`).
-
-### V5 — La función duplicada `update_updated_at_column` ya no existe
-
-```sql
-SELECT proname, oidvectortypes(proargtypes) AS args
-FROM pg_proc
-WHERE pronamespace = 'public'::regnamespace AND proname = 'update_updated_at_column';
-```
-
-**Esperado: 0 filas.**
-
-### V6 — De `get_user_role` quedó solo la de un argumento
-
-```sql
-SELECT proname, oidvectortypes(proargtypes) AS args
-FROM pg_proc
-WHERE pronamespace = 'public'::regnamespace AND proname = 'get_user_role'
-ORDER BY args;
-```
-
-**Esperado: 1 fila →** `get_user_role | uuid`. (Desapareció la de `args` vacío.)
-
-### V7 — La política duplicada de notificaciones ya no existe
-
-```sql
-SELECT policyname
-FROM pg_policies
-WHERE schemaname = 'public' AND tablename = 'notificaciones'
-ORDER BY policyname;
-```
-
-**Esperado:** `notificaciones_select`, `notificaciones_insert`, `notificaciones_update`,
-`notificaciones_delete` — **4 filas, SIN** `"Medicos ven sus propias notificaciones"`.
-
-### V8 — El default de `profiles.role` quedó en `'asistente'`
-
-```sql
-SELECT column_default
-FROM information_schema.columns
-WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'role';
-```
-
-**Esperado:** `'asistente'::text` (ya no `'secretario'::text`).
+Nota: la primera corrida de `tsc` mostró además errores en `.next/dev/types/validator.ts` (`Cannot
+find name 'c'/'app'/…`, `RouteHandlerConfig`): eran de un **`.next` viejo/corrupto**, no de mis
+cambios. Borré `.next` y volví a correr: `tsc` **exit 0**. El `next build` regenera esos artefactos
+limpios.
 
 ---
 
-## Qué probar en el navegador después de aplicar
+## Archivos tocados (no borrados)
+- `src/types/pedido.ts` — 1.1 + 1.5
+- `src/types/turno.ts` — 1.2
+- `src/types/mensaje.ts` — 1.3 + 1.4
+- `src/types/index.ts` — comentario (cascada de 1.6)
+- `src/lib/pdf/certificado-template.tsx` — prop `tipo` nullable (cascada de 1.1)
 
-El objetivo es confirmar que **endurecer** el RLS no rompió ningún flujo real (todos los caminos
-de escritura que la app ejercita los hace el médico o pasan por endpoints que ya validan).
-
-1. **HC / consultas (lo más sensible por el cambio de trigger):**
-   - Abrí una HC, **creá una consulta nueva** y **finalizala**. Debe guardar sin error (esto ejercita
-     el `UPDATE` sobre `consultas` → confirma que el trigger repuntado a `set_updated_at()` funciona
-     y que `updated_at` se sigue actualizando).
-   - Editá un borrador de consulta y guardá. OK.
-2. **Documentos:** emití un **pedido** y un **certificado** nuevos; descargá el PDF. (No dependen del
-   drift, pero validan que nada colateral se rompió.)
-3. **Turnos:** creá/modificá un turno (ejercita el trigger de auditoría y el flujo de notificaciones,
-   sin relación con lo tocado, pero es un buen smoke test).
-4. **Como médico:** que todo lo anterior funcione normal (el médico pasa `get_user_role='medico'`).
-5. **Difusión:** editá y borrá un post (debe seguir andando: no lo tocamos).
-6. **Registro/login:** registrate con una cuenta nueva de asistente y verificá que se crea el perfil
-   con `role='asistente'` (confirma que el fix del default no rompió `handle_new_user`, que igual pasa
-   el rol explícito).
-
-No hace falta probar los caminos de escritura de `recetas`/`evoluciones`/`historia_delete`: **no hay
-UI que los ejecute**. El endurecimiento solo cierra el hueco de PostgREST; para el usuario normal es
-transparente.
+## Archivos borrados (16)
+11 componentes stub + 4 hooks stub + `src/types/supabase.ts`.
 
 ---
 
-## Sobre permisos / posibles fallos al ejecutar
+## Qué probar en el navegador
 
-- Todo es sobre objetos de `public` (políticas, trigger, función, tabla). No toca `storage.*`, así
-  que **no** debería requerir privilegios especiales en el SQL Editor (a diferencia de 026/027).
-- `DROP FUNCTION IF EXISTS public.update_updated_at_column()` fallaría si **otro** trigger (no
-  auditado) todavía la usa. Según la auditoría, solo `consultas_updated_at` la usaba, y este script
-  la repunta antes. Si el DROP fallara por dependencia, es señal de que hay otro trigger usándola →
-  avisame antes de forzar.
+Son cambios de tipos y borrado de archivos sin uso; el riesgo real es bajo, pero borrar siempre
+puede sorprender. Smoke test corto:
 
----
+1. **Certificados (1.1 + cascada del template):** abrí un certificado existente y **descargá el PDF**;
+   emití un **certificado nuevo sin elegir "tipo"** (tipo = null) y descargá su PDF → debe generarse
+   sin romperse (verifica que la plantilla tolera `tipo` null). Ojo cosmético: el nombre del archivo
+   de un certificado sin tipo puede incluir "null" (`certificado_null_…`) — es preexistente, no lo
+   cambié.
+2. **Mensajería (1.3 + 1.4):** abrí `/mensajes`, mandá un **mensaje grupal**, marcá leído, y revisá
+   la campanita de no-leídos. Debe verse bien (toqué solo tipos de `lecturas`/`role`, no lógica).
+3. **Turnero:** creá/modificá/cancelá un turno y mirá el historial/auditoría si está expuesto (1.2 es
+   solo el tipo de `accion`, sin cambio funcional).
+4. **Navegación general:** que dashboard, pacientes, difusión, notas y perfil carguen. Los 12 archivos
+   borrados no tenían imports, así que no debería faltar nada — este paso solo confirma que ningún
+   import perdido se coló (el grep post-borrado dio vacío).
 
-## ⚠ Nota de reproducibilidad (para tener en cuenta, NO bloquea esta migración)
-
-Esta migración referencia `public.consultas` (Bloque 2). En un **entorno nuevo levantado solo desde
-migraciones**, `consultas` todavía no existe en el punto 029 (su `CREATE TABLE` recién llega en la
-030). Pero esto **no es un problema nuevo ni de esta migración**: las migraciones 013, 014, 015 y 025
-**ya** referencian `public.consultas` sin que ninguna la cree — el set de migraciones **ya no es
-fresh-runnable** desde antes. El objetivo de la 029 es la **base actual** (donde `consultas` existe),
-y ahí corre sin problema. La reproducibilidad fresh se resuelve de forma integral en la 030 (que crea
-los objetos huérfanos) y, si querés, en una consolidación de baseline posterior. Lo dejo señalado
-para que la 030 contemple el orden.
+No hace falta probar HC/`proximo_control` (1.5 fue solo un comentario).
 
 ---
 
-## PARADA — próximo paso
-
-**Frené acá, como pediste.** No escribí código de la app ni toqué `schema.sql`, `PENDIENTES.md` o
-`CLAUDE.md`.
-
-**Te toca a vos:** ejecutar el SQL en el SQL Editor y correr V1–V8.
-
-📌 **Recordatorio: después de que confirmes esta migración, viene la MIGRACIÓN 030 — recreación de
-objetos huérfanos** (`CREATE TABLE consultas`, `notificaciones`, columnas `turnos.categoria/origen/
-consulta_id` + sus 3 CHECK, y columnas `profiles.titulo/matriculas/logo_url`), toda idempotente.
-Para clavar los tipos exactos de `consultas`/`turnos` me va a servir que me pases el `\d+` real de
-esas tablas (Paso 0 que quedó pendiente del diagnóstico).
+## Recordatorio
+La **documentación** (`schema.sql`, `CLAUDE.md`, `PENDIENTES.md`, `DESIGN.md`) queda pendiente para el
+**próximo prompt**: entre otras cosas habrá que reflejar que se borraron 11 de los 12 stubs (y que
+`receta-template` se mantuvo a propósito), la eliminación de `types/supabase.ts`, y los ajustes de
+tipos. No lo toqué acá, como pediste.

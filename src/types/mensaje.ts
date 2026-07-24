@@ -3,6 +3,20 @@
 // Tipos de mensajería interna asíncrona
 // ============================================================
 
+import type { UserRole } from './roles'
+
+/**
+ * Registro de lectura de un mensaje grupal (tabla `mensajes_lecturas`).
+ * Refleja la PROYECCIÓN que trae el join embebido, no la tabla completa: el select
+ * es `lecturas:mensajes_lecturas(user_id, leido_at)` (ver mensajes/actions.ts), así
+ * que `mensaje_id` (parte de la PK compuesta) no viaja. Además, el update optimista
+ * en `bandeja.tsx` construye estos registros con solo estos dos campos.
+ */
+export interface MensajeLectura {
+  user_id: string
+  leido_at: string
+}
+
 export interface MensajeInterno {
   id: string
   medico_id: string
@@ -18,10 +32,10 @@ export interface MensajeInterno {
   parent_id: string | null
   created_at: string
   // Joins opcionales
-  remitente?: { full_name: string; role: string } | null
-  destinatario?: { full_name: string; role: string } | null
+  remitente?: { full_name: string; role: UserRole } | null
+  destinatario?: { full_name: string; role: UserRole } | null
   /** Para mensajes grupales: registros de lectura por usuario */
-  lecturas?: { user_id: string; leido_at: string }[]
+  lecturas?: MensajeLectura[]
 }
 
 export interface MensajeInsertar {

@@ -7,10 +7,6 @@
 // Nota: cada archivo agrupa una o varias entidades por dominio
 // (ej. pedido.ts contiene Pedido, Certificado, Receta, Evolucion,
 //  HistoriaClinica y Estudio). Ver schema.sql para el mapeo tabla ↔ tipo.
-//
-// `supabase.ts` es un barrel parcial anterior (re-exporta roles, paciente,
-// pedido, turno y difusion) que se mantiene por compatibilidad; este index
-// es la puerta de entrada preferida y cubre además consulta, mensaje y nota.
 // ============================================================
 
 export * from './roles'      // UserRole, Profile, PermisosAsistente, Matricula, SolicitudAsistente, helpers…
