@@ -1,469 +1,166 @@
-# RESPUESTA — Migración 030: recreación de objetos huérfanos
+# RESPUESTA — Trabajo de repo: desajustes de tipos + limpieza de código muerto
 
-> **Solo SQL.** No toqué `src/`, ni migraciones existentes (incluida la 022), ni
-> `schema.sql`/`PENDIENTES.md`/`CLAUDE.md`. No agregué índices que no existan en la base.
-> No cambié las políticas que dejó correctas la 029. No ejecuté nada contra Supabase.
+> Solo `src/`. No toqué `supabase/migrations/`, ni `schema.sql`/`CLAUDE.md`/`PENDIENTES.md`/
+> `DESIGN.md`, ni ejecuté nada contra Supabase. No cambié lógica de negocio.
+> **Verificación:** `npx tsc --noEmit` → **exit 0**; `npx next build` →
+> **✓ Compiled successfully**, sin warnings ni errores.
 > Fecha: 2026-07-23 · Rama: `main`.
 
 ---
 
-## Qué escribí
+## Parte 1 — Desajustes TypeScript ↔ esquema
 
-| Archivo | Estado |
-|---|---|
-| `supabase/migrations/030_objetos_huerfanos.sql` | **creado** |
-| `MIGRACION-06-huerfanos.sql` (raíz) | **creado**, idéntico |
+### 1.1 `Certificado.tipo` → nullable ✅
+`src/types/pedido.ts` — `tipo: CertificadoTipo` → **`tipo: CertificadoTipo | null`** (con comentario
+"nullable sin default desde la migración 017").
 
-**Verificación de identidad (hecha):**
+**Consumidores revisados:** todos los usos guardan el null:
+- `certificado-template.tsx:333` `certificado.tipo ? (TIPO_LABELS[…] ?? '') : ''`, y `:334/:417`
+  `=== 'otro'` / `=== 'reposo'` — seguros con null.
+- `certificados/[id]/pdf/route.ts:32` y `certificado-pdf.tsx:70` interpolan `tipo` en el nombre del
+  archivo (`certificado_${tipo}_…`); con null se coerciona a `"null"` en el string. Es cosmético en
+  el filename, **no** es un error de tipo ni cambia lógica; no lo toqué (la restricción prohíbe
+  cambios de lógica). El schema Zod ya emitía `tipo: null` (`certificadoSchema` lo transforma), así
+  que esto ya podía pasar de antes.
 
+**Cascada (1 archivo):** `src/lib/pdf/certificado-template.tsx:294` — su interface local tipaba
+`tipo: string`. Al volver `Certificado.tipo` nullable, pasar la fila a la plantilla rompía
+(`documentos.ts:162`, overload). **Fix mínimo de tipo:** `tipo: string` → `tipo: string | null`. El
+cuerpo de la plantilla ya maneja el null (líneas 333-335, 417), así que es cambio de tipo puro, sin
+lógica. Está permitido por la consigna ("corregí los errores en cascada, explicá cada uno").
+
+### 1.2 `TurnoAuditLog.accion` sin `| string` ✅
+`src/types/turno.ts:89` — `'creado' | 'modificado' | 'cancelado' | 'reprogramado' | string` →
+**sin `| string`**. Verificado contra `log_turno_cambio` en `005_turnos.sql:148-174`: el trigger
+solo emite `'creado'` (INSERT) y `'cancelado' | 'reprogramado' | 'modificado'` (UPDATE, `CASE`). Los
+4 literales cubren todo lo que la base produce → quitar `| string` no pierde ningún valor.
+
+### 1.3 `role: string` → `UserRole` en joins de mensajes ✅
+`src/types/mensaje.ts:21-22` — `remitente?/destinatario?: { full_name: string; role: string }` →
+**`role: UserRole`**. Agregué `import type { UserRole } from './roles'`.
+
+### 1.4 Interface `MensajeLectura` ✅
+Creada en `src/types/mensaje.ts` (mismo archivo, no la moví) y usada en `MensajeInterno.lecturas`.
+
+**Decisión — refleja la PROYECCIÓN del join, no la tabla completa:**
+```ts
+export interface MensajeLectura { user_id: string; leido_at: string }
 ```
-$ diff supabase/migrations/030_objetos_huerfanos.sql MIGRACION-06-huerfanos.sql
-DIFF OK — idénticos
-$ md5sum ...
-bebd2b960890b77a31030b69e36ee6ae  supabase/migrations/030_objetos_huerfanos.sql
-bebd2b960890b77a31030b69e36ee6ae  MIGRACION-06-huerfanos.sql
-```
+**Justificación:** el join embebido es `lecturas:mensajes_lecturas(user_id, leido_at)`
+(`mensajes/actions.ts:43,90,98`) — **no** trae `mensaje_id` (la otra mitad de la PK compuesta).
+Además, el update optimista de `bandeja.tsx:66` construye registros con **solo** `{ user_id,
+leido_at }`. Si la interface incluyera `mensaje_id` (tabla completa), ese `bandeja.tsx:66` y los
+`.some((l) => l.user_id === …)` de `hilo-modal.tsx:131` / `mensaje-card.tsx:25` / `bandeja.tsx:50,63`
+seguirían compilando por leer, pero la **construcción** en `:66` fallaría por faltar `mensaje_id`. La
+interface tiene que describir lo que realmente circula en memoria, que es la proyección. Si algún día
+se necesita el registro completo de la tabla, se puede agregar un tipo aparte (p. ej.
+`MensajeLecturaRow` con `mensaje_id`) sin tocar este.
 
-### Contenido, un renglón por bloque
-1. `CREATE TABLE IF NOT EXISTS public.consultas` con los **tipos auditados** (no los de
-   `schema.sql`), constraints nombrados, 2 índices, `ENABLE RLS`, trigger a `set_updated_at()`,
-   y las 4 políticas (DROP IF EXISTS + CREATE).
-2. `CREATE TABLE IF NOT EXISTS public.notificaciones` + `ENABLE RLS` + 4 políticas (con la
-   **asimetría intencional** del INSERT).
-3. `turnos`: `ADD COLUMN IF NOT EXISTS` para `categoria/origen/consulta_id` + los **3 CHECK**
-   vía bloque `DO` idempotente.
-4. `profiles`: `ADD COLUMN IF NOT EXISTS` para `titulo/matriculas/logo_url`.
+### 1.5 Comentario de `proximo_control` ✅
+`src/types/pedido.ts:255` — `// ISO date` → **`// ISO timestamptz (columna TIMESTAMPTZ desde la
+migración 016)`**.
 
-### Decisiones fieles a lo pedido
-- **Tipos NUMERIC reales de `consultas`** (base > `schema.sql`): `talla_cm (5,1)`,
-  `temperatura (4,1)`, `glucemia_ayunas/postprandial/trigliceridos/colesterol_ldl/hdl (6,2)`.
-  `peso_kg (5,2)` y `hba1c (4,2)` coinciden con `schema.sql`.
-- `created_at`/`updated_at` **NULLABLE** (como la base; `schema.sql` los ponía NOT NULL).
-- `id … DEFAULT gen_random_uuid()` (no `uuid_generate_v4()`), como la base.
-- Nombres de constraint explícitos (`consultas_pkey`, `consultas_paciente_id_fkey`,
-  `consultas_medico_id_fkey`, `consultas_estado_check`) para que un entorno nuevo produzca los
-  **mismos nombres** que la base.
-- `notificaciones_insert` con `get_medico_id()` y los otros tres con `auth.uid()` — respetada la
-  asimetría, documentada en comentario.
-- El **3.º CHECK de turnos** (`check_paciente_id_required_for_turno_medico`) incluido.
+**Consumo del campo (revisado, NO cambiado):** `historia_clinica.proximo_control` se usa en el form
+y PDF de HC. No encontré código que lo formatee asumiendo fecha-sin-hora de forma que rompa; se pasa
+como string. **Anotado, sin cambios** (la consigna pide no tocarlo). Si en el futuro se muestra al
+usuario, conviene formatearlo con hora (es timestamptz), pero hoy no hay un bug visible.
+
+### 1.6 Barrel redundante `src/types/supabase.ts` ✅ eliminado
+**Evidencia:** `grep -rn "types/supabase" src` → **0 resultados**; ninguna forma de import
+(`@/types/supabase`, `./supabase`) lo referencia. `index.ts` **no** lo re-exporta (solo lo mencionaba
+en un comentario). → **Sin consumidores → borrado.**
+
+**Cascada:** `src/types/index.ts` tenía un comentario (líneas 11-13) describiendo `supabase.ts`. Al
+borrar el archivo, ese comentario quedaba obsoleto/colgante. Lo **quité** (solo el bloque de
+comentario; ningún `export` cambió). Es limpieza directa del borrado, no un refactor.
 
 ---
 
-## SQL COMPLETO — para copiar y pegar en el SQL Editor
+## Parte 2 — Código muerto eliminado
 
-```sql
--- ============================================================================
--- Migration 030 — Recreación de objetos SIN migración fuente (huérfanos)
--- ============================================================================
--- Versiona el `CREATE` de los objetos que EXISTEN en la base pero se aplicaron a
--- mano en el dashboard y nunca tuvieron fuente en supabase/migrations/:
---   1. Tabla `consultas` (+ constraints, índices, trigger, 4 RLS).
---   2. Tabla `notificaciones` (+ RLS, 4 políticas).
---   3. Columnas huérfanas de `turnos` (categoria/origen/consulta_id + 3 CHECK).
---   4. Columnas huérfanas de `profiles` (titulo/matriculas/logo_url).
---
--- Toda la migración es IDEMPOTENTE: corre contra la base ACTUAL sin fallar (los
--- objetos ya existen → CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS / DROP
--- POLICY IF EXISTS son no-ops) y contra un entorno nuevo creándolos.
---
--- ─────────────────────────────────────────────────────────────────────────────
--- ⚠ LIMITACIÓN DE ORDEN (alcance real de esta migración)
---   El objetivo de la 030 es que el ESTADO FINAL sea reproducible: que todos los
---   objetos tengan su CREATE versionado en algún lado. NO vuelve ejecutable la
---   SECUENCIA completa desde cero. Las migraciones 013, 014, 015, 022 y 025 YA
---   referencian `public.consultas` (RLS y ALTER) sin que ninguna la cree, así que
---   correr el set desde una base vacía falla mucho antes de llegar acá (en la 013,
---   y la 022 también fallaría). Esa limitación es PREEXISTENTE a esta tanda; una
---   consolidación de baseline (mover estos CREATE al principio del historial) es un
---   trabajo aparte que NO se hace ahora. Contra la base actual, todo esto corre bien.
---
--- ⚠ DIVERGENCIAS corregidas respecto de schema.sql (la base es la fuente de verdad)
---   Los tipos NUMERIC de `consultas` de abajo son los REALES de la base y difieren
---   de lo que hoy dice schema.sql (que se corrige después, en el trabajo de repo):
---     talla_cm              base numeric(5,1)  — schema.sql decía (5,2)
---     temperatura           base numeric(4,1)  — schema.sql decía (4,2)
---     glucemia_ayunas       base numeric(6,2)  — schema.sql decía (5,1)
---     glucemia_postprandial base numeric(6,2)  — schema.sql decía (5,1)
---     trigliceridos         base numeric(6,2)  — schema.sql decía (5,1)
---     colesterol_ldl        base numeric(6,2)  — schema.sql decía (5,1)
---     colesterol_hdl        base numeric(6,2)  — schema.sql decía (5,1)
---   Además created_at/updated_at son NULLABLE en la base (schema.sql los ponía NOT
---   NULL). Se reproduce la base tal cual.
--- ============================================================================
+### 2.1 Componentes stub — 11 de 12 borrados ✅
+Verificado con grep (0 imports en todo `src`, excluyendo el propio archivo) antes de borrar. Borrados:
 
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 1. Tabla `consultas`                                                       │
--- └──────────────────────────────────────────────────────────────────────────┘
--- Consultas cronológicas del modelo de HC (Bloque 1), diabetología. medico_id =
--- tenant key. Nombres de constraint explícitos para que coincidan con la base real
--- (consultas_pkey / consultas_paciente_id_fkey / consultas_medico_id_fkey /
--- consultas_estado_check). Los tipos son los AUDITADOS (ver encabezado).
---
--- Sobre `campos_extra`: su fuente real es la migración 022 (ADD COLUMN IF NOT
--- EXISTS campos_extra …), que corre ANTES que esta (022 < 030). Acá la incluimos en
--- el CREATE para que el estado final quede completo. Interacción por entorno:
---   · Base actual: la tabla y la columna ya existen → CREATE TABLE IF NOT EXISTS es
---     no-op; la 022 ya se aplicó en su momento. Sin conflicto.
---   · Entorno nuevo (secuencia desde cero): la 022 se ejecuta antes y FALLA porque
---     `consultas` todavía no existe (parte de la limitación de orden de arriba). Si,
---     hipotéticamente, la 022 corriera DESPUÉS de la 030, su ADD COLUMN IF NOT
---     EXISTS sería un no-op inofensivo (la columna ya estaría creada acá).
-CREATE TABLE IF NOT EXISTS public.consultas (
-  id                     UUID NOT NULL DEFAULT gen_random_uuid()
-                           CONSTRAINT consultas_pkey PRIMARY KEY,
-  paciente_id            UUID NOT NULL
-                           CONSTRAINT consultas_paciente_id_fkey
-                           REFERENCES public.pacientes(id) ON DELETE CASCADE,
-  medico_id              UUID NOT NULL
-                           CONSTRAINT consultas_medico_id_fkey
-                           REFERENCES public.profiles(id),
-  fecha_hora             TIMESTAMPTZ NOT NULL DEFAULT now(),
-  -- Motivo y anamnesis
-  motivo_consulta        TEXT,
-  anamnesis              TEXT,
-  -- Examen físico
-  peso_kg                NUMERIC(5,2),
-  talla_cm               NUMERIC(5,1),   -- base: (5,1)
-  ta_sistolica           INTEGER,
-  ta_diastolica          INTEGER,
-  frecuencia_cardiaca    INTEGER,
-  temperatura            NUMERIC(4,1),   -- base: (4,1)
-  -- Parámetros metabólicos
-  glucemia_ayunas        NUMERIC(6,2),   -- base: (6,2)
-  glucemia_postprandial  NUMERIC(6,2),   -- base: (6,2)
-  hba1c                  NUMERIC(4,2),
-  trigliceridos          NUMERIC(6,2),   -- base: (6,2)
-  colesterol_ldl         NUMERIC(6,2),   -- base: (6,2)
-  colesterol_hdl         NUMERIC(6,2),   -- base: (6,2)
-  -- Diagnóstico y plan
-  diagnostico            TEXT,
-  plan_terapeutico       TEXT,
-  medicacion_actual      TEXT,
-  observaciones          TEXT,
-  -- Seguimiento
-  proximo_turno_sugerido DATE,
-  -- Estado ('finalizada' es inmutable desde la UI)
-  estado                 TEXT NOT NULL DEFAULT 'borrador'
-                           CONSTRAINT consultas_estado_check
-                           CHECK (estado = ANY (ARRAY['borrador'::text, 'finalizada'::text])),
-  -- created_at/updated_at NULLABLE en la base (no NOT NULL)
-  created_at             TIMESTAMPTZ DEFAULT now(),
-  updated_at             TIMESTAMPTZ DEFAULT now(),
-  -- Campos extra ad-hoc por consulta (fuente real: migración 022)
-  campos_extra           JSONB NOT NULL DEFAULT '[]'::jsonb
-);
-
-CREATE INDEX IF NOT EXISTS idx_consultas_paciente ON public.consultas(paciente_id);
-CREATE INDEX IF NOT EXISTS idx_consultas_medico   ON public.consultas(medico_id);
-
-ALTER TABLE public.consultas ENABLE ROW LEVEL SECURITY;
-
--- Trigger updated_at: ya usa set_updated_at() (la 029 lo repunteó desde la función
--- duplicada). Lo recreamos idempotente por si la tabla se crea en un entorno nuevo.
-DROP TRIGGER IF EXISTS consultas_updated_at ON public.consultas;
-CREATE TRIGGER consultas_updated_at
-  BEFORE UPDATE ON public.consultas
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
--- Las 4 políticas RLS correctas (ya vigentes; documentadas en schema.sql). No las
--- toca la 029. Se recrean con DROP … IF EXISTS para que la migración sea idempotente.
-DROP POLICY IF EXISTS "consultas_select" ON public.consultas;
-CREATE POLICY "consultas_select" ON public.consultas
-  FOR SELECT USING (
-    public.check_permiso(auth.uid(), 'ver_historia_clinica')
-    AND medico_id = get_medico_id()
-  );
-
-DROP POLICY IF EXISTS "consultas_insert" ON public.consultas;
-CREATE POLICY "consultas_insert" ON public.consultas
-  FOR INSERT WITH CHECK (
-    public.check_permiso(auth.uid(), 'crear_consultas')
-    AND medico_id = get_medico_id()
-  );
-
-DROP POLICY IF EXISTS "consultas_update" ON public.consultas;
-CREATE POLICY "consultas_update" ON public.consultas
-  FOR UPDATE USING (
-    medico_id = get_medico_id()
-    AND (
-      public.get_user_role(auth.uid()) = 'medico'
-      OR public.check_permiso(auth.uid(), 'crear_consultas')
-      OR public.check_permiso(auth.uid(), 'finalizar_consultas')
-    )
-  );
-
-DROP POLICY IF EXISTS "consultas_delete" ON public.consultas;
-CREATE POLICY "consultas_delete" ON public.consultas
-  FOR DELETE USING (
-    public.get_user_role(auth.uid()) = 'medico'
-    AND medico_id = auth.uid()
-  );
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 2. Tabla `notificaciones`                                                  │
--- └──────────────────────────────────────────────────────────────────────────┘
--- Avisos del sistema para el médico (turno agendado por asistente, recordatorio
--- enviado). medico_id = tenant. Sin índices (la auditoría no encontró ninguno; ver
--- RESPUESTA.md → sugerencia, NO agregada acá).
-CREATE TABLE IF NOT EXISTS public.notificaciones (
-  id         UUID        NOT NULL DEFAULT gen_random_uuid()
-                           CONSTRAINT notificaciones_pkey PRIMARY KEY,
-  medico_id  UUID        NOT NULL
-                           CONSTRAINT notificaciones_medico_id_fkey
-                           REFERENCES public.profiles(id),
-  titulo     TEXT        NOT NULL,
-  mensaje    TEXT        NOT NULL,
-  tipo       TEXT        NOT NULL,
-  leida      BOOLEAN     DEFAULT false,
-  payload    JSONB,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE public.notificaciones ENABLE ROW LEVEL SECURITY;
-
--- Las 4 políticas tal como quedaron tras la 029 (que dropeó la duplicada).
--- ⚠ ASIMETRÍA INTENCIONAL: el INSERT usa get_medico_id() y los otros tres auth.uid().
---   Es a propósito: un ASISTENTE inserta la notificación EN NOMBRE de su médico
---   (src/app/api/turnero/route.ts, al agendar un turno) → medico_id = get_medico_id()
---   resuelve al id del médico del tenant, y el WITH CHECK lo permite. Con auth.uid()
---   ese insert fallaría (el asistente no es el médico). Los select/update/delete sí
---   usan auth.uid(): solo el propio médico lee/gestiona sus notificaciones.
---   (schema.sql documenta hoy el insert con auth.uid(): es INCORRECTO, se corrige en
---   el trabajo de documentación.)
-DROP POLICY IF EXISTS "notificaciones_select" ON public.notificaciones;
-CREATE POLICY "notificaciones_select" ON public.notificaciones
-  FOR SELECT USING (medico_id = auth.uid());
-
-DROP POLICY IF EXISTS "notificaciones_insert" ON public.notificaciones;
-CREATE POLICY "notificaciones_insert" ON public.notificaciones
-  FOR INSERT WITH CHECK (medico_id = get_medico_id());
-
-DROP POLICY IF EXISTS "notificaciones_update" ON public.notificaciones;
-CREATE POLICY "notificaciones_update" ON public.notificaciones
-  FOR UPDATE USING (medico_id = auth.uid());
-
-DROP POLICY IF EXISTS "notificaciones_delete" ON public.notificaciones;
-CREATE POLICY "notificaciones_delete" ON public.notificaciones
-  FOR DELETE USING (medico_id = auth.uid());
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 3. Columnas huérfanas de `turnos` (Bloque 4)                               │
--- └──────────────────────────────────────────────────────────────────────────┘
--- categoria/origen/consulta_id. consulta_id referencia consultas(id) → por eso este
--- bloque va DESPUÉS del bloque 1 (en un entorno nuevo, consultas ya existe acá).
-ALTER TABLE public.turnos
-  ADD COLUMN IF NOT EXISTS categoria TEXT NOT NULL DEFAULT 'turno_medico';
-ALTER TABLE public.turnos
-  ADD COLUMN IF NOT EXISTS origen    TEXT NOT NULL DEFAULT 'manual';
-ALTER TABLE public.turnos
-  ADD COLUMN IF NOT EXISTS consulta_id UUID
-    REFERENCES public.consultas(id) ON DELETE SET NULL;
-
--- Los 3 CHECK constraints. ADD CONSTRAINT no admite IF NOT EXISTS, así que se
--- agregan solo si no existen (bloque DO idempotente). El tercero
--- (check_paciente_id_required_for_turno_medico) NO está documentado en schema.sql.
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.turnos'::regclass AND conname = 'check_turnos_categoria'
-  ) THEN
-    ALTER TABLE public.turnos ADD CONSTRAINT check_turnos_categoria
-      CHECK (categoria = ANY (ARRAY['turno_medico','curso','personal','administrativo','recordatorio']));
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.turnos'::regclass AND conname = 'turnos_origen_check'
-  ) THEN
-    ALTER TABLE public.turnos ADD CONSTRAINT turnos_origen_check
-      CHECK (origen = ANY (ARRAY['manual','desde_hc']));
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.turnos'::regclass AND conname = 'check_paciente_id_required_for_turno_medico'
-  ) THEN
-    ALTER TABLE public.turnos ADD CONSTRAINT check_paciente_id_required_for_turno_medico
-      CHECK (categoria <> 'turno_medico' OR paciente_id IS NOT NULL);
-  END IF;
-END $$;
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 4. Columnas huérfanas de `profiles` (Bloque 6)                             │
--- └──────────────────────────────────────────────────────────────────────────┘
--- Identidad profesional del médico que se estampa en los PDF. Todas nullable.
-ALTER TABLE public.profiles
-  ADD COLUMN IF NOT EXISTS titulo     TEXT;
-ALTER TABLE public.profiles
-  ADD COLUMN IF NOT EXISTS matriculas JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE public.profiles
-  ADD COLUMN IF NOT EXISTS logo_url   TEXT;
 ```
+src/components/dashboard/weekly-calendar.tsx
+src/components/difusion/post-editor.tsx
+src/components/difusion/send-modal.tsx
+src/components/pacientes/evolucion-charts.tsx
+src/components/pacientes/patient-tabs.tsx
+src/components/shared/confirm-dialog.tsx
+src/components/shared/error-boundary.tsx
+src/components/shared/file-preview.tsx
+src/components/shared/loading-spinner.tsx
+src/components/shared/role-guard.tsx
+src/components/turnero/turno-card.tsx
+```
+
+**`src/lib/pdf/receta-template.tsx` — MANTENIDO (decisión).** También tiene 0 imports (verificado:
+`api/recetas/route.ts` **no** lo importa). Lo dejé como marcador intencional de la funcionalidad de
+recetas, que está bloqueada por ANMAT pero se va a implementar cuando se certifique. Razones:
+1. Está **explícitamente earmarkeado** en la documentación del proyecto (`CLAUDE.md`, `PENDIENTES.md`,
+   `DESIGN.md`) como el placeholder del template de recetas; borrarlo ahora crearía un desajuste
+   código↔docs que **este** prompt tiene prohibido corregir (la doc va en otro prompt).
+2. Costo de mantenerlo: un archivo inerte de 55 bytes. Beneficio: marca el "slot" del template para
+   quien implemente recetas.
+Si en el prompt de documentación se decide lo contrario, borrarlo después es trivial y sin cascada.
+
+### 2.2 Hooks stub — 4 borrados ✅
+Verificado 0 imports. Borrados: `src/hooks/{use-auth,use-pacientes,use-role,use-turnos}.ts`.
+**`src/hooks/use-view-mode.ts` NO se tocó** (tiene lógica real de localStorage).
 
 ---
 
-## Consultas de verificación (correlas DESPUÉS de aplicar)
+## Errores en cascada (resumen)
 
-La migración es idempotente contra una base donde **todo ya existe**, así que la verificación clave
-es que **NADA cambió**: mismas columnas, tipos, constraints y políticas.
+| Cascada | Origen | Resolución |
+|---|---|---|
+| `documentos.ts:162` overload no matchea (`tipo: string\|null` vs `string`) | 1.1 (Certificado.tipo nullable) | Amplié la prop `tipo` de `CertificadoPDFProps` en `certificado-template.tsx` a `string \| null`. Cambio de tipo, sin lógica (el cuerpo ya maneja null). |
+| Comentario obsoleto en `types/index.ts` | 1.6 (borrado de supabase.ts) | Quité el bloque de comentario que describía `supabase.ts`. |
 
-### V1 — `consultas`: columnas y tipos exactos (foco en las precisiones NUMERIC)
-
-```sql
-SELECT column_name, data_type, numeric_precision, numeric_scale, is_nullable, column_default
-FROM information_schema.columns
-WHERE table_schema = 'public' AND table_name = 'consultas'
-ORDER BY ordinal_position;
-```
-
-**Esperado (26 columnas).** Puntos a chequear: `talla_cm` → precision 5, scale 1; `temperatura` →
-4/1; `glucemia_ayunas/glucemia_postprandial/trigliceridos/colesterol_ldl/colesterol_hdl` → 6/2;
-`peso_kg` → 5/2; `hba1c` → 4/2; `created_at`/`updated_at` → `is_nullable = YES`; `estado` →
-`is_nullable = NO`, default `'borrador'::text`; `campos_extra` → default `'[]'::jsonb`, no nulo.
-**Si alguna precisión difiere, la base tenía otro valor que el auditado → avisame.**
-
-### V2 — `consultas`: constraints con sus nombres
-
-```sql
-SELECT conname, contype
-FROM pg_constraint
-WHERE conrelid = 'public.consultas'::regclass
-ORDER BY conname;
-```
-
-**Esperado: 4 filas** — `consultas_estado_check` (c), `consultas_medico_id_fkey` (f),
-`consultas_paciente_id_fkey` (f), `consultas_pkey` (p). **Ni una más, ni una menos.**
-
-### V3 — `consultas`: índices, trigger y RLS
-
-```sql
--- Índices
-SELECT indexname FROM pg_indexes
-WHERE schemaname='public' AND tablename='consultas' ORDER BY indexname;
--- Trigger → debe apuntar a set_updated_at()
-SELECT t.tgname, p.proname
-FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
-WHERE t.tgrelid='public.consultas'::regclass AND NOT t.tgisinternal;
--- Políticas
-SELECT policyname, cmd FROM pg_policies
-WHERE schemaname='public' AND tablename='consultas' ORDER BY policyname;
-```
-
-**Esperado:** índices `consultas_pkey`, `idx_consultas_medico`, `idx_consultas_paciente`;
-trigger `consultas_updated_at → set_updated_at`; políticas `consultas_delete/insert/select/update`
-(4). `SELECT relrowsecurity FROM pg_class WHERE oid='public.consultas'::regclass;` → `t`.
-
-### V4 — `notificaciones`: estructura y la asimetría del INSERT
-
-```sql
-SELECT column_name, data_type, is_nullable, column_default
-FROM information_schema.columns
-WHERE table_schema='public' AND table_name='notificaciones' ORDER BY ordinal_position;
-
-SELECT policyname, cmd,
-       (qual       ILIKE '%get_medico_id%') AS using_gmi,
-       (with_check ILIKE '%get_medico_id%') AS check_gmi
-FROM pg_policies
-WHERE schemaname='public' AND tablename='notificaciones' ORDER BY policyname;
-```
-
-**Esperado:** 8 columnas (id, medico_id, titulo, mensaje, tipo, leida, payload, created_at);
-**4 políticas** y la asimetría: `notificaciones_insert` con `check_gmi = t` (usa `get_medico_id()`),
-y `select/update/delete` con ambos flags `f` (usan `auth.uid()`). **No** debe aparecer
-`"Medicos ven sus propias notificaciones"` (la dropeó la 029).
-
-### V5 — `turnos`: las 3 columnas y los 3 CHECK
-
-```sql
-SELECT column_name, data_type, is_nullable, column_default
-FROM information_schema.columns
-WHERE table_schema='public' AND table_name='turnos'
-  AND column_name IN ('categoria','origen','consulta_id') ORDER BY column_name;
-
-SELECT conname FROM pg_constraint
-WHERE conrelid='public.turnos'::regclass AND contype='c' ORDER BY conname;
-```
-
-**Esperado:** `categoria` (text, NOT NULL, default `'turno_medico'`), `consulta_id` (uuid,
-nullable), `origen` (text, NOT NULL, default `'manual'`). Entre los CHECK deben estar los 3:
-`check_paciente_id_required_for_turno_medico`, `check_turnos_categoria`, `turnos_origen_check`.
-
-### V6 — `profiles`: las 3 columnas huérfanas
-
-```sql
-SELECT column_name, data_type, column_default
-FROM information_schema.columns
-WHERE table_schema='public' AND table_name='profiles'
-  AND column_name IN ('titulo','matriculas','logo_url') ORDER BY column_name;
-```
-
-**Esperado:** `logo_url` (text), `matriculas` (jsonb, default `'[]'::jsonb`), `titulo` (text).
-
-### V7 — Idempotencia (opcional, la prueba más fuerte)
-
-Volvé a correr **toda** la migración 030 una segunda vez. **Esperado:** sin errores y sin cambios
-(todo `IF NOT EXISTS` / `DROP … IF EXISTS` es no-op). Confirma que es segura de re-aplicar.
+Nota: la primera corrida de `tsc` mostró además errores en `.next/dev/types/validator.ts` (`Cannot
+find name 'c'/'app'/…`, `RouteHandlerConfig`): eran de un **`.next` viejo/corrupto**, no de mis
+cambios. Borré `.next` y volví a correr: `tsc` **exit 0**. El `next build` regenera esos artefactos
+limpios.
 
 ---
 
-## Qué pasaría en un entorno NUEVO y vacío
+## Archivos tocados (no borrados)
+- `src/types/pedido.ts` — 1.1 + 1.5
+- `src/types/turno.ts` — 1.2
+- `src/types/mensaje.ts` — 1.3 + 1.4
+- `src/types/index.ts` — comentario (cascada de 1.6)
+- `src/lib/pdf/certificado-template.tsx` — prop `tipo` nullable (cascada de 1.1)
 
-Aplicando el set completo `001 → 030` sobre una base vacía:
-
-- **Falla en la 013.** `013_fortify_security_rls.sql` hace `DROP POLICY IF EXISTS … ON
-  public.consultas` / `CREATE POLICY … ON public.consultas`, pero `consultas` **no existe** todavía
-  (nada la crea antes). Postgres corta ahí con *relation "public.consultas" does not exist*. Lo
-  mismo harían **014, 015, 022 y 025** si se llegara. → **La secuencia desde cero NO completa.**
-- **Qué SÍ funcionaría hasta ese punto:** 001–012 (profiles, pacientes, HC, estudios, evoluciones,
-  turnos base, pedidos, certificados, difusión, recetas, multitenancy, matrícula, firma).
-- **Qué lograría la 030 si se llegara a ejecutar** (o si se corre sola sobre una base que ya tiene
-  001–029 aplicadas, que es el caso real): crea `consultas` y `notificaciones` completas, agrega las
-  columnas de `turnos`/`profiles` y sus CHECK. Es decir, **el estado final queda 100% versionado**.
-
-**Conclusión (alcance de esta tanda, ya acordado):** la 030 garantiza que **todos los objetos
-tienen su `CREATE` versionado** (reproducibilidad del *estado final*), pero **no** vuelve ejecutable
-la *secuencia* desde cero. Eso requiere una **consolidación de baseline** (mover estos `CREATE` al
-principio del historial o generar un `schema.sql` aplicable como migración 000), que es un trabajo
-aparte y NO forma parte de esta tanda. Contra la **base actual**, la 030 corre sin problemas.
+## Archivos borrados (16)
+11 componentes stub + 4 hooks stub + `src/types/supabase.ts`.
 
 ---
 
-## Sugerencia registrada (NO agregada, como pediste)
+## Qué probar en el navegador
 
-**Índice en `notificaciones(medico_id)`** — o compuesto `(medico_id, leida)` / `(medico_id,
-created_at DESC)`. La tabla se consulta siempre filtrando por `medico_id`
-(`src/app/(app)/notificaciones/page.tsx`, y la campanita del header que cuenta no-leídas). Sin
-índice, cada consulta es un seq scan; con pocos registros es irrelevante, pero conviene tenerlo si
-la tabla crece. **No lo incluí** (la restricción dice no agregar índices que no existan en la base);
-lo dejo propuesto para una migración futura si se decide.
+Son cambios de tipos y borrado de archivos sin uso; el riesgo real es bajo, pero borrar siempre
+puede sorprender. Smoke test corto:
+
+1. **Certificados (1.1 + cascada del template):** abrí un certificado existente y **descargá el PDF**;
+   emití un **certificado nuevo sin elegir "tipo"** (tipo = null) y descargá su PDF → debe generarse
+   sin romperse (verifica que la plantilla tolera `tipo` null). Ojo cosmético: el nombre del archivo
+   de un certificado sin tipo puede incluir "null" (`certificado_null_…`) — es preexistente, no lo
+   cambié.
+2. **Mensajería (1.3 + 1.4):** abrí `/mensajes`, mandá un **mensaje grupal**, marcá leído, y revisá
+   la campanita de no-leídos. Debe verse bien (toqué solo tipos de `lecturas`/`role`, no lógica).
+3. **Turnero:** creá/modificá/cancelá un turno y mirá el historial/auditoría si está expuesto (1.2 es
+   solo el tipo de `accion`, sin cambio funcional).
+4. **Navegación general:** que dashboard, pacientes, difusión, notas y perfil carguen. Los 12 archivos
+   borrados no tenían imports, así que no debería faltar nada — este paso solo confirma que ningún
+   import perdido se coló (el grep post-borrado dio vacío).
+
+No hace falta probar HC/`proximo_control` (1.5 fue solo un comentario).
 
 ---
 
-## Sobre permisos al ejecutar
-
-Todo es sobre `public` (tablas, columnas, constraints, políticas, trigger). No toca `storage.*`, así
-que **no** debería requerir privilegios especiales en el SQL Editor. El bloque `DO $$` de los CHECK
-de `turnos` es SQL estándar; corre sin permisos extra.
-
----
-
-## PARADA — próximo paso
-
-**Frené acá, como pediste.** No toqué código de la app ni documentación.
-
-**Te toca a vos:** ejecutar el SQL y correr V1–V7 (V7, opcional, es la prueba de idempotencia).
-
-📌 **Recordatorio: después de esta migración viene el TRABAJO DE REPO** (sin tocar la base):
-- **Tipos TS:** los 6 desajustes del diagnóstico (`Certificado.tipo` nullable, `TurnoAuditLog.accion`
-  sin `| string`, `role: UserRole` en los joins de `mensaje.ts`, interface `MensajeLectura`,
-  comentario de `proximo_control`, deprecar `types/supabase.ts`).
-- **Stubs:** eliminar los 12 componentes stub + 4 hooks stub sin usar.
-- **Documentación:** actualizar `schema.sql` (precisiones NUMERIC reales de `consultas`,
-  `created_at/updated_at` nullable, `notificaciones_insert` con `get_medico_id()`, el 3.º CHECK de
-  `turnos`), `PENDIENTES.md` (cerrar "sin migración fuente", duplicados, drift RLS) y `CLAUDE.md`
-  (notas de deuda técnica 6/7).
+## Recordatorio
+La **documentación** (`schema.sql`, `CLAUDE.md`, `PENDIENTES.md`, `DESIGN.md`) queda pendiente para el
+**próximo prompt**: entre otras cosas habrá que reflejar que se borraron 11 de los 12 stubs (y que
+`receta-template` se mantuvo a propósito), la eliminación de `types/supabase.ts`, y los ajustes de
+tipos. No lo toqué acá, como pediste.

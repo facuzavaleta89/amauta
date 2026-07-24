@@ -291,7 +291,7 @@ interface CertificadoPDFProps {
     paciente_dob: string
     obra_social_nombre?: string | null
     numero_afiliado?: string | null
-    tipo: string
+    tipo: string | null
     tipo_descripcion?: string | null
     contenido: string
     dias_reposo?: number | null

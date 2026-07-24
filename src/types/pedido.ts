@@ -82,7 +82,7 @@ export interface Certificado {
   paciente_dob: string
   obra_social_nombre: string | null
   numero_afiliado: string | null
-  tipo: CertificadoTipo
+  tipo: CertificadoTipo | null   // nullable sin default desde la migración 017
   tipo_descripcion: string | null
   contenido: string
   dias_reposo: number | null
@@ -252,7 +252,7 @@ export interface HistoriaClinica {
   laboratorio: string | null
   estudios_complementarios: string | null
   conducta: string | null
-  proximo_control: string | null    // ISO date
+  proximo_control: string | null    // ISO timestamptz (columna TIMESTAMPTZ desde la migración 016)
   peso_inicial: number | null
   talla: number | null
   perimetro_cintura: number | null

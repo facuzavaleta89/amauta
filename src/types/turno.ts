@@ -86,7 +86,7 @@ export interface TurnoAuditLog {
   id: string
   turno_id: string
   usuario_id: string
-  accion: 'creado' | 'modificado' | 'cancelado' | 'reprogramado' | string
+  accion: 'creado' | 'modificado' | 'cancelado' | 'reprogramado'
   detalle: Record<string, unknown> | null  // jsonb {antes, despues}
   created_at: string
 }
