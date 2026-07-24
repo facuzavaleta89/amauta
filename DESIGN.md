@@ -153,12 +153,13 @@ documento no tiene `emisor_snapshot` (un bug: nunca cae a `profiles`). Además, 
 ⚠ Estos ámbar/rojo son clases crudas de Tailwind, no tokens semánticos — mismo pendiente de
 `success/warning/info` señalado en Inconsistencias.
 
-> ⚠ Hay **12 archivos stub** (`export default function Placeholder(){return null}`)
-> en `components/` y `lib/pdf/` (p. ej. `turnero/turno-card`, `pacientes/evolucion-charts`,
-> `shared/{confirm-dialog, file-preview}`, `difusion/{post-editor, send-modal}`)
-> que **no se usan**. Son código muerto a eliminar (ver `PENDIENTES.md`).
-> (`difusion/post-list.tsx` y `pacientes/estudios-upload.tsx` ya **no** son stubs: se
-> implementaron; el segundo en la tanda de Storage.)
+> ✅ Los **11 componentes stub** que no se usaban (`turnero/turno-card`,
+> `pacientes/{patient-tabs, evolucion-charts}`, `dashboard/weekly-calendar`,
+> `shared/{role-guard, loading-spinner, file-preview, confirm-dialog, error-boundary}`,
+> `difusion/{post-editor, send-modal}`) se **eliminaron** en la tanda de reproducibilidad,
+> junto con 4 hooks stub y el barrel redundante `types/supabase.ts`.
+> Queda **1 solo stub**, a propósito: `lib/pdf/receta-template.tsx`, marcador del template
+> de recetas (bloqueado por ANMAT, se implementará al certificarse). Ver `PENDIENTES.md`.
 
 ---
 
@@ -227,5 +228,20 @@ calendario tiñe el highlight según la acción (`.mode-turno` verde / `.mode-bl
    tokens en `/onboarding` y `/verificar`.
 3. **Fuente mono** (`--font-geist-mono`) referenciada pero no cargada.
 4. **`turnos.color` (HEX `#3B82F6`)** en desuso frente a las clases `.categoria-*`.
-5. **12 componentes stub** sin usar (código muerto que ensucia la carpeta de UI).
+5. ~~**12 componentes stub** sin usar (código muerto que ensucia la carpeta de UI).~~
+   **✅ RESUELTO:** se eliminaron 11; queda solo `lib/pdf/receta-template.tsx`, mantenido a
+   propósito como marcador (recetas está bloqueado por ANMAT).
 6. **Dark mode a medias:** tokens definidos sin toggle en la UI.
+7. **Layout inconsistente entre secciones.** Las páginas del área autenticada no comparten un
+   patrón único de encabezado ni de ancho:
+   - **Grupo de referencia (correcto):** dashboard, pacientes, turnero, pedidos y certificados
+     — ocupan el espacio disponible y comparten el tamaño de título. **Notas** también es
+     consistente con este grupo.
+   - **Difusión:** título con **tamaño de fuente mayor** que el resto, y con un **ícono de
+     altavoz** que ninguna otra sección muestra.
+   - **Notificaciones y mensajes:** aparecen con **márgenes laterales**, más centradas y
+     angostas que el resto.
+   - **Criterio a definir:** (a) o **todas** las secciones llevan ícono en el título —y
+     coherente con el del sidebar— o **ninguna**; (b) unificar **ancho, márgenes y tamaño de
+     título**. Lo natural es centralizarlo en `shared/page-header` para que el patrón viva en
+     un único componente.

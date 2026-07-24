@@ -41,7 +41,10 @@ cp .env.example .env.local
 
 # 3. Preparar la base de datos
 #   Aplicá las migraciones de supabase/migrations/ a tu proyecto Supabase
-#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 028).
+#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 030).
+#   ⚠ La secuencia NO es ejecutable sobre una base vacía: varias migraciones (013, 014,
+#   015, 022, 025) referencian la tabla "consultas", que recién se crea en la 030. Ver
+#   PENDIENTES.md → "Consolidación de baseline de migraciones".
 #   Para una vista consolidada del esquema, ver schema.sql (referencia, no reemplaza
 #   las migraciones).
 #   Los buckets de Storage "estudios" (privado, migración 026) y "documentos" (privado,
