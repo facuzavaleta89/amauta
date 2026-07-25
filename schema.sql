@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→030).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→031).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -29,7 +29,11 @@
 -- 'secretario' y violaba su propio CHECK), 030 (recreación de los objetos que existían
 -- en la base SIN CREATE versionado: tablas `consultas` y `notificaciones` completas,
 -- columnas turnos.categoria/origen/consulta_id + sus 3 CHECK, y columnas
--- profiles.titulo/matriculas/logo_url).
+-- profiles.titulo/matriculas/logo_url),
+-- 031 (rate limiting efectivo: tabla `rate_limits` [fixed-window counter, RLS on SIN
+-- políticas] + función `check_rate_limit` [SECURITY DEFINER, conteo atómico, EXECUTE
+-- solo service_role/postgres]. Reemplaza el rate limiter en memoria, inútil en
+-- serverless — ver sección RATE LIMITING al final).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -1151,6 +1155,66 @@ CREATE POLICY "documentos_objects_update" ON storage.objects
 --   Nota operativa: los objetos de Storage NO se borran por SQL directo — un trigger
 --   de protección (storage.protect_delete) bloquea DELETE FROM storage.objects. Se
 --   borran por la API de Storage o el Dashboard.
+
+
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │ RATE LIMITING — tabla `rate_limits` + función (migración 031)              │
+-- └──────────────────────────────────────────────────────────────────────────┘
+-- Rate limiter respaldado por Postgres: reemplaza al que vivía en un Map en memoria
+-- del proceso, que en Vercel serverless no compartía contadores entre instancias (el
+-- login quedaba sin protección real de fuerza bruta). El módulo src/lib/rate-limit.ts
+-- llama a check_rate_limit con el ADMIN CLIENT (service role), porque el login ocurre
+-- SIN sesión. Fail-open en la app: si la RPC falla/tarda, se permite el request.
+--
+-- Fixed-window counter: una fila por (key, window_start), no una por request.
+CREATE TABLE public.rate_limits (
+  key          TEXT        NOT NULL,
+  window_start TIMESTAMPTZ NOT NULL,   -- floor del epoch al tamaño de ventana
+  count        INTEGER     NOT NULL DEFAULT 0,
+  PRIMARY KEY (key, window_start)
+);
+-- Índice para la limpieza barata de ventanas viejas (la hace el cron de recordatorios:
+-- DELETE FROM rate_limits WHERE window_start < now() - interval '1 hour').
+CREATE INDEX idx_rate_limits_window ON public.rate_limits(window_start);
+
+-- ⚠ RLS habilitado SIN políticas, A PROPÓSITO (mismo criterio que la ausencia de DELETE
+--   en el bucket `documentos`): sin políticas, RLS deniega por defecto todo acceso de
+--   `anon`/`authenticated` por PostgREST, así nadie lee las keys de otros ni resetea su
+--   propio contador. El único acceso es vía la función SECURITY DEFINER de abajo.
+ALTER TABLE public.rate_limits ENABLE ROW LEVEL SECURITY;
+
+-- Conteo atómico + decisión. SECURITY DEFINER + search_path fijo. El incremento y la
+-- lectura ocurren en UN solo statement (INSERT ... ON CONFLICT DO UPDATE ... RETURNING),
+-- bajo el row-lock de la fila → evita el TOCTOU de "SELECT count(); luego INSERT", donde
+-- dos requests concurrentes leen ambos un valor bajo el límite y ambos pasan.
+CREATE OR REPLACE FUNCTION public.check_rate_limit(
+  p_key TEXT, p_limit INT, p_window_secs INT
+)
+RETURNS TABLE(allowed BOOLEAN, retry_after_secs INT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_window_start TIMESTAMPTZ := to_timestamp(
+    floor(extract(epoch FROM now()) / p_window_secs) * p_window_secs);
+  v_count INT;
+BEGIN
+  INSERT INTO public.rate_limits AS rl (key, window_start, count)
+  VALUES (p_key, v_window_start, 1)
+  ON CONFLICT (key, window_start) DO UPDATE SET count = rl.count + 1
+  RETURNING rl.count INTO v_count;
+
+  IF v_count > p_limit THEN
+    RETURN QUERY SELECT FALSE, GREATEST(
+      CEIL(extract(epoch FROM (v_window_start + make_interval(secs => p_window_secs)) - now()))::INT, 0);
+  ELSE
+    RETURN QUERY SELECT TRUE, 0;
+  END IF;
+END;
+$$;
+
+-- La función escribe en una tabla de control de acceso → solo el servidor la invoca.
+REVOKE EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) TO service_role;
+GRANT  EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) TO postgres;
 
 
 -- ============================================================================
