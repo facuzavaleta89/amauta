@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatFecha, formatFechaLarga } from '@/lib/utils'
+import { buildDocumentoFilename } from '@/lib/pdf/filename'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -67,7 +68,7 @@ export function CertificadoDocView({
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `certificado_${certificado.tipo}_${certificado.paciente_nombre.replace(/\s+/g, '_')}.pdf`
+      a.download = buildDocumentoFilename('certificado', certificado.paciente_nombre, certificado.fecha_certificado)
       a.click()
       URL.revokeObjectURL(url)
     } catch {
