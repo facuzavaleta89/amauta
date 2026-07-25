@@ -353,3 +353,21 @@ ya existen por migración) y la sección "Recetas" (bloqueada por certificación
     no datos clínicos, y `src/app/api/difusion/[id]/route.ts` (PATCH y DELETE) ya valida solo
     la pertenencia al tenant. Por eso la 029 **no** tocó difusión. Restringirlo en el futuro
     requeriría un permiso granular de difusión (hoy no existe).
+15. **Migración 031 — Rate limiting persistente (`src/lib/rate-limit.ts`).** El rate limiter
+    vivía en un `Map` en la **memoria del proceso**; en Vercel serverless cada request cae en
+    una instancia distinta y las lambdas se reciclan, así que los contadores no se compartían y
+    **el login no tenía protección real de fuerza bruta**. Ahora el conteo vive en la tabla
+    `public.rate_limits` y se incrementa de forma atómica vía la función `check_rate_limit`
+    (RLS de la tabla activa **sin políticas**; EXECUTE solo `service_role`/`postgres` — ver
+    `schema.sql` → sección RATE LIMITING). El módulo la llama con el **admin client** (el login
+    ocurre sin sesión). **Fail-open:** si la RPC falla o tarda >2s (`AbortSignal.timeout`), se
+    **permite** el request y se loguea — si esa tabla no responde, la auth tampoco, así que
+    fail-closed convertiría un problema puntual en una caída total del login. La interfaz
+    (`rateLimit`/`rateLimitAction`) es **async**; migrar a Redis a futuro sería reescribir solo
+    ese módulo, sin tocar a los ~25 llamadores.
+    **Límites por endpoint:** login **5/min** por IP+email (`login:<ip>:<email>`), registro
+    **3/min** por IP (`registro:<ip>`), `/verificar/[codigo]` **30/min** por IP
+    (`verificar:<ip>`). Las rutas API autenticadas conservan sus límites por `user.id`. La
+    **limpieza** de ventanas viejas (`DELETE ... WHERE window_start < now() - 1h`) se sumó al
+    cron `api/cron/recordatorios`, aislada. El mismo cron corrigió la comparación del
+    `CRON_SECRET` a tiempo constante (`crypto.timingSafeEqual`).

@@ -138,9 +138,10 @@ Información Pública**). Hallazgos:
 - **✅ RESUELTO (migración 025) — hardening de la función.** `verificar_documento` ahora
   fija `SET search_path = public`, y se **revocó `EXECUTE` de PUBLIC** dejándolo solo para
   `service_role` (el rol del admin client) y `postgres`.
-- **Enumeración de códigos:** `codigo_verificacion` = 12 chars hex de `md5(random())`.
-  No hay rate-limiting en `/verificar`. Evaluar límite de intentos para dificultar el
-  scraping/enumeración de documentos.
+- **✅ RESUELTO (2026-07-24) — enumeración de códigos.** `codigo_verificacion` = 12 chars hex de
+  `md5(random())`. Se agregó rate limit **30/min por IP** en `/verificar/[codigo]`
+  (`src/app/verificar/[codigo]/page.tsx`), que corta el scraping/enumeración sin fricción para el
+  uso legítimo; al superarlo responde una tarjeta neutra que no revela si el código existe.
 
 ### Aislamiento por tenant a nivel base de datos
 - **✅ RESUELTO para `estudios` (migración 026, 2026-07-22) — políticas de Storage por tenant.**
@@ -170,27 +171,64 @@ Información Pública**). Hallazgos:
     tenants distintos (RLS usa `medico_id = get_medico_id()`, correcto; validar en prueba).
 
 ### Autenticación, sesiones y registro
-- **Auto-registro como médico:** `handle_new_user` acepta `role` desde
-  `raw_user_meta_data` con whitelist `('medico','asistente')`. Cualquiera que se registre
-  puede crearse como **médico** (nuevo tenant). Evaluar si el alta de médicos debe ser
-  controlada/invitada. Ubicación: `supabase/migrations/014_security_fixes.sql`.
-- **Rate limiter in-memory:** `src/lib/rate-limit.ts` guarda contadores en un `Map` de
-  proceso. En Vercel/serverless multi-instancia **no protege** de verdad contra
-  brute-force de login. Migrar a un store compartido (Upstash Redis) — el propio módulo
-  ya lo anticipa en su comentario.
+- **⚠ Auto-registro como médico (riesgo conocido, aceptado por ahora).** `handle_new_user`
+  acepta `role` desde `raw_user_meta_data` con whitelist `('medico','asistente')`, y el form de
+  registro ofrece elegir "médico" (`src/app/(auth)/actions.ts:93-96`). Cualquiera que llegue a
+  `/registro` puede crearse como **médico** y abrir un tenant propio. **Solución prevista:** un
+  **panel de administración con aprobación de altas de médicos**; hasta entonces se deja como
+  está. **Severidad ALTO.** Ubicación del backend: `supabase/migrations/014_security_fixes.sql`
+  (`handle_new_user`).
+- **✅ RESUELTO (migración 031 + `src/lib/rate-limit.ts`, 2026-07-24) — rate limiter efectivo.**
+  El rate limiter vivía en un `Map` en memoria del proceso: en Vercel serverless los contadores
+  no se compartían entre instancias y **el login no tenía protección real de fuerza bruta**.
+  Ahora el conteo persiste en `public.rate_limits` (RLS on sin políticas) vía la función atómica
+  `check_rate_limit` (EXECUTE solo `service_role`), llamada con el admin client (el login ocurre
+  sin sesión). **Fail-open** con timeout de 2s. Límites: login 5/min (IP+email), registro 3/min
+  (IP), `/verificar/[codigo]` 30/min (IP); las rutas API conservan sus límites por `user.id`. La
+  limpieza de ventanas viejas se sumó al cron de recordatorios. Migrar a Redis a futuro sería
+  reescribir solo ese módulo (interfaz aislada). Ver `schema.sql` → sección RATE LIMITING.
+- **✅ RESUELTO (2026-07-24) — H6: comparación del `CRON_SECRET` no timing-safe.**
+  `api/cron/recordatorios/route.ts` comparaba el bearer con `!==` (fuga de timing). Ahora usa
+  `crypto.timingSafeEqual` (helper `safeEqual` que iguala por longitud primero, sin lanzar).
+- **✅ RESUELTO (2026-07-24) — H7: `getIp` caía a `'unknown'`.** El helper de IP mejoró la
+  extracción (`x-forwarded-for` primer valor → `x-real-ip`, ambos con `trim()`). Cuando de verdad
+  no hay ningún header (solo fuera de Vercel: dev local) se mantiene `'unknown'` a propósito
+  —documentado en el código—: en Vercel `x-forwarded-for` siempre está y no es falsificable, y el
+  login igual diferencia por email en la key. Se descartó fail-open-en-unknown (un atacante podría
+  desactivar el límite borrando el header).
 - **Sesiones/tokens:** sesión en cookies vía `@supabase/ssr`; `proxy.ts` valida con
   `getUser()` en cada request. Revisar expiración/refresh y flags de cookie
-  (`HttpOnly`/`Secure`/`SameSite`) en el entorno productivo.
+  (`HttpOnly`/`Secure`/`SameSite`) en el entorno productivo (los fija `@supabase/ssr`, no el
+  repo; A VERIFICAR en producción, DevTools → Application → Cookies).
 
 ### Transporte, cabeceras y cifrado
-- **En tránsito:** ya hay HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options`,
-  `Referrer-Policy` y CSP en `next.config.ts`. **Endurecer CSP:** en producción sigue
-  permitiendo `script-src 'unsafe-inline'`; evaluar nonces/hashes para eliminarlo.
+- **⚠ Endurecer la CSP (diagnosticada, pendiente de su propia tanda).** En producción la CSP de
+  `next.config.ts` sigue con `script-src 'unsafe-inline'`, que debilita la defensa anti-XSS. El
+  diagnóstico (2026-07-24) dejó el plan concreto:
+  - **`script-src`: removible con nonce.** La app **no tiene scripts inline propios** (verificado:
+    cero `dangerouslySetInnerHTML`/`<script>`/`next/script`); los únicos inline son los de Next, que
+    el nonce cubre. Se implementa en `proxy.ts` (el middleware de esta versión de Next; patrón
+    verificado contra `node_modules/next/dist/docs/.../content-security-policy.md`).
+  - **`style-src 'unsafe-inline'` es INEVITABLE con las librerías actuales.** Radix/shadcn, Recharts
+    y FullCalendar (y el `Toaster` de Sonner) fijan **atributos `style=""` inline**, y **los nonces
+    NO aplican a atributos `style`** (solo a elementos `<style>`/`<script>`). Sacarlo rompería el
+    posicionamiento de popovers/dialogs y los gráficos.
+  - **Costo del nonce:** fuerza **render dinámico** en toda la app (se pierden `/login` y `/registro`
+    estáticas, ISR y PPR). Es un trabajo de varias iteraciones (report-only primero) que **no
+    bloquea** recibir pacientes → se hará **después del bloque estético**, en tanda propia.
+  - Aprovechar para sumar `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`,
+    `upgrade-insecure-requests`.
+- **Ya presentes:** HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`,
+  `Permissions-Policy` y la CSP base (`next.config.ts`).
 - **En reposo:** Supabase cifra el storage/DB en reposo por defecto — documentarlo como
   control existente. Datos sensibles guardados como **base64 en columnas** (`firma_url`,
   `logo_url`, y binarios de estudios) — revisar tamaño y exposición.
-- **Logs:** confirmar que `SUPABASE_SERVICE_ROLE_KEY` y datos de pacientes nunca se
-  loguean (el admin client se usa en `/verificar` y en actualización de permisos).
+- **Logs:** ✅ verificado (diagnóstico 2026-07-24) que ni `SUPABASE_SERVICE_ROLE_KEY` ni datos de
+  pacientes crudos se loguean (los `console.error` loguean el objeto error; el cron avisa "NO
+  loguear datos personales" y solo loguea el `turno.id`). El admin client se usa en `/verificar`
+  y en actualización de permisos, sin filtrar la key.
+- **`/verificar/[codigo]` — enumeración de códigos:** ✅ mitigado con rate limit **30/min por IP**
+  (2026-07-24). El código es de 12 hex; el límite corta el scraping sin fricción para el uso real.
 
 ### Residencia de datos — transferencia internacional (Ley 25.326)
 - **Migrar la región de Supabase antes de producción.** El proyecto está hoy en un

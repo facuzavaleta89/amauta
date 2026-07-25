@@ -41,7 +41,7 @@ cp .env.example .env.local
 
 # 3. Preparar la base de datos
 #   Aplicá las migraciones de supabase/migrations/ a tu proyecto Supabase
-#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 030).
+#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 031).
 #   ⚠ La secuencia NO es ejecutable sobre una base vacía: varias migraciones (013, 014,
 #   015, 022, 025) referencian la tabla "consultas", que recién se crea en la 030. Ver
 #   PENDIENTES.md → "Consolidación de baseline de migraciones".
@@ -124,4 +124,6 @@ schema.sql      Snapshot consolidado del esquema (referencia)
 
 Optimizada para desplegar en **Vercel**. Configurá las variables de entorno en el
 panel del proyecto y agendá el cron de recordatorios (`/api/cron/recordatorios`,
-protegido por `CRON_SECRET`).
+protegido por `CRON_SECRET`). Ese cron, además de los recordatorios de turnos, hace la
+**limpieza de la tabla `rate_limits`** (borra las ventanas de rate limiting ya cerradas),
+así que conviene que corra periódicamente (p. ej. cada hora).
