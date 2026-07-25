@@ -1,292 +1,163 @@
-# RESPUESTA — Migración 031: rate limiting efectivo sobre Postgres
+# RESPUESTA — Rate limiting efectivo: código de la aplicación
 
-> **Solo SQL.** No toqué `src/`, ni la CSP, ni migraciones existentes, ni documentación.
-> No ejecuté nada contra Supabase.
+> Tanda de rate limiting. La migración 031 (tabla `rate_limits` + función
+> `check_rate_limit`) ya está ejecutada. Este prompt conecta la app.
+> **No toqué** la CSP/`next.config.ts`, ni el auto-registro como médico, ni turnero/
+> mensajería/difusión/lógica clínica, ni la migración 031.
+> **Verificación:** `npx tsc --noEmit` → **exit 0**; `npx next build` →
+> **✓ Compiled successfully**, sin warnings ni errores.
 > Fecha: 2026-07-24 · Rama: `main`.
 
 ---
 
-## Qué escribí
+## Archivos tocados
 
-| Archivo | Estado |
+| Archivo | Cambio |
 |---|---|
-| `supabase/migrations/031_rate_limits.sql` | **creado** |
-| `MIGRACION-07-rate-limits.sql` (raíz) | **creado**, idéntico |
+| `src/lib/rate-limit.ts` | **Reescrito**: `Map` en memoria → RPC `check_rate_limit` vía admin client, con **fail-open + timeout**. |
+| `src/app/(auth)/actions.ts` | Login **5/min** (era 10/15min) y registro **3/min** (era 5/60min). |
+| `src/app/verificar/[codigo]/page.tsx` | Nuevo rate limit **30/min por IP** con respuesta amable y neutra. |
+| `src/app/api/cron/recordatorios/route.ts` | **H6** (`CRON_SECRET` timing-safe) + **limpieza** de `rate_limits`. |
+| **19 Route Handlers** (`src/app/api/**`) | `rateLimit(...)` ahora es `async` → se agregó `await` (35 call sites). |
 
-**Verificación de identidad (hecha):**
-
-```
-$ diff supabase/migrations/031_rate_limits.sql MIGRACION-07-rate-limits.sql
-DIFF OK — idénticos
-$ md5sum ...
-5ff328e6779276d6f958aebbf2f64c21  supabase/migrations/031_rate_limits.sql
-5ff328e6779276d6f958aebbf2f64c21  MIGRACION-07-rate-limits.sql
-```
-
-### Contenido, un renglón por bloque
-1. **Tabla `rate_limits`** (fixed-window counter): `key`, `window_start`, `count`, `PK(key,
-   window_start)` + índice `idx_rate_limits_window` para el DELETE de limpieza. `IF NOT EXISTS`.
-2. **RLS habilitado sin políticas** (deny-by-default), con el comentario de que la ausencia es
-   deliberada (mismo criterio que el bucket `documentos` en la 027).
-3. **`check_rate_limit(p_key, p_limit, p_window_secs)`** → `TABLE(allowed, retry_after_secs)`,
-   `SECURITY DEFINER` + `search_path=public`, conteo atómico con `INSERT … ON CONFLICT DO UPDATE …
-   RETURNING`, ventana por floor del epoch.
-4. **Permisos:** `REVOKE … FROM PUBLIC` + `GRANT … TO service_role` + `TO postgres` (mismo patrón
-   que `verificar_documento` en la 025).
+Los 19 Route Handlers con `await` agregado (35 llamadas): `pedidos/route.ts`,
+`pedidos/[id]/route.ts`, `pedidos/[id]/anular/route.ts`, `certificados/route.ts`,
+`certificados/[id]/route.ts`, `certificados/[id]/anular/route.ts`, `pacientes/route.ts`,
+`pacientes/[id]/route.ts`, `pacientes/[id]/archivar/route.ts`, `consultas/route.ts`,
+`consultas/[id]/route.ts`, `estudios/route.ts`, `estudios/[id]/route.ts`,
+`turnero/route.ts`, `turnero/[id]/route.ts`, `turnero/bloqueos/route.ts`,
+`turnero/bloqueos/[id]/route.ts`, `difusion/route.ts`, `difusion/[id]/route.ts`.
 
 ---
 
-## SQL COMPLETO — para copiar y pegar en el SQL Editor
+## Cómo quedó la interfaz de `rate-limit.ts`
 
-```sql
--- ============================================================================
--- Migration 031 — Rate limiting efectivo sobre Postgres
--- ============================================================================
--- PROBLEMA QUE RESUELVE:
---   El rate limiter actual (src/lib/rate-limit.ts) guarda los contadores en un `Map`
---   en la MEMORIA DEL PROCESO. En Vercel (serverless) cada request puede caer en una
---   instancia distinta, y las lambdas se reciclan, así que los contadores NO se
---   comparten ni persisten. En la práctica HOY NO HAY protección real contra fuerza
---   bruta en el login/registro: un atacante distribuye los intentos y el límite nunca
---   se alcanza. Esta migración mueve el conteo a una tabla compartida en la base.
---
--- QUÉ CREA:
---   1. Tabla `public.rate_limits` — fixed-window counter (una fila por key+ventana).
---   2. RLS habilitado SIN políticas (deny-by-default; el acceso es solo vía la función).
---   3. Función `public.check_rate_limit(...)` — cuenta de forma atómica y decide.
---   4. Permisos: EXECUTE solo para service_role/postgres (el módulo la llama con el
---      admin client, porque el login ocurre SIN sesión).
---
--- LIMITACIÓN ACEPTADA:
---   Postgres NO escala a ataques de volumen muy alto (miles de req/s): la base se
---   satura antes de bloquear. Para un consultorio unipersonal no aplica. La interfaz
---   del módulo queda aislada, así que migrar a Redis en el futuro sería cambiar la
---   implementación de rate-limit.ts SIN tocar a los ~25 llamadores.
---
--- Idempotente: CREATE TABLE/INDEX IF NOT EXISTS, CREATE OR REPLACE FUNCTION.
--- ============================================================================
+**Cambio de firma (el único):** `rateLimit()` y `checkRateLimit()` pasaron de **síncronas a
+`async`** (`Promise<RateLimitResult>`), porque ahora hacen I/O a la base. Por eso los Route
+Handlers necesitaron `await`. Todo lo demás se mantiene idéntico:
 
+- `rateLimitAction(options)` — ya era async; **login/registro no cambiaron su forma de llamar**.
+- `rateLimitResponse(retryAfterMs)`, `getIp(request)`, `getIpFromHeaders()` — **sin cambios de firma**.
+- `RateLimitOptions { key, limit, windowMs }` y `RateLimitResult { success, remaining, retryAfter? }`
+  **iguales**. Clave: mantuve `windowMs` (ms) en la entrada y `retryAfter` (ms) en la salida, aunque
+  la RPC trabaja en segundos — la conversión (`windowMs→secs`, `retry_after_secs→ms`) es interna, así
+  los llamadores (`rateLimitResponse(rl.retryAfter!)`, `Math.ceil(retryAfter!/60000)`) siguen funcionando.
 
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 1. Tabla `rate_limits` (fixed-window counter)                              │
--- └──────────────────────────────────────────────────────────────────────────┘
--- Una fila por combinación (key, window_start), NO una fila por request: la tabla no
--- crece con el tráfico, solo con la cantidad de keys activas por ventana.
---   · key          → identificador del contador (ej. 'login:<ip>:<email>', 'verificar:<ip>').
---   · window_start → inicio de la ventana (floor del epoch al tamaño de ventana); agrupa
---                    todas las requests de la misma ventana en la misma fila.
---   · count        → cantidad de hits en esa ventana.
--- La PK (key, window_start) es lo que habilita el UPSERT atómico de la función.
-CREATE TABLE IF NOT EXISTS public.rate_limits (
-  key          TEXT        NOT NULL,
-  window_start TIMESTAMPTZ NOT NULL,
-  count        INTEGER     NOT NULL DEFAULT 0,
-  PRIMARY KEY (key, window_start)
-);
+**Fail-open + timeout:** la llamada va envuelta en `try/catch` con
+`.abortSignal(AbortSignal.timeout(2000))`. Si la RPC falla, tarda >2s, o falta el env del admin
+client → se **loguea** (`console.error('[rate-limit] fail-open …')`) y se devuelve
+`{ success: true }`. Nunca se bloquea un flujo legítimo por infraestructura.
 
--- Índice sobre window_start para que el DELETE de limpieza (en el cron de
--- recordatorios) sea barato: borra ventanas viejas por rango de tiempo.
-CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON public.rate_limits(window_start);
+**Prefijos de key:** cada uso lleva su prefijo (`login:`, `registro:`, `verificar:`, y los
+`<accion>:${user.id}` de las API), así distintos usos no comparten contador.
 
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 2. RLS habilitado SIN políticas (deny-by-default)                          │
--- └──────────────────────────────────────────────────────────────────────────┘
--- ⚠ La AUSENCIA de políticas es DELIBERADA (mismo criterio que el bucket `documentos`
---   en la 027, que no tiene política de DELETE a propósito). Con RLS activado y sin
---   ninguna política, Postgres DENIEGA por defecto todo acceso de `anon` y
---   `authenticated` vía PostgREST. Así ningún cliente puede:
---     · leer las keys/contadores de otros (privacidad de la tabla de control),
---     · ni resetear su propio contador borrando/actualizando su fila (evadir el límite).
---   El único acceso es a través de la función check_rate_limit (SECURITY DEFINER), que
---   corre con privilegios elevados y bypasea RLS. El admin client (service_role) también
---   bypasea RLS, pero el camino previsto es SIEMPRE la función, por su atomicidad.
-ALTER TABLE public.rate_limits ENABLE ROW LEVEL SECURITY;
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 3. Función `check_rate_limit` — conteo atómico + decisión                  │
--- └──────────────────────────────────────────────────────────────────────────┘
--- Devuelve (allowed, retry_after_secs). SECURITY DEFINER + search_path fijo (evita
--- secuestro de esquema, igual que verificar_documento en la 025).
---
--- ATOMICIDAD: el conteo es UN SOLO statement — INSERT ... ON CONFLICT DO UPDATE ...
--- RETURNING. Esto toma el row-lock de la fila (key, window_start) y evita el TOCTOU
--- del patrón "SELECT count(); si < limit INSERT", donde dos requests concurrentes
--- leen ambos un valor bajo el límite y ambos pasan. Con el UPSERT, el incremento y la
--- lectura del nuevo valor ocurren bajo el mismo lock: el conteo es exacto.
---
--- VENTANA: window_start = floor(epoch_actual / p_window_secs) * p_window_secs. Todas
--- las requests de la misma ventana calculan el mismo window_start → caen en la misma
--- fila. (Fixed window: puede haber hasta ~2x el límite en el borde entre ventanas;
--- aceptado por diseño para esta app.)
-CREATE OR REPLACE FUNCTION public.check_rate_limit(
-  p_key         TEXT,
-  p_limit       INT,
-  p_window_secs INT
-)
-RETURNS TABLE(allowed BOOLEAN, retry_after_secs INT)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_window_start TIMESTAMPTZ := to_timestamp(
-    floor(extract(epoch FROM now()) / p_window_secs) * p_window_secs
-  );
-  v_count INT;
-BEGIN
-  -- Incremento atómico: crea la fila con count=1 o suma 1 a la existente, y devuelve
-  -- el valor resultante bajo el mismo lock.
-  INSERT INTO public.rate_limits AS rl (key, window_start, count)
-  VALUES (p_key, v_window_start, 1)
-  ON CONFLICT (key, window_start)
-    DO UPDATE SET count = rl.count + 1
-  RETURNING rl.count INTO v_count;
-
-  IF v_count > p_limit THEN
-    -- Bloqueado: segundos que faltan hasta que termine la ventana actual.
-    RETURN QUERY SELECT
-      FALSE,
-      GREATEST(
-        CEIL(extract(epoch FROM (v_window_start + make_interval(secs => p_window_secs)) - now()))::INT,
-        0
-      );
-  ELSE
-    RETURN QUERY SELECT TRUE, 0;
-  END IF;
-END;
-$$;
-
-
--- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 4. Permisos de ejecución                                                   │
--- └──────────────────────────────────────────────────────────────────────────┘
--- La función ESCRIBE en una tabla de control de acceso (incrementa contadores). Solo
--- el SERVIDOR debe poder invocarla: el módulo rate-limit.ts la llama con el admin
--- client (service_role), porque el login ocurre SIN sesión y no hay un usuario cuyo
--- cliente usar. Se revoca de PUBLIC y se otorga solo a service_role/postgres — mismo
--- patrón que verificar_documento en la migración 025. Sin esto, cualquier usuario
--- autenticado podría llamar la RPC y, por ejemplo, inflar contadores de terceros.
-REVOKE EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) FROM PUBLIC;
-GRANT  EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) TO service_role;
-GRANT  EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) TO postgres;
-```
+`remaining` ya no es exacto (la RPC solo devuelve `allowed` + `retry_after_secs`); devuelvo un
+best-effort (`limit` si permite, `0` si bloquea). **Ningún llamador usa `remaining`** (verificado),
+así que no afecta a nadie.
 
 ---
 
-## Consultas de verificación (correlas DESPUÉS de aplicar)
+## `getIp` cuando no hay header de IP (H7)
 
-### V1 — La tabla existe con su forma correcta
+Extracción: `x-forwarded-for` (primer valor, trim) → `x-real-ip` (trim) → `'unknown'`.
 
-```sql
-SELECT column_name, data_type, is_nullable, column_default
-FROM information_schema.columns
-WHERE table_schema = 'public' AND table_name = 'rate_limits'
-ORDER BY ordinal_position;
-```
+**Decisión para el caso "sin ningún header":** devuelvo **`'unknown'`** (esos requests comparten una
+cubeta), documentado en el código. Razonamiento:
+- En **Vercel `x-forwarded-for` siempre está** y el cliente **no lo puede falsificar** (Vercel lo
+  reescribe en el edge). Así que `'unknown'` **solo ocurre fuera de Vercel** (dev local, runtime raro),
+  que **no es un entorno expuesto a ataques**.
+- Descarté **fail-open cuando la IP es unknown** (saltear el límite): un atacante podría, en teoría,
+  desactivar el rate limit borrando el header — aunque en Vercel no puede. Compartir una cubeta es
+  **más conservador** que desactivar el límite.
+- Descarté que el bucket compartido perjudique al login: su key es `login:${ip}:${email}`, así que el
+  **email diferencia** los contadores aun con `ip='unknown'`. El caso compartido real
+  (`registro:unknown`, `verificar:unknown`) solo afecta a dev local.
 
-**Esperado: 3 filas** — `key` (text, NO), `window_start` (timestamp with time zone, NO),
-`count` (integer, NO, default `0`).
-
-### V2 — PK e índice
-
-```sql
-SELECT indexname, indexdef
-FROM pg_indexes
-WHERE schemaname = 'public' AND tablename = 'rate_limits'
-ORDER BY indexname;
-```
-
-**Esperado: 2 filas** — `rate_limits_pkey` (UNIQUE sobre `key, window_start`) e
-`idx_rate_limits_window` (sobre `window_start`).
-
-### V3 — RLS activo y SIN políticas
-
-```sql
-SELECT relrowsecurity FROM pg_class WHERE oid = 'public.rate_limits'::regclass;
-SELECT count(*) AS politicas FROM pg_policies
-WHERE schemaname = 'public' AND tablename = 'rate_limits';
-```
-
-**Esperado:** `relrowsecurity = t` y `politicas = 0`.
-
-### V4 — La función existe con la firma y seguridad correctas
-
-```sql
-SELECT p.proname,
-       pg_get_function_identity_arguments(p.oid) AS args,
-       p.prosecdef                               AS security_definer,
-       p.proconfig                               AS settings
-FROM pg_proc p
-WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'check_rate_limit';
-```
-
-**Esperado: 1 fila** — args `p_key text, p_limit integer, p_window_secs integer`,
-`security_definer = t`, `settings = {search_path=public}`.
-
-### V5 — Permisos: NO ejecutable por PUBLIC/anon/authenticated
-
-```sql
-SELECT
-  has_function_privilege('service_role', 'public.check_rate_limit(text,int,int)', 'EXECUTE') AS service_role,
-  has_function_privilege('authenticated','public.check_rate_limit(text,int,int)', 'EXECUTE') AS authenticated,
-  has_function_privilege('anon',         'public.check_rate_limit(text,int,int)', 'EXECUTE') AS anon;
-```
-
-**Esperado:** `service_role = t`, `authenticated = f`, `anon = f`.
-
-### V6 — Ejercicio real: bloquea al superar el límite, y limpieza
-
-Llamás la función 4 veces con **límite 3** y ventana 60s sobre una key de prueba. Las 3 primeras
-deben permitir; la 4.ª debe bloquear.
-
-```sql
--- Debe dar allowed = true  (count interno 1)
-SELECT * FROM public.check_rate_limit('test:diag', 3, 60);
--- allowed = true  (2)
-SELECT * FROM public.check_rate_limit('test:diag', 3, 60);
--- allowed = true  (3)
-SELECT * FROM public.check_rate_limit('test:diag', 3, 60);
--- allowed = FALSE, retry_after_secs > 0  (4 > 3)
-SELECT * FROM public.check_rate_limit('test:diag', 3, 60);
-
--- La fila de prueba muestra count = 4 en la ventana actual:
-SELECT key, count FROM public.rate_limits WHERE key = 'test:diag';
-
--- Limpieza de la fila de prueba:
-DELETE FROM public.rate_limits WHERE key = 'test:diag';
-```
-
-**Esperado:** primeras 3 → `allowed = t, retry_after_secs = 0`; la 4.ª → `allowed = f,
-retry_after_secs` entre 1 y 60. `SELECT count` → **4**. El `DELETE` deja la tabla sin la fila de
-prueba (verificable con `SELECT count(*) FROM public.rate_limits WHERE key = 'test:diag';` → 0).
-
-> Nota: correr V6 en el SQL Editor funciona porque ahí actuás como `postgres`/`service_role`, que
-> SÍ tiene EXECUTE. Un intento con el rol `anon`/`authenticated` daría *permission denied* — que es
-> exactamente lo que V5 confirma.
+Mejora concreta sobre el código previo: agregué `.trim()` también a `x-real-ip`.
 
 ---
 
-## Sobre permisos al ejecutar
-Todo es sobre `public` (tabla, función, grants). No toca `storage.*`, así que no debería requerir
-privilegios especiales en el SQL Editor. Si el `REVOKE/GRANT` fallara por permisos, ejecutar esos
-tres statements como `postgres` (rol por defecto del SQL Editor de Supabase).
+## Cómo probar cada límite manualmente
+
+> Los contadores son **por ventana de 60s** y viven en la tabla `rate_limits` (compartidos entre
+> instancias). Para "resetear" un contador durante las pruebas: `DELETE FROM rate_limits WHERE key
+> LIKE 'login:%';` (o el prefijo que corresponda) en el SQL Editor.
+
+### Login — 5/min por IP+email
+1. En `/login`, intentá entrar **6 veces seguidas** con el **mismo email** (contraseña incorrecta
+   sirve). Las primeras 5 devuelven "Email o contraseña incorrectos"; la **6.ª** debe devolver
+   *"Demasiados intentos. Esperá 1 minuto…"* (sin revelar si el email existe).
+2. Verificá el contador: `SELECT key, count FROM rate_limits WHERE key LIKE 'login:%';` → `count = 6`.
+3. Esperá 1 minuto (nueva ventana) y confirmá que vuelve a permitir.
+
+### Registro — 3/min por IP
+1. En `/registro`, enviá el formulario **4 veces** (pueden fallar por email repetido). La **4.ª** debe
+   cortar con *"Demasiados intentos de registro…"*.
+2. `SELECT key, count FROM rate_limits WHERE key LIKE 'registro:%';` → `count = 4`.
+
+### `/verificar/[codigo]` — 30/min por IP
+1. Recargá `/verificar/CUALQUIERCODIGO` **31 veces** en menos de un minuto (un bucle de `curl` a la
+   URL, o refresh rápido). Las primeras 30 muestran la verificación normal (válido/anulado/inválido);
+   la **31.ª** debe mostrar la tarjeta **"Demasiadas solicitudes"** (neutra, no dice si el código
+   existe).
+   ```bash
+   for i in $(seq 1 31); do curl -s -o /dev/null -w "%{http_code}\n" https://<host>/verificar/TESTCODE; done
+   ```
+2. `SELECT key, count FROM rate_limits WHERE key LIKE 'verificar:%';` → `count = 31`.
+
+### API autenticada (ejemplo)
+Los límites de las rutas API no cambiaron (respeté los existentes). P. ej. `POST /api/pedidos` sigue
+en 30/min por `user.id`. Ahora **sí funcionan de verdad** en producción (antes el `Map` no se
+compartía entre lambdas).
 
 ---
 
-## PARADA — próximo paso
+## Cómo verificar el FAIL-OPEN sin romper la base
 
-**Frené acá, como pediste.** No toqué código de la app ni documentación.
+El fail-open se dispara si la RPC falla, tarda >2s, o el admin client no puede inicializarse. Formas
+seguras de probarlo **sin tocar la tabla**:
 
-**Te toca a vos:** ejecutar el SQL y correr V1–V6 (V6 incluye la limpieza de la fila de prueba).
+1. **Simular que la RPC no existe** (en un entorno de prueba, no en prod): renombrá temporalmente la
+   función en la base (`ALTER FUNCTION public.check_rate_limit(text,int,int) RENAME TO
+   check_rate_limit_off;`) y hacé login/verificar. Debe **funcionar normal** (permite), y en los logs
+   del server aparece `[rate-limit] fail-open — la RPC check_rate_limit falló…`. Restaurá el nombre
+   después. **Ningún flujo se cae.**
+2. **Simular env faltante** (dev local): quitá `SUPABASE_SERVICE_ROLE_KEY` de `.env.local` y probá el
+   login → `createAdminClient()` lanza, el `catch` lo captura, se loguea el fail-open y el login sigue
+   andando. Restaurá la key.
+3. **Timeout:** difícil de forzar sin latencia real; el `AbortSignal.timeout(2000)` garantiza que si
+   la RPC no responde en 2s, se aborta y cae al fail-open en vez de colgar el request.
 
-📌 **Recordatorio: después de que confirmes esta migración viene el PROMPT DEL CÓDIGO**, que va a:
-- Reescribir `src/lib/rate-limit.ts` para llamar `check_rate_limit` con el **admin client**,
-  volviendo `async` a `rateLimit()`/`checkRateLimit` y agregando **`await`** en los ~25 call sites
-  (~18 archivos), con **fail-open + timeout** (decisión 1).
-- Agregar rate limit a **`/verificar/[codigo]`** a **30/min por IP** (decisión 2).
-- Sumar `DELETE FROM rate_limits WHERE window_start < now() - interval '1 day'` al cron de
-  `api/cron/recordatorios` (decisión 6).
-- Arreglar **H6** (`CRON_SECRET` con `crypto.timingSafeEqual`) y **H7** (`getIp` → `'unknown'`).
-- La **CSP queda fuera** de esta tanda (decisión 3), no se toca.
+En los tres casos el comportamiento esperado es: **el usuario no nota nada** (se permite), y queda el
+`console.error` de fail-open para monitoreo. Como lo dijimos en el diagnóstico: si esa tabla no
+responde, la auth (mismo clúster) tampoco, así que no se abre un hueco real.
+
+---
+
+## Detalle de H6 (CRON_SECRET timing-safe)
+
+`api/cron/recordatorios/route.ts`: reemplacé `authHeader !== \`Bearer ${secret}\`` por
+`safeEqual(authHeader, \`Bearer ${secret}\`)` con `crypto.timingSafeEqual`. `safeEqual` iguala por
+longitud primero (si difieren → `false`, sin lanzar; `timingSafeEqual` exige buffers del mismo
+largo). El chequeo completo: `if (!secret || !authHeader || !safeEqual(...))` → 401.
+
+## Detalle de la limpieza en el cron (decisión 6/7)
+
+`DELETE FROM rate_limits WHERE window_start < now() - 1 hora`, con el `.lt('window_start', cutoff)`
+del cliente service-role. La puse **al inicio del cron** (después del auth), **no** al final, a
+propósito: el cron hace `return` temprano cuando no hay turnos (el caso más común), y al final la
+limpieza se saltearía en esos crons "vacíos". Está en su **propio try/catch**: si falla, se loguea y
+el cron sigue con los recordatorios.
+
+---
+
+## Nota de render
+`/verificar/[codigo]` sigue siendo **dinámica** (`ƒ` en el build) — ya lo era por usar el admin RPC
+por request; agregar `getIpFromHeaders()` no cambió eso. No hay impacto de static→dynamic en ninguna
+página (la CSP/nonce, que sí lo tendría, quedó fuera de esta tanda).
+
+---
+
+## Qué NO toqué (restricciones)
+CSP/`next.config.ts`, auto-registro como médico, turnero/mensajería/difusión/lógica clínica, la
+migración 031. No ejecuté nada contra Supabase.

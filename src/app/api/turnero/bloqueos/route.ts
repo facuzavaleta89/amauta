@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const rl = rateLimit(request, {
+    const rl = await rateLimit(request, {
       key: `bloqueos_post:${user.id}`,
       limit: 20,
       windowMs: 60 * 60 * 1000 // 1 hour

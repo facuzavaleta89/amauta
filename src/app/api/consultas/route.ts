@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `consultas_get:${user.id}`, limit: 60, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `consultas_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id, 'ver_historia_clinica')
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `consultas_post:${user.id}`, limit: 20, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `consultas_post:${user.id}`, limit: 20, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id, 'crear_consultas')

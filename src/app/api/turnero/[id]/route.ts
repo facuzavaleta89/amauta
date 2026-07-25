@@ -24,7 +24,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const rl = rateLimit(request, {
+    const rl = await rateLimit(request, {
       key: `turnero_patch:${user.id}`,
       limit: 60,
       windowMs: 60 * 60 * 1000 // 1 hour
@@ -127,7 +127,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const rl = rateLimit(request, {
+    const rl = await rateLimit(request, {
       key: `turnero_delete:${user.id}`,
       limit: 20,
       windowMs: 60 * 60 * 1000 // 1 hour

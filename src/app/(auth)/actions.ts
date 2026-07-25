@@ -23,12 +23,12 @@ export async function login(
     return { error: 'La contraseña es demasiado larga.' }
   }
 
-  // Rate limit: 10 intentos por IP+email cada 15 minutos
+  // Rate limit: 5 intentos por IP+email cada minuto
   const ip = await getIpFromHeaders()
   const { success, retryAfter } = await rateLimitAction({
-    key: `login:${ip}:${email.toLowerCase()}`,
-    limit: 10,
-    windowMs: 15 * 60 * 1000,
+    key: `login:${ip}:${email.trim().toLowerCase()}`,
+    limit: 5,
+    windowMs: 60 * 1000,
   })
   if (!success) {
     const mins = Math.ceil(retryAfter! / 60000)
@@ -95,12 +95,12 @@ export async function registerUser(
     return { error: 'Rol no válido.' }
   }
 
-  // Rate limit: 5 registros por IP cada 60 minutos
+  // Rate limit: 3 registros por IP cada minuto
   const ip = await getIpFromHeaders()
   const { success, retryAfter } = await rateLimitAction({
-    key: `register:${ip}`,
-    limit: 5,
-    windowMs: 60 * 60 * 1000,
+    key: `registro:${ip}`,
+    limit: 3,
+    windowMs: 60 * 1000,
   })
   if (!success) {
     const mins = Math.ceil(retryAfter! / 60000)

@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const rl = rateLimit(request, {
+    const rl = await rateLimit(request, {
       key: `pacientes_get:${user.id}`,
       limit: 60,
       windowMs: 60 * 1000 // 1 minute

@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `certificados_get:${user.id}`, limit: 60, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `certificados_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `certificados_post:${user.id}`, limit: 30, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `certificados_post:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)

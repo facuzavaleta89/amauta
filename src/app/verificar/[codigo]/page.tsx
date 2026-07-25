@@ -1,7 +1,8 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { rateLimitAction, getIpFromHeaders } from '@/lib/rate-limit'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { CheckCircle2, XCircle, AlertTriangle, ShieldCheck, User, Calendar, FileText, Award } from 'lucide-react'
+import { CheckCircle2, XCircle, AlertTriangle, ShieldCheck, User, Calendar, FileText, Award, Clock } from 'lucide-react'
 import React from 'react'
 
 interface PageProps {
@@ -46,6 +47,30 @@ function formatMatriculas(matriculas: any): string | null {
 
 export default async function VerificarDocumentoPage({ params }: PageProps) {
   const { codigo } = await params
+
+  // Rate limit: 30 verificaciones por minuto por IP (endpoint público → mitiga
+  // enumeración/scraping de códigos). Fail-open: si la RPC falla, se permite.
+  const ip = await getIpFromHeaders()
+  const rl = await rateLimitAction({ key: `verificar:${ip}`, limit: 30, windowMs: 60 * 1000 })
+  if (!rl.success) {
+    // Respuesta amable y NEUTRA: no revela si el código existe o no.
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 text-center border border-slate-200 dark:border-slate-700">
+          <div className="w-16 h-16 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Clock className="w-10 h-10" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
+            Demasiadas solicitudes
+          </h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Recibimos muchas verificaciones desde tu conexión. Esperá un momento y volvé a intentar.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const supabase = createAdminClient()
 
   // Llamar a la función RPC de verificación
