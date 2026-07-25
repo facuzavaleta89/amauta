@@ -25,7 +25,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const rl = rateLimit(request, { key: `paciente_archivar:${user.id}`, limit: 30, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `paciente_archivar:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     // Validar explícitamente que el usuario sea médico (no confiar solo en RLS).

@@ -1,120 +1,163 @@
-# RESPUESTA — Alineación de la migración 030 con los índices reales
+# RESPUESTA — Rate limiting efectivo: código de la aplicación
 
-> Corrección de archivos de migración + documentación. **No toqué `src/`**, ni ninguna otra
-> migración además de la 030 y su copia suelta. No ejecuté nada contra Supabase.
-> No cambié nada más del contenido de la 030 (tipos, constraints, columnas y políticas
-> quedaron intactos).
+> Tanda de rate limiting. La migración 031 (tabla `rate_limits` + función
+> `check_rate_limit`) ya está ejecutada. Este prompt conecta la app.
+> **No toqué** la CSP/`next.config.ts`, ni el auto-registro como médico, ni turnero/
+> mensajería/difusión/lógica clínica, ni la migración 031.
+> **Verificación:** `npx tsc --noEmit` → **exit 0**; `npx next build` →
+> **✓ Compiled successfully**, sin warnings ni errores.
 > Fecha: 2026-07-24 · Rama: `main`.
 
 ---
 
-## Qué corregí exactamente
+## Archivos tocados
 
-### `supabase/migrations/030_objetos_huerfanos.sql` (+ su copia `MIGRACION-06-huerfanos.sql`)
-
-**1. Índices de `consultas` — eran 2 con nombres equivocados, ahora son 3 con los reales**
-
-```diff
--CREATE INDEX IF NOT EXISTS idx_consultas_paciente ON public.consultas(paciente_id);
--CREATE INDEX IF NOT EXISTS idx_consultas_medico   ON public.consultas(medico_id);
-+-- Índices con los nombres y definiciones REALES de la base (ver nota del encabezado).
-+CREATE INDEX IF NOT EXISTS consultas_paciente_id_idx ON public.consultas USING btree (paciente_id);
-+CREATE INDEX IF NOT EXISTS consultas_medico_id_idx   ON public.consultas USING btree (medico_id);
-+CREATE INDEX IF NOT EXISTS consultas_fecha_hora_idx  ON public.consultas USING btree (fecha_hora DESC);
-```
-
-**2. Índices de `notificaciones` — el comentario decía que no tenía; ahora crea los 3**
-
-Quité la afirmación falsa del encabezado del bloque:
-```diff
---- enviado). medico_id = tenant. Sin índices (la auditoría no encontró ninguno; ver
----- RESPUESTA.md → sugerencia, NO agregada acá).
-+-- enviado). medico_id = tenant. Tiene 3 índices (ver más abajo).
-```
-
-Y agregué los índices justo después del `ENABLE ROW LEVEL SECURITY`, como pediste:
-```sql
-CREATE INDEX IF NOT EXISTS idx_notificaciones_medico  ON public.notificaciones USING btree (medico_id);
-CREATE INDEX IF NOT EXISTS idx_notificaciones_leida   ON public.notificaciones USING btree (medico_id, leida);
-CREATE INDEX IF NOT EXISTS idx_notificaciones_created ON public.notificaciones USING btree (created_at DESC);
-```
-
-**3. Nota nueva en el encabezado** dejando constancia de que los nombres se verificaron contra
-`pg_indexes` de la base real, con el listado completo de los 8 índices (los dos `*_pkey` que
-crea el `PRIMARY KEY` + los 6 explícitos) y la confirmación de que no hay duplicados.
-
-**Ubicaciones finales de los `CREATE INDEX` en el archivo:** líneas 118-120 (`consultas`) y
-190-192 (`notificaciones`).
-
-### `schema.sql`
-Ya documentaba los 6 índices explícitos con los nombres correctos (los puse bien en la ronda de
-documentación), así que **no había que agregar ninguno**. Pero sí quedaban **dos comentarios
-obsoletos** que advertían sobre la desalineación —y que este prompt vuelve falsos—; los reemplacé:
-
-- línea ~247: *"⚠ La migración 030 los crea con otros nombres … y no crea el de fecha_hora"*
-- línea ~573: *"⚠ La migración 030 NO los crea"*
-
-Ambos ahora dicen: *"Índices verificados contra pg_indexes de la base real; la migración 030 los
-crea con estos mismos nombres y definiciones."*
-
-### `PENDIENTES.md`
-El pendiente **"⚠ Desalineación 030 ↔ base en ÍNDICES (verificar)"** pasó a
-**✅ RESUELTO (2026-07-24)**, siguiendo el formato del documento (el resto de los ítems cerrados
-usan el mismo prefijo `✅ RESUELTO (fecha) — …`). El texto explica qué pasó (el archivo quedó con
-una versión previa porque se ejecutó la corregida a mano), qué se alineó, y deja registrado que
-**la base no tiene duplicados**: son exactamente 8 índices.
-
----
-
-## Confirmación: los dos archivos son idénticos
-
-```
-$ diff supabase/migrations/030_objetos_huerfanos.sql MIGRACION-06-huerfanos.sql
-DIFF OK — idénticos
-
-$ md5sum supabase/migrations/030_objetos_huerfanos.sql MIGRACION-06-huerfanos.sql
-876898c6bb38abe1e28764dee9db4531  supabase/migrations/030_objetos_huerfanos.sql
-876898c6bb38abe1e28764dee9db4531  MIGRACION-06-huerfanos.sql
-```
-
-Verificaciones adicionales que corrí:
-- Los 6 `CREATE INDEX` del archivo son los esperados (grep sobre la migración).
-- No queda ninguna mención al comentario falso *"Sin índices"* (grep → vacío).
-- No queda ninguna referencia a los nombres viejos `idx_consultas_paciente` /
-  `idx_consultas_medico` en migraciones ni en docs, salvo **una mención histórica** en
-  `PENDIENTES.md` que describe justamente qué se corrigió (correcta, no obsoleta).
-- No queda ninguna afirmación del tipo *"NO los crea"* / *"otros nombres"* / *"le faltarían"* en
-  ningún documento (grep → vacío).
-
----
-
-## ¿Otras desalineaciones entre las migraciones del repo y la base?
-
-Revisé lo que se verificó contra la base en esta tanda. **No encontré ninguna otra desalineación
-nueva.** Detalle de lo cotejado:
-
-| Objeto verificado contra la base | Estado del archivo 030 |
+| Archivo | Cambio |
 |---|---|
-| Tipos NUMERIC de `consultas` (7 columnas) | ✅ correctos (`talla_cm` 5,1 · `temperatura` 4,1 · los cinco metabólicos 6,2) |
-| `created_at`/`updated_at` de `consultas` NULLABLE | ✅ correcto |
-| `id` con `gen_random_uuid()` | ✅ correcto |
-| Constraints de `consultas` (pkey, 2 fkey, estado_check) con nombres explícitos | ✅ correctos |
-| Estructura y políticas de `notificaciones` (incl. la asimetría `get_medico_id()` en el INSERT) | ✅ correctas |
-| 3 CHECK de `turnos` (incluido `check_paciente_id_required_for_turno_medico`) | ✅ correctos |
-| Columnas de `profiles` (`titulo`, `matriculas`, `logo_url`) | ✅ correctas |
-| **Índices** | ❌ era el único desalineado → **corregido en este prompt** |
+| `src/lib/rate-limit.ts` | **Reescrito**: `Map` en memoria → RPC `check_rate_limit` vía admin client, con **fail-open + timeout**. |
+| `src/app/(auth)/actions.ts` | Login **5/min** (era 10/15min) y registro **3/min** (era 5/60min). |
+| `src/app/verificar/[codigo]/page.tsx` | Nuevo rate limit **30/min por IP** con respuesta amable y neutra. |
+| `src/app/api/cron/recordatorios/route.ts` | **H6** (`CRON_SECRET` timing-safe) + **limpieza** de `rate_limits`. |
+| **19 Route Handlers** (`src/app/api/**`) | `rateLimit(...)` ahora es `async` → se agregó `await` (35 call sites). |
 
-**Dos cosas que quedan anotadas (ya estaban en `PENDIENTES.md`, no son nuevas):**
+Los 19 Route Handlers con `await` agregado (35 llamadas): `pedidos/route.ts`,
+`pedidos/[id]/route.ts`, `pedidos/[id]/anular/route.ts`, `certificados/route.ts`,
+`certificados/[id]/route.ts`, `certificados/[id]/anular/route.ts`, `pacientes/route.ts`,
+`pacientes/[id]/route.ts`, `pacientes/[id]/archivar/route.ts`, `consultas/route.ts`,
+`consultas/[id]/route.ts`, `estudios/route.ts`, `estudios/[id]/route.ts`,
+`turnero/route.ts`, `turnero/[id]/route.ts`, `turnero/bloqueos/route.ts`,
+`turnero/bloqueos/[id]/route.ts`, `difusion/route.ts`, `difusion/[id]/route.ts`.
 
-1. **La secuencia de migraciones sigue sin correr desde cero.** Las migraciones 013, 014, 015,
-   022 y 025 referencian `public.consultas` y la tabla recién se crea en la 030. Corregir los
-   índices no cambia eso; sigue requiriendo la consolidación de baseline.
-2. **`20260326204733_fix_rls_recursion.sql` sigue con 0 bytes.** No lo toqué (la restricción dice
-   no modificar otras migraciones). Su intención ya está cubierta por la 014 + 019/021.
+---
 
-**Nota metodológica, por si sirve para adelante:** este caso muestra el límite de auditar
-solo con lo que devuelve una consulta puntual. Los índices de `notificaciones` existían y mi
-auditoría inicial no los vio, lo que me llevó a escribir "sin índices" en la migración y hasta a
-proponer agregar uno que ya existía. Para objetos huérfanos conviene cotejar siempre contra
-`pg_indexes` / `pg_constraint` completos antes de escribir el `CREATE`, que es exactamente lo que
-hiciste al revisar el SQL antes de ejecutarlo.
+## Cómo quedó la interfaz de `rate-limit.ts`
+
+**Cambio de firma (el único):** `rateLimit()` y `checkRateLimit()` pasaron de **síncronas a
+`async`** (`Promise<RateLimitResult>`), porque ahora hacen I/O a la base. Por eso los Route
+Handlers necesitaron `await`. Todo lo demás se mantiene idéntico:
+
+- `rateLimitAction(options)` — ya era async; **login/registro no cambiaron su forma de llamar**.
+- `rateLimitResponse(retryAfterMs)`, `getIp(request)`, `getIpFromHeaders()` — **sin cambios de firma**.
+- `RateLimitOptions { key, limit, windowMs }` y `RateLimitResult { success, remaining, retryAfter? }`
+  **iguales**. Clave: mantuve `windowMs` (ms) en la entrada y `retryAfter` (ms) en la salida, aunque
+  la RPC trabaja en segundos — la conversión (`windowMs→secs`, `retry_after_secs→ms`) es interna, así
+  los llamadores (`rateLimitResponse(rl.retryAfter!)`, `Math.ceil(retryAfter!/60000)`) siguen funcionando.
+
+**Fail-open + timeout:** la llamada va envuelta en `try/catch` con
+`.abortSignal(AbortSignal.timeout(2000))`. Si la RPC falla, tarda >2s, o falta el env del admin
+client → se **loguea** (`console.error('[rate-limit] fail-open …')`) y se devuelve
+`{ success: true }`. Nunca se bloquea un flujo legítimo por infraestructura.
+
+**Prefijos de key:** cada uso lleva su prefijo (`login:`, `registro:`, `verificar:`, y los
+`<accion>:${user.id}` de las API), así distintos usos no comparten contador.
+
+`remaining` ya no es exacto (la RPC solo devuelve `allowed` + `retry_after_secs`); devuelvo un
+best-effort (`limit` si permite, `0` si bloquea). **Ningún llamador usa `remaining`** (verificado),
+así que no afecta a nadie.
+
+---
+
+## `getIp` cuando no hay header de IP (H7)
+
+Extracción: `x-forwarded-for` (primer valor, trim) → `x-real-ip` (trim) → `'unknown'`.
+
+**Decisión para el caso "sin ningún header":** devuelvo **`'unknown'`** (esos requests comparten una
+cubeta), documentado en el código. Razonamiento:
+- En **Vercel `x-forwarded-for` siempre está** y el cliente **no lo puede falsificar** (Vercel lo
+  reescribe en el edge). Así que `'unknown'` **solo ocurre fuera de Vercel** (dev local, runtime raro),
+  que **no es un entorno expuesto a ataques**.
+- Descarté **fail-open cuando la IP es unknown** (saltear el límite): un atacante podría, en teoría,
+  desactivar el rate limit borrando el header — aunque en Vercel no puede. Compartir una cubeta es
+  **más conservador** que desactivar el límite.
+- Descarté que el bucket compartido perjudique al login: su key es `login:${ip}:${email}`, así que el
+  **email diferencia** los contadores aun con `ip='unknown'`. El caso compartido real
+  (`registro:unknown`, `verificar:unknown`) solo afecta a dev local.
+
+Mejora concreta sobre el código previo: agregué `.trim()` también a `x-real-ip`.
+
+---
+
+## Cómo probar cada límite manualmente
+
+> Los contadores son **por ventana de 60s** y viven en la tabla `rate_limits` (compartidos entre
+> instancias). Para "resetear" un contador durante las pruebas: `DELETE FROM rate_limits WHERE key
+> LIKE 'login:%';` (o el prefijo que corresponda) en el SQL Editor.
+
+### Login — 5/min por IP+email
+1. En `/login`, intentá entrar **6 veces seguidas** con el **mismo email** (contraseña incorrecta
+   sirve). Las primeras 5 devuelven "Email o contraseña incorrectos"; la **6.ª** debe devolver
+   *"Demasiados intentos. Esperá 1 minuto…"* (sin revelar si el email existe).
+2. Verificá el contador: `SELECT key, count FROM rate_limits WHERE key LIKE 'login:%';` → `count = 6`.
+3. Esperá 1 minuto (nueva ventana) y confirmá que vuelve a permitir.
+
+### Registro — 3/min por IP
+1. En `/registro`, enviá el formulario **4 veces** (pueden fallar por email repetido). La **4.ª** debe
+   cortar con *"Demasiados intentos de registro…"*.
+2. `SELECT key, count FROM rate_limits WHERE key LIKE 'registro:%';` → `count = 4`.
+
+### `/verificar/[codigo]` — 30/min por IP
+1. Recargá `/verificar/CUALQUIERCODIGO` **31 veces** en menos de un minuto (un bucle de `curl` a la
+   URL, o refresh rápido). Las primeras 30 muestran la verificación normal (válido/anulado/inválido);
+   la **31.ª** debe mostrar la tarjeta **"Demasiadas solicitudes"** (neutra, no dice si el código
+   existe).
+   ```bash
+   for i in $(seq 1 31); do curl -s -o /dev/null -w "%{http_code}\n" https://<host>/verificar/TESTCODE; done
+   ```
+2. `SELECT key, count FROM rate_limits WHERE key LIKE 'verificar:%';` → `count = 31`.
+
+### API autenticada (ejemplo)
+Los límites de las rutas API no cambiaron (respeté los existentes). P. ej. `POST /api/pedidos` sigue
+en 30/min por `user.id`. Ahora **sí funcionan de verdad** en producción (antes el `Map` no se
+compartía entre lambdas).
+
+---
+
+## Cómo verificar el FAIL-OPEN sin romper la base
+
+El fail-open se dispara si la RPC falla, tarda >2s, o el admin client no puede inicializarse. Formas
+seguras de probarlo **sin tocar la tabla**:
+
+1. **Simular que la RPC no existe** (en un entorno de prueba, no en prod): renombrá temporalmente la
+   función en la base (`ALTER FUNCTION public.check_rate_limit(text,int,int) RENAME TO
+   check_rate_limit_off;`) y hacé login/verificar. Debe **funcionar normal** (permite), y en los logs
+   del server aparece `[rate-limit] fail-open — la RPC check_rate_limit falló…`. Restaurá el nombre
+   después. **Ningún flujo se cae.**
+2. **Simular env faltante** (dev local): quitá `SUPABASE_SERVICE_ROLE_KEY` de `.env.local` y probá el
+   login → `createAdminClient()` lanza, el `catch` lo captura, se loguea el fail-open y el login sigue
+   andando. Restaurá la key.
+3. **Timeout:** difícil de forzar sin latencia real; el `AbortSignal.timeout(2000)` garantiza que si
+   la RPC no responde en 2s, se aborta y cae al fail-open en vez de colgar el request.
+
+En los tres casos el comportamiento esperado es: **el usuario no nota nada** (se permite), y queda el
+`console.error` de fail-open para monitoreo. Como lo dijimos en el diagnóstico: si esa tabla no
+responde, la auth (mismo clúster) tampoco, así que no se abre un hueco real.
+
+---
+
+## Detalle de H6 (CRON_SECRET timing-safe)
+
+`api/cron/recordatorios/route.ts`: reemplacé `authHeader !== \`Bearer ${secret}\`` por
+`safeEqual(authHeader, \`Bearer ${secret}\`)` con `crypto.timingSafeEqual`. `safeEqual` iguala por
+longitud primero (si difieren → `false`, sin lanzar; `timingSafeEqual` exige buffers del mismo
+largo). El chequeo completo: `if (!secret || !authHeader || !safeEqual(...))` → 401.
+
+## Detalle de la limpieza en el cron (decisión 6/7)
+
+`DELETE FROM rate_limits WHERE window_start < now() - 1 hora`, con el `.lt('window_start', cutoff)`
+del cliente service-role. La puse **al inicio del cron** (después del auth), **no** al final, a
+propósito: el cron hace `return` temprano cuando no hay turnos (el caso más común), y al final la
+limpieza se saltearía en esos crons "vacíos". Está en su **propio try/catch**: si falla, se loguea y
+el cron sigue con los recordatorios.
+
+---
+
+## Nota de render
+`/verificar/[codigo]` sigue siendo **dinámica** (`ƒ` en el build) — ya lo era por usar el admin RPC
+por request; agregar `getIpFromHeaders()` no cambió eso. No hay impacto de static→dynamic en ninguna
+página (la CSP/nonce, que sí lo tendría, quedó fuera de esta tanda).
+
+---
+
+## Qué NO toqué (restricciones)
+CSP/`next.config.ts`, auto-registro como médico, turnero/mensajería/difusión/lógica clínica, la
+migración 031. No ejecuté nada contra Supabase.

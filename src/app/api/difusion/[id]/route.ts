@@ -29,7 +29,7 @@ export async function GET(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `difusion_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `difusion_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
@@ -69,7 +69,7 @@ export async function PATCH(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `difusion_patch:${user.id}`, limit: 30, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `difusion_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
@@ -129,7 +129,7 @@ export async function DELETE(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `difusion_delete:${user.id}`, limit: 10, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `difusion_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)

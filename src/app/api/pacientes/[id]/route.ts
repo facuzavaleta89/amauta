@@ -37,7 +37,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     }
 
     // Rate Limiting
-    const rl = rateLimit(request, { key: `paciente_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `paciente_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
@@ -80,7 +80,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // Rate Limiting
-    const rl = rateLimit(request, { key: `paciente_patch:${user.id}`, limit: 30, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `paciente_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
@@ -157,7 +157,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     }
 
     // Rate Limiting
-    const rl = rateLimit(request, { key: `paciente_delete:${user.id}`, limit: 10, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `paciente_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     // Validar explícitamente que el usuario sea médico (no confiar solo en RLS).

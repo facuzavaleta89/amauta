@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const rl = rateLimit(request, { key: `turnero_get:${user.id}`, limit: 120, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `turnero_get:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const { data: profile } = await supabase
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const rl = rateLimit(request, {
+    const rl = await rateLimit(request, {
       key: `turnero_post:${user.id}`,
       limit: 30,
       windowMs: 60 * 60 * 1000 // 1 hour

@@ -20,7 +20,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `pedidos_anular:${user.id}`, limit: 10, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `pedidos_anular:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     // Obtener rol y verificar que sea médico

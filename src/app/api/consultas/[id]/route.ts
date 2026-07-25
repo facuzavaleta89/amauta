@@ -38,7 +38,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(_request, { key: `consulta_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
+    const rl = await rateLimit(_request, { key: `consulta_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id, 'ver_historia_clinica')
@@ -69,7 +69,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(request, { key: `consulta_patch:${user.id}`, limit: 30, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `consulta_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const body = await request.json()
@@ -211,7 +211,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = rateLimit(_request, { key: `consulta_delete:${user.id}`, limit: 10, windowMs: 60_000 })
+    const rl = await rateLimit(_request, { key: `consulta_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id, 'crear_consultas')

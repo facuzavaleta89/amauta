@@ -1,12 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { timingSafeEqual } from 'crypto'
+
+/**
+ * Compara dos strings en tiempo constante (evita timing attacks sobre el secreto).
+ * Si las longitudes difieren, devuelve false sin lanzar (timingSafeEqual exige buffers
+ * del mismo largo). La longitud de "Bearer <secret>" es conocida, así que no filtra nada.
+ */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  if (bufA.length !== bufB.length) return false
+  return timingSafeEqual(bufA, bufB)
+}
 
 export async function GET(request: NextRequest) {
   try {
     // El cron siempre requiere autenticación.
     // CRON_SECRET debe estar definida en las variables de entorno de producción.
     const authHeader = request.headers.get('authorization')
-    if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    const secret = process.env.CRON_SECRET
+    if (!secret || !authHeader || !safeEqual(authHeader, `Bearer ${secret}`)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -16,12 +30,27 @@ export async function GET(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
+    // ── Limpieza de rate_limits (ventanas ya cerradas: > 1 hora) ──────────────
+    // Se corre en CADA invocación del cron, ANTES de la lógica de recordatorios, para
+    // que se ejecute también en los crons "vacíos" (sin turnos, que hoy hacen return
+    // temprano). Aislada en su propio try/catch: un fallo acá NO rompe el resto.
+    try {
+      const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      const { error: cleanupError } = await supabase
+        .from('rate_limits')
+        .delete()
+        .lt('window_start', cutoff)
+      if (cleanupError) {
+        console.error('[CRON] limpieza de rate_limits falló:', cleanupError)
+      }
+    } catch (cleanupErr) {
+      console.error('[CRON] limpieza de rate_limits lanzó:', cleanupErr)
+    }
+
     // Calculate dates exactly between +24h and +25h (depending oncron interval)
     // The safest is checking anything in the next 24 Hours that hasn't been sent
     const now = new Date()
     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-    // We search across the next 24.5 hours to have a safe window assuming hourly cron
-    const endWindow = new Date(tomorrow.getTime() + 60 * 60 * 1000) 
 
     const { data: turnos, error } = await supabase
       .from('turnos')
@@ -69,7 +98,7 @@ export async function GET(request: NextRequest) {
       resultados.push(t.id)
     }
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       message: `Recordatorios enviados: ${resultados.length}`,
       ids: resultados
     }, { status: 200 })
