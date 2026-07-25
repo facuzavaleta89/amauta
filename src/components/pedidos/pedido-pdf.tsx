@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatFecha, formatFechaLarga } from '@/lib/utils'
+import { buildDocumentoFilename } from '@/lib/pdf/filename'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -60,7 +61,7 @@ export function PedidoDocView({
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `pedido_${pedido.paciente_nombre.replace(/\s+/g, '_')}_${pedido.fecha_pedido}.pdf`
+      a.download = buildDocumentoFilename('pedido', pedido.paciente_nombre, pedido.fecha_pedido)
       a.click()
       URL.revokeObjectURL(url)
     } catch {

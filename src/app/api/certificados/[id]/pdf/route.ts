@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { DOCUMENTOS_BUCKET } from '@/lib/supabase/storage'
 import { generarPdfDocumento, getBaseUrl } from '@/lib/pdf/documentos'
-import { sanitizePdfFilename } from '@/lib/utils'
+import { buildDocumentoFilename } from '@/lib/pdf/filename'
 import type { Certificado } from '@/types/pedido'
 
 interface RouteParams {
@@ -28,8 +28,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       return new NextResponse('Certificado no encontrado', { status: 404 })
     }
 
-    const nombreArchivo = sanitizePdfFilename(
-      `certificado_${certificado.tipo}_${certificado.paciente_nombre}_${certificado.fecha_certificado}.pdf`,
+    const nombreArchivo = buildDocumentoFilename(
+      'certificado',
+      certificado.paciente_nombre,
+      certificado.fecha_certificado,
     )
     const headers = {
       'Content-Type': 'application/pdf',

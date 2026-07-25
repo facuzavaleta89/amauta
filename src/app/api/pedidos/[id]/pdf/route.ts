@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { DOCUMENTOS_BUCKET } from '@/lib/supabase/storage'
 import { generarPdfDocumento, getBaseUrl } from '@/lib/pdf/documentos'
-import { sanitizePdfFilename } from '@/lib/utils'
+import { buildDocumentoFilename } from '@/lib/pdf/filename'
 import type { Pedido } from '@/types/pedido'
 
 interface RouteParams {
@@ -28,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       return new NextResponse('Pedido no encontrado', { status: 404 })
     }
 
-    const nombreArchivo = sanitizePdfFilename(`pedido_${pedido.paciente_nombre}_${pedido.fecha_pedido}.pdf`)
+    const nombreArchivo = buildDocumentoFilename('pedido', pedido.paciente_nombre, pedido.fecha_pedido)
     const headers = {
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${nombreArchivo}"`,
