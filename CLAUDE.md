@@ -32,7 +32,7 @@ ver `PENDIENTES.md`).
 | Gráficos | Recharts 3 |
 | Drag & drop | `@dnd-kit` |
 | PDF | `@react-pdf/renderer` 4 + jsPDF 4 |
-| Email | Resend 6 (⚠ envío aún no conectado) |
+| Email | Resend 6 (✅ envío de difusión conectado; requiere `RESEND_API_KEY`) |
 | Tablas | TanStack Table 8 · **Toasts** Sonner 2 · **QR** `qrcode` |
 | Build | Babel React Compiler habilitado (`reactCompiler: true`) |
 
@@ -95,7 +95,7 @@ del usuario actual.
 | `pedidos` | Pedidos de estudios + PDF + QR (`codigo_verificacion`, `estado`). PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
 | `certificados` | Certificados + PDF + QR + `valido_hasta`. PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
 | `recetas` | Estructura lista; emisión **bloqueada** (ANMAT pendiente) | vía `pacientes` |
-| `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos | `medico_id` |
+| `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos. `difusion_envios` es el **log de envíos**: una fila por destinatario, la escribe `POST /api/difusion/enviar` | `medico_id` |
 | `solicitudes_asistente` | Workflow de vinculación (onboarding) | — |
 | `notas` | Notas personales por usuario | `user_id` |
 | `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). Realtime (migración 023) | `medico_id` / `user_id` |
@@ -202,6 +202,17 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
     cae a `profiles`) y la regeneración del PDF **falla explícita**. **No hay backfill:** el GET
     nunca escribe `pdf_path` ni `emisor_snapshot`. `recetas` **no** tiene la columna (emisión
     bloqueada por ANMAT); habrá que sumarla cuando se habilite.
+12. **Envío de difusión por email:** lo puede disparar **cualquier miembro del tenant** (no hay
+    permiso granular de difusión — ver nota 14). Un post solo se envía **una vez**: si ya está en
+    `enviado`, el POST responde 409. **Tope de 100 emails por día y por tenant** (free tier de
+    Resend): el endpoint cuenta los `difusion_envios` del día en curso y, si el envío lo superara,
+    **rechaza con 429 sin enviar un solo email** — es todo-o-nada, no envía hasta el tope y corta.
+    El envío es **parcialmente tolerante a fallos**: un error de un destinatario no corta el loop,
+    queda registrado en su fila de `difusion_envios` (`enviado_ok=false`, `error_msg`) y se
+    devuelve en `errores[]`; con **al menos un** envío exitoso el post pasa a `enviado`.
+    ⚠ **Sin opt-out (Ley 25.326):** hoy no existe mecanismo de baja ni registro de consentimiento
+    del paciente; el pie de la plantilla tiene el `TODO` marcado. Es un **bloqueante de go-live**
+    para el envío a pacientes reales (ver `PENDIENTES.md`).
 
 ---
 
@@ -267,9 +278,54 @@ técnicas 6, 12, 13 y 14):
   `types/supabase.ts`). Se **mantuvo** `lib/pdf/receta-template.tsx` como marcador del
   template de recetas (bloqueado por ANMAT).
 
+Tanda de **Nombre de archivo unificado de documentos** (sin migración):
+- Nuevo helper **neutro** `src/lib/pdf/filename.ts` (`buildDocumentoFilename(tipo, paciente,
+  fecha)`), importable desde cliente y servidor. Arma `<tipo>_<paciente>_<fecha>.pdf`, **omite**
+  los segmentos vacíos/null y pasa todo por `sanitizePdfFilename`. Elimina el bug del
+  `certificado_null_…` (el `tipo` de certificado ya no se interpola) y la divergencia previa
+  entre el `a.download` del botón y el `Content-Disposition` del endpoint. Consumidores:
+  `api/{pedidos,certificados}/[id]/pdf/route.ts` y `components/{pedidos/pedido-pdf,
+  certificados/certificado-pdf}.tsx`.
+
+Tanda de **Difusión por email (Resend)** (sin migración; ver reglas de negocio 12 y nota 16):
+- **Cliente de email:** `lib/email/resend.ts` — instancia de Resend (solo servidor), `EMAIL_FROM`
+  (de `RESEND_FROM`, fallback al sandbox `onboarding@resend.dev`) y `sendEmail()`, que **nunca
+  lanza**: devuelve `{ ok, error? }` para poder registrar el resultado destinatario por
+  destinatario sin cortar el loop.
+- **Plantilla:** `lib/email/difusion-template.ts` — `renderDifusionEmailHtml()` genera un HTML
+  con estilos inline (sin `@react-email`). Todo el texto del médico pasa por el nuevo helper
+  **`escapeHtml`** de `lib/utils.ts`, y recién después se convierten los saltos de línea en
+  `<br>` (en ese orden, para que un `<br>` tecleado quede como texto).
+- **`POST /api/difusion/enviar`** (runtime `nodejs`, rate limit 10/min por usuario): valida el
+  body con `difusionEnvioSchema` (`post_id` + 1..500 `destinatario_ids`), carga el post del
+  tenant, **rechaza reenviar** un post ya `enviado` (409) y exige `asunto_email` (400). **No
+  confía en los ids del cliente:** recarga los pacientes filtrando por tenant, `archivado_at IS
+  NULL`, email no nulo y formato de email válido. Verifica el **límite diario de 100** contando
+  las filas de `difusion_envios` del día; si se superaría, **aborta sin enviar nada** (429).
+  Envía **secuencialmente** con una pausa de 600 ms, inserta una fila en `difusion_envios` por
+  destinatario (`enviado_ok` / `error_msg` / `enviado_at` / `enviado_por`) y responde
+  `{ intentados, exitosos, fallidos, errores[] }`. Si **al menos uno** salió bien, el post pasa a
+  `estado='enviado'`.
+- **`GET /api/difusion/destinatarios`** (rate limit 60/min): pacientes del tenant activos y con
+  email de formato válido — **mismo filtro que `/enviar`**, para que la UI no ofrezca gente que
+  el backend después descartaría. Devuelve nombre, email, sexo y obra social resuelta.
+- **UI:** `components/difusion/enviar-modal.tsx` — modal con búsqueda por nombre y filtros por
+  obra social y sexo; la **selección es global** (los filtros solo cambian lo que se ve, no lo
+  seleccionado), arranca con todos tildados y avisa en el footer si se pasa de 100. Tras un envío
+  parcial no se cierra: muestra la lista de fallidos con el motivo. Checkbox propio en
+  `components/ui/checkbox.tsx` (`<input type="checkbox">` nativo estilizado, sin sumar Radix).
+- **Detalle del comunicado:** `(app)/difusion/[id]/page.tsx` lee `difusion_envios` cuando el post
+  está `enviado` y pasa un `envioResumen` a `difusion-preview.tsx`, que muestra "Envío completo /
+  parcial" (total · recibidos · fallidos) y la lista de a quién **no** le llegó, con el motivo.
+- **Autorización: tenant-only.** Ambos endpoints resuelven el tenant con el mismo patrón que el
+  resto de `/api/difusion` y **no chequean rol**: cualquier miembro del tenant puede enviar,
+  coherente con la nota técnica 14 (difusión es permisiva a propósito).
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
-ya existen por migración) y la sección "Recetas" (bloqueada por certificación ANMAT).
+ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live) y la
+sección "Recetas" (bloqueada por certificación ANMAT). El canal **WhatsApp** sigue **sin
+implementar** (`difusion_posts.canal` lo acepta, pero solo se envía por email).
 
 ---
 
@@ -371,3 +427,18 @@ ya existen por migración) y la sección "Recetas" (bloqueada por certificación
     **limpieza** de ventanas viejas (`DELETE ... WHERE window_start < now() - 1h`) se sumó al
     cron `api/cron/recordatorios`, aislada. El mismo cron corrigió la comparación del
     `CRON_SECRET` a tiempo constante (`crypto.timingSafeEqual`).
+16. **Difusión por email — dependencia operativa de env vars (Resend).**
+    - **`RESEND_API_KEY` (requerida para enviar):** `lib/email/resend.ts` **lanza al importarse**
+      si falta (falla temprano y clara, en el primer request que toque el módulo, en vez de
+      fallar en silencio). Sin ella el envío de difusión no funciona; el resto de la app sí.
+    - **`RESEND_FROM` (opcional):** dirección remitente; si no está, cae a
+      `onboarding@resend.dev`, el **sandbox** de Resend. En sandbox Resend **solo entrega a la
+      casilla dueña de la cuenta**, así que el envío real a los emails de los pacientes requiere
+      **verificar un dominio** en Resend (registros DNS) y setear `RESEND_FROM` con una dirección
+      de ese dominio. Hasta entonces el flujo es probable de punta a punta, pero no llega a los
+      pacientes.
+    - Ritmo de envío: secuencial con pausa de 600 ms (~2/s, el rate del API de Resend) y tope
+      diario de 100 (ver regla de negocio 12). El endpoint declara `runtime = 'nodejs'` porque el
+      SDK de Resend no corre en Edge.
+    - Ambas están documentadas en `.env.example` (`RESEND_API_KEY` activa con placeholder,
+      `RESEND_FROM` comentada por ser opcional) y en `README.md` → Variables de entorno.

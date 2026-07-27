@@ -16,9 +16,21 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 ### Funcionalidades incompletas
 - **Dashboard — métricas:** definir e implementar qué métricas mostrar (pendiente de
   definición del cliente). Hoy existe `src/components/dashboard/stats-cards.tsx`.
-- **Difusión — envío de correos:** conectar a un servicio de envío real. El endpoint
-  `src/app/api/difusion/enviar/route.ts` es un **stub** (`GET` → `"Not implemented"`);
-  Resend está en dependencias pero no cableado. Falta también el flujo de destinatarios.
+- **✅ RESUELTO (2026-07-27) — Difusión: envío de correos por Resend.** El endpoint dejó de ser
+  un stub: `POST /api/difusion/enviar` valida el body (`difusionEnvioSchema`), recarga los
+  destinatarios desde la base (tenant + activos + email de formato válido, sin confiar en los ids
+  del cliente), verifica el **límite diario de 100** contando `difusion_envios` del día, envía
+  **secuencialmente** (pausa de 600 ms) con `lib/email/resend.ts` + la plantilla HTML de
+  `lib/email/difusion-template.ts` (escapada con el nuevo `escapeHtml` de `lib/utils.ts`),
+  registra **una fila por destinatario** en `difusion_envios` (`enviado_ok`/`error_msg`/
+  `enviado_at`/`enviado_por`) y marca el post como `enviado` si al menos uno salió bien. Se sumó
+  `GET /api/difusion/destinatarios` (mismo filtro que `/enviar`) y la UI:
+  `components/difusion/enviar-modal.tsx` (búsqueda + filtros por obra social y sexo, selección
+  global, aviso al pasar de 100, lista de fallidos tras un envío parcial), un checkbox propio en
+  `components/ui/checkbox.tsx`, y el resumen de envío + lista de "a quién no le llegó" en el
+  detalle (`(app)/difusion/[id]/page.tsx` → `difusion-preview.tsx`). Es **tenant-only**: sin
+  chequeo de rol, coherente con que difusión no tenga permiso granular. Ver `CLAUDE.md` → regla de
+  negocio 12 y nota técnica 16. **Quedan pendientes** los cuatro ítems de difusión listados abajo.
 - **Recetas:** bloqueadas por certificación ANMAT. `src/app/api/recetas/route.ts` es
   stub y `src/lib/pdf/receta-template.tsx` es un placeholder vacío (esperado; dejar
   documentado que está en pausa).
@@ -41,19 +53,57 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   (migración 027). Falta **`difusion`** (imágenes de posts — `difusion_posts.imagen_path` es
   andamiaje muerto por ahora): **no existe ni se usa**. Cuando se cree, versionar el bucket y sus
   políticas RLS por tenant con el mismo patrón que `estudios`/`documentos` (ver Bloque B → Storage).
+- **Difusión — opt-out / consentimiento (Ley 25.326). ⚠ BLOQUEANTE DE GO-LIVE.** El envío por
+  email ya funciona, pero **no hay mecanismo de baja** ni registro del consentimiento del
+  paciente para recibir comunicaciones. El pie de la plantilla tiene el marcador:
+  `src/lib/email/difusion-template.ts` (`<!-- TODO opt-out (Ley 25.326) ... -->`). Requiere, como
+  mínimo: un flag de consentimiento/baja por paciente, un enlace de baja con token en el email, y
+  filtrarlo en `GET /api/difusion/destinatarios` y en el POST de envío. **No enviar a pacientes
+  reales antes de resolverlo.**
+- **Difusión — dominio verificado en Resend (bloquea el envío real).** Sin `RESEND_FROM` apuntando
+  a un dominio verificado, el remitente cae al sandbox `onboarding@resend.dev`, que **solo entrega
+  a la casilla dueña de la cuenta de Resend**. Hoy el flujo se prueba de punta a punta contra esa
+  casilla, pero **no llega a los pacientes**. Verificar el dominio (registros DNS) y setear
+  `RESEND_FROM` antes de usarlo en producción.
+- **Difusión — envío por lotes con retomado (>100 destinatarios).** El tope diario del free tier
+  de Resend es **100**; hoy, si el envío lo superaría, el endpoint **rechaza con 429 sin enviar
+  nada** y el usuario tiene que **destildar destinatarios a mano** (el modal se lo avisa en el
+  footer). Falta: partir el envío en lotes, persistir el progreso y **retomar al día siguiente**
+  desde donde quedó (o subir el plan de Resend). Código: `src/app/api/difusion/enviar/route.ts`
+  (`DAILY_LIMIT`).
+- **Difusión — no se puede reintentar un envío parcial.** Con **un solo** envío exitoso el post
+  pasa a `estado='enviado'`, y a partir de ahí el POST responde **409** ("ya fue enviado"). Los
+  destinatarios que fallaron quedan listados en el detalle, pero **no hay forma de reintentarles**
+  desde la UI. Falta un reintento acotado a los `difusion_envios` con `enviado_ok=false`.
+- **Difusión — el corte del día del límite es UTC, no hora argentina.** El conteo diario usa
+  `new Date(); setHours(0,0,0,0)` con la hora **local del server** (UTC en Vercel), así que la
+  ventana de 100 se renueva a las **21:00 de Argentina**, no a medianoche. Cosmético mientras el
+  volumen sea bajo; revisar si se acerca al tope. Código: `src/app/api/difusion/enviar/route.ts`
+  (`startOfDay`). Nota: los envíos **fallidos también consumen** la cuota (se cuentan las filas de
+  `difusion_envios` del día, sin filtrar por `enviado_ok`).
+- **Difusión — canal WhatsApp: fuera de alcance, sigue sin implementar.** `difusion_posts.canal`
+  acepta `email | whatsapp | ambos` y la UI muestra el canal elegido, pero **solo se envía por
+  email**: la tanda de envío cubrió únicamente ese canal. `src/lib/whatsapp/wa-link.ts` está
+  prácticamente vacío y las env vars `WHATSAPP_*` siguen sin usarse. Un post con canal
+  `whatsapp`/`ambos` que se envíe por el modal sale **solo como email**.
 - **`recetas` necesitará su `emisor_snapshot`:** la columna se agregó (mig. 028) solo a
   `pedidos` y `certificados`. Cuando se habilite la emisión de recetas (bloqueada por ANMAT),
   sumar la misma columna a `recetas` y escribir el snapshot al emitir, igual que en los otros dos.
 
 ### Bugs menores detectados
-- **Filename de certificados sin tipo → `certificado_null_...`.** La elección de `tipo` se quitó
-  de la UI (`src/components/certificados/certificado-form.tsx` no lo ofrece), así que la columna
-  llega **siempre `null`** (es nullable sin default desde la migración 017). El nombre del PDF se
-  arma interpolando ese campo, y el null se coerciona a la cadena `"null"`:
-  `src/app/api/certificados/[id]/pdf/route.ts:32` y
-  `src/components/certificados/certificado-pdf.tsx:70`
-  (`certificado_${certificado.tipo}_…`). Corregir la construcción del nombre en ambos lugares
-  (omitir el segmento cuando `tipo` es null, o usar `tipo_descripcion` como fallback).
+- **✅ RESUELTO (2026-07-26) — Filename de certificados sin tipo → `certificado_null_...`.** El
+  nombre del PDF interpolaba `certificado.tipo`, que llega **siempre `null`** desde que la
+  elección de tipo se quitó de la UI, y el null se coercionaba a la cadena `"null"`. Se
+  centralizó en un helper compartido: **`src/lib/pdf/filename.ts`** →
+  `buildDocumentoFilename(tipo, pacienteNombre, fecha?)`, módulo **neutro** (sin `server-only`)
+  que importan tanto los Route Handlers como los Client Components. Arma
+  `<certificado|pedido>_<paciente>_<fecha>.pdf`: **ya no interpola el tipo de certificado**,
+  **omite** los segmentos vacíos/null en vez de escribir `"null"`/`"undefined"`, y pasa todo por
+  `sanitizePdfFilename` (tildes, caracteres inseguros, espacios). De paso **unificó certificados
+  y pedidos** y cerró la divergencia previa entre cliente y servidor (el `a.download` del botón
+  omitía la fecha y no sanitizaba): ahora ambos producen **exactamente el mismo nombre**.
+  Consumidores: `api/pedidos/[id]/pdf/route.ts:31`, `api/certificados/[id]/pdf/route.ts:31`,
+  `components/pedidos/pedido-pdf.tsx:64` y `components/certificados/certificado-pdf.tsx:71`.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -165,8 +215,12 @@ Información Pública**). Hallazgos:
 - **RLS de tablas:** el modelo con `get_medico_id()` + `check_permiso()` está bien
   aplicado en las tablas de datos (ver `schema.sql`). Verificar dos huecos:
   - **Difusión** no tiene permiso granular: cualquier asistente vinculado ve/crea posts
-    (`nav-items.ts` y RLS de `difusion_posts` no filtran por permiso). Confirmar que sea
-    intencional.
+    (`nav-items.ts` y RLS de `difusion_posts` no filtran por permiso). **Confirmado
+    intencional** (decisión de producto, `CLAUDE.md` → nota técnica 14). El envío por email
+    (2026-07-27) **hereda ese criterio**: `POST /api/difusion/enviar` valida solo pertenencia al
+    tenant, sin chequeo de rol, así que cualquier asistente vinculado puede **enviar un
+    comunicado a todos los pacientes**. Si alguna vez se restringe difusión con un permiso
+    granular, este endpoint es uno de los lugares a atar.
   - Confirmar que `mensajes_internos` grupales no filtren datos entre asistentes de
     tenants distintos (RLS usa `medico_id = get_medico_id()`, correcto; validar en prueba).
 
@@ -229,6 +283,13 @@ Información Pública**). Hallazgos:
   y en actualización de permisos, sin filtrar la key.
 - **`/verificar/[codigo]` — enumeración de códigos:** ✅ mitigado con rate limit **30/min por IP**
   (2026-07-24). El código es de 12 hex; el límite corta el scraping sin fricción para el uso real.
+
+### Comunicaciones a pacientes — consentimiento y baja (Ley 25.326)
+- **⚠ Falta el opt-out de difusión. Bloqueante de go-live.** Desde 2026-07-27 la app **envía
+  emails a los pacientes** (difusión por Resend), pero no registra el **consentimiento** para
+  recibirlos ni ofrece un mecanismo de **baja**. Marcado como TODO en el pie de
+  `src/lib/email/difusion-template.ts`. Detalle y alcance del trabajo en Bloque A → "Difusión —
+  opt-out / consentimiento".
 
 ### Residencia de datos — transferencia internacional (Ley 25.326)
 - **Migrar la región de Supabase antes de producción.** El proyecto está hoy en un

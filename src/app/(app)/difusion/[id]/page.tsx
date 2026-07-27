@@ -29,5 +29,43 @@ export default async function DifusionDetailPage({ params }: { params: Promise<{
     notFound()
   }
 
-  return <DifusionPreview post={post} />
+  // Resumen del envío (leído de difusion_envios). El SELECT queda acotado al tenant por
+  // la RLS envios_select. El join a pacientes resuelve el nombre; si el paciente se borró
+  // (paciente_id NULL por ON DELETE SET NULL) o no es visible, se cae al email_destino
+  // guardado en la fila (snapshot del momento del envío). Solo se consulta si ya se envió.
+  let envioResumen: {
+    total: number
+    ok: number
+    fallidos: { paciente_id: string | null; nombre: string | null; email: string | null; error: string | null }[]
+  } | null = null
+
+  if (post.estado === 'enviado') {
+    const { data: envios } = await supabase
+      .from('difusion_envios')
+      .select('paciente_id, email_destino, enviado_ok, error_msg, pacientes ( nombre_completo )')
+      .eq('post_id', id)
+      .order('enviado_ok', { ascending: true }) // fallidos (false) primero
+      .order('enviado_at', { ascending: true })
+
+    if (envios && envios.length > 0) {
+      const fallidos = envios
+        .filter((e) => !e.enviado_ok)
+        .map((e) => {
+          const pac = e.pacientes as unknown as { nombre_completo: string } | null
+          return {
+            paciente_id: e.paciente_id,
+            nombre: pac?.nombre_completo ?? null,
+            email: e.email_destino,
+            error: e.error_msg,
+          }
+        })
+      envioResumen = {
+        total: envios.length,
+        ok: envios.filter((e) => e.enviado_ok).length,
+        fallidos,
+      }
+    }
+  }
+
+  return <DifusionPreview post={post} envioResumen={envioResumen} />
 }

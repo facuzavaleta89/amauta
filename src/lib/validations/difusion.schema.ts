@@ -57,3 +57,16 @@ export const difusionSchema = difusionBaseSchema.refine((data) => {
 
 export type DifusionFormValues = z.infer<typeof difusionSchema>
 export type DifusionFormInput = z.input<typeof difusionSchema>
+
+// ── ENVÍO ─────────────────────────────────────────────────────
+// Body del POST /api/difusion/enviar. La UI (parte 2) manda la lista ya filtrada de
+// destinatarios; el endpoint igual la re-valida contra la base (tenant + activos + email).
+export const difusionEnvioSchema = z.object({
+  post_id: z.string().uuid('post_id inválido'),
+  destinatario_ids: z
+    .array(z.string().uuid('id de destinatario inválido'))
+    .min(1, 'Seleccioná al menos un destinatario')
+    .max(500, 'Demasiados destinatarios en un solo envío'),
+})
+
+export type DifusionEnvioValues = z.infer<typeof difusionEnvioSchema>
