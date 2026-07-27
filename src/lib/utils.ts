@@ -30,6 +30,20 @@ export function formatFechaLarga(dateStr: string): string {
 }
 
 /**
+ * Escapa los caracteres especiales de HTML para interpolar texto plano (ej. lo que
+ * escribe el médico) dentro de una plantilla HTML sin romper el markup ni permitir
+ * inyección. Neutro (sin deps de servidor): usable en cliente y servidor.
+ */
+export function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
  * Sanitiza un string para usarlo de forma segura como nombre de archivo
  * en el header Content-Disposition de respuestas HTTP, previniendo
  * HTTP Header Injection (Fix A2).
