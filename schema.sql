@@ -477,7 +477,12 @@ CREATE INDEX idx_difusion_created ON public.difusion_posts(created_at DESC);
 CREATE INDEX idx_difusion_medico  ON public.difusion_posts(medico_id);
 
 -- ── difusion_envios ─────────────────────────────────────────────────────────
--- Historial de envíos de un post de difusión.
+-- Historial de envíos de un post de difusión. EN USO desde la tanda de difusión por
+-- email (2026-07-27): la puebla POST /api/difusion/enviar con UNA FILA POR DESTINATARIO
+-- (enviado_ok, error_msg, enviado_at, enviado_por, email_destino, canal='email').
+-- Además de log, es la fuente de dos cosas: el conteo del TOPE DIARIO de 100 emails por
+-- tenant (filas con enviado_at dentro del día) y el resumen de envío + lista de fallidos
+-- del detalle del comunicado. tel_destino sigue sin uso (canal WhatsApp no implementado).
 CREATE TABLE public.difusion_envios (
   id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   post_id      UUID NOT NULL REFERENCES public.difusion_posts(id) ON DELETE CASCADE,

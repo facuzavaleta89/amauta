@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import {
   ArrowLeft, Edit, Trash2, Send, Mail, MessageCircle,
-  Calendar, CheckCircle2, Clock, Archive, Loader2, AlertCircle, Megaphone,
+  Calendar, CheckCircle2, Clock, Archive, Loader2, AlertCircle, AlertTriangle, Megaphone,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,8 @@ import {
   type DifusionEstado,
   type DifusionCanal,
 } from '@/lib/validations/difusion.schema'
-import { formatFecha } from '@/lib/utils'
+import { formatFecha, cn } from '@/lib/utils'
+import { EnviarModal } from '@/components/difusion/enviar-modal'
 
 // Tipo explícito del post de difusión
 interface DifusionPost {
@@ -43,8 +44,23 @@ interface DifusionPost {
   updated_at: string
 }
 
+interface EnvioFallido {
+  paciente_id: string | null
+  nombre: string | null
+  email: string | null
+  error: string | null
+}
+
+interface EnvioResumen {
+  total: number
+  ok: number
+  fallidos: EnvioFallido[]
+}
+
 interface DifusionPreviewProps {
   post: DifusionPost
+  /** Resumen del envío leído de difusion_envios (null si el post aún no se envió). */
+  envioResumen?: EnvioResumen | null
 }
 
 function EstadoBadge({ estado }: { estado: DifusionEstado }) {
@@ -62,9 +78,12 @@ function EstadoBadge({ estado }: { estado: DifusionEstado }) {
   }
 }
 
-export function DifusionPreview({ post }: DifusionPreviewProps) {
+export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
   const router = useRouter()
   const [isDeleting, setIsDeleting] = useState(false)
+  const [enviarOpen, setEnviarOpen] = useState(false)
+
+  const tieneFallos = !!envioResumen && envioResumen.fallidos.length > 0
 
   async function handleDelete() {
     setIsDeleting(true)
@@ -89,8 +108,8 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
       toast.info('Este comunicado ya fue enviado.')
       return
     }
-    // Estado "listo" o "archivado" → funcionalidad próxima
-    toast.info('La configuración de envío masivo estará disponible próximamente.')
+    // Estado "listo" → abrir el modal de selección de destinatarios.
+    setEnviarOpen(true)
   }
 
   return (
@@ -185,6 +204,61 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
         </div>
       </div>
 
+      {/* Resumen del envío (solo si ya se envió y hay envíos registrados) */}
+      {envioResumen && (
+        <div className="space-y-3">
+          {/* Línea de resumen */}
+          <div
+            className={cn(
+              'flex items-start gap-3 rounded-xl border p-4',
+              tieneFallos
+                ? 'border-amber-500/30 bg-amber-500/10'
+                : 'border-emerald-500/30 bg-emerald-500/10',
+            )}
+          >
+            {tieneFallos ? (
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+            ) : (
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground">
+                {tieneFallos ? 'Envío parcial' : 'Envío completo'}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Enviado a {envioResumen.total} destinatario{envioResumen.total !== 1 ? 's' : ''}
+                {' · '}
+                {envioResumen.ok} recibido{envioResumen.ok !== 1 ? 's' : ''}
+                {envioResumen.fallidos.length > 0 && ` · ${envioResumen.fallidos.length} fallaron`}
+              </p>
+            </div>
+          </div>
+
+          {/* Lista de fallidos (a quién no le llegó, con el motivo) */}
+          {tieneFallos && (
+            <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4">
+              <p className="text-sm font-semibold text-destructive flex items-center gap-2 mb-2">
+                <AlertCircle className="h-4 w-4" />
+                No le llegó a {envioResumen.fallidos.length} destinatario{envioResumen.fallidos.length !== 1 ? 's' : ''}
+              </p>
+              <ul className="max-h-56 overflow-y-auto divide-y divide-destructive/10 text-xs">
+                {envioResumen.fallidos.map((f, i) => (
+                  <li key={f.paciente_id ?? `${f.email}-${i}`} className="py-1.5">
+                    <span className="font-medium text-foreground">
+                      {f.nombre ?? f.email ?? 'Destinatario'}
+                    </span>
+                    {f.nombre && f.email && (
+                      <span className="text-muted-foreground"> · {f.email}</span>
+                    )}
+                    <span className="text-destructive/80"> — {f.error ?? 'Error desconocido'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Aviso borrador */}
       {post.estado === 'borrador' && (
         <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-700 dark:text-blue-400">
@@ -228,6 +302,14 @@ export function DifusionPreview({ post }: DifusionPreviewProps) {
           Este mensaje se enviará a través de la plataforma Amauta.
         </div>
       </div>
+
+      {/* Modal de selección de destinatarios (envío por email) */}
+      <EnviarModal
+        postId={post.id}
+        postTitulo={post.titulo}
+        open={enviarOpen}
+        onOpenChange={setEnviarOpen}
+      />
     </div>
   )
 }

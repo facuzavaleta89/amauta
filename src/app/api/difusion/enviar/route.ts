@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Envío secuencial. Un fallo individual NO corta el loop. ──
-    const html = renderDifusionEmailHtml({ titulo: post.titulo, contenido: post.contenido, asunto })
+    const html = renderDifusionEmailHtml({ titulo: post.titulo, contenido: post.contenido })
 
     let exitosos = 0
     let fallidos = 0

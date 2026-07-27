@@ -8,10 +8,11 @@
 
 import { escapeHtml } from '@/lib/utils'
 
+// Solo lo que la plantilla realmente renderiza. El asunto del email NO va acá: viaja
+// como `subject` en sendEmail(), que es donde corresponde.
 interface DifusionEmailData {
   titulo: string
   contenido: string
-  asunto?: string | null
 }
 
 /**

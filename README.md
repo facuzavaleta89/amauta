@@ -22,8 +22,11 @@ Recharts · `@react-pdf/renderer` + jsPDF · Resend · Sonner.
 
 - **Node.js** LTS 20 o superior, y **npm**.
 - Una cuenta y proyecto de **Supabase** (PostgreSQL + Auth + Storage).
-- Opcional: cuenta de **Resend** (email) y credenciales de **WhatsApp Cloud API**
-  si se activan esas integraciones.
+- Cuenta de **Resend** (email) si vas a usar el **envío de difusión**, que ya está
+  implementado y depende de `RESEND_API_KEY`. Sin dominio verificado en Resend, los
+  envíos van contra el sandbox (solo llegan a la casilla dueña de la cuenta).
+- Opcional: credenciales de **WhatsApp Cloud API** — el canal WhatsApp **todavía no
+  está implementado**.
 
 ---
 
@@ -73,8 +76,9 @@ Definidas en `.env.local` (ver [`.env.example`](./.env.example)). **Nunca** comm
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Clave service role — **secreta, bypass RLS**, solo server |
 | `NEXT_PUBLIC_SITE_URL` | ✅ | URL base de la app para los **QR de verificación** de documentos (`/verificar/[codigo]`). Requerida: los PDF se congelan al emitir, así que el QR se graba de forma permanente y no debe derivarse del header `Host` (falsificable). Prod: `https://amauta-salud.vercel.app`; local: `http://localhost:3000` |
 | `CRON_SECRET` | ✅ | Protege `/api/cron/recordatorios` (genera con `openssl rand -base64 32`) |
-| `RESEND_API_KEY` | ⬜ | API key de Resend (email), si se activa el envío |
-| `WHATSAPP_API_TOKEN` | ⬜ | Token de WhatsApp Cloud API, si se activa |
+| `RESEND_API_KEY` | ⚠️ | API key de Resend. **Requerida para que funcione el envío de difusión por email**: `src/lib/email/resend.ts` lanza un error al importarse si falta. El resto de la app funciona sin ella |
+| `RESEND_FROM` | ⬜ | Dirección remitente de los emails de difusión. Si no está, cae al sandbox `onboarding@resend.dev`, que **solo entrega a la casilla dueña de la cuenta de Resend**. Para enviar de verdad a los pacientes hay que **verificar un dominio** en Resend y poner acá una dirección de ese dominio |
+| `WHATSAPP_API_TOKEN` | ⬜ | Token de WhatsApp Cloud API, si se activa (canal **no implementado** todavía) |
 | `WHATSAPP_PHONE_NUMBER_ID` | ⬜ | ID del número de WhatsApp, si se activa |
 
 ---
