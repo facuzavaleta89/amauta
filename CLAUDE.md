@@ -428,9 +428,17 @@ implementar** (`difusion_posts.canal` lo acepta, pero solo se envía por email).
     cron `api/cron/recordatorios`, aislada. El mismo cron corrigió la comparación del
     `CRON_SECRET` a tiempo constante (`crypto.timingSafeEqual`).
 16. **Difusión por email — dependencia operativa de env vars (Resend).**
-    - **`RESEND_API_KEY` (requerida para enviar):** `lib/email/resend.ts` **lanza al importarse**
-      si falta (falla temprano y clara, en el primer request que toque el módulo, en vez de
-      fallar en silencio). Sin ella el envío de difusión no funciona; el resto de la app sí.
+    - **`RESEND_API_KEY` (requerida para enviar):** sin ella el envío de difusión no funciona;
+      el resto de la app sí. ⚠ **El cliente de Resend se instancia de forma PEREZOSA** (en el
+      primer envío, vía `getResendClient()` memoizado en `lib/email/resend.ts`), y la key
+      faltante se reporta como `{ ok: false, error }` de `sendEmail` — o sea, queda registrada
+      **por destinatario** en `difusion_envios`, igual que cualquier otro error de envío.
+      **No se puede volver a un throw de nivel superior:** así estaba antes y **rompía el
+      build**. `next build` importa el módulo al recolectar los datos de
+      `/api/difusion/enviar`, así que sin la env var el build entero fallaba con
+      *"Failed to collect page data for /api/difusion/enviar"* — un deploy real se cayó por
+      esto. Reproducido y verificado el 2026-07-27: con el código viejo el build sin key falla;
+      con el actual, pasa (exit 0).
     - **`RESEND_FROM` (opcional):** dirección remitente; si no está, cae a
       `onboarding@resend.dev`, el **sandbox** de Resend. En sandbox Resend **solo entrega a la
       casilla dueña de la cuenta**, así que el envío real a los emails de los pacientes requiere
