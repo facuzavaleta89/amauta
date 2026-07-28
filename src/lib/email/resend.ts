@@ -7,21 +7,40 @@
 //   En el SANDBOX de Resend (sin dominio verificado) solo se entrega a la casilla dueña
 //   de la cuenta; el envío real a los emails de los pacientes requiere VERIFICAR UN
 //   DOMINIO en Resend (registros DNS) y setear RESEND_FROM con una dirección de ese dominio.
+//
+// ⚠ INSTANCIACIÓN PEREZOSA (a propósito): el cliente se crea en el PRIMER ENVÍO, no al
+//   importar el módulo. Antes se instanciaba (y se lanzaba si faltaba la key) en el nivel
+//   superior, y eso ROMPÍA EL BUILD: `next build` importa este módulo al recolectar los
+//   datos de /api/difusion/enviar, así que sin RESEND_API_KEY el build entero fallaba
+//   ("Failed to collect page data for /api/difusion/enviar") por una feature secundaria.
+//   Ahora la falta de la key solo rompe el envío, en el momento de enviar.
 // ============================================================================
 
 import { Resend } from 'resend'
 
-const apiKey = process.env.RESEND_API_KEY
-if (!apiKey) {
-  // Falla temprano y clara: sin API key no hay forma de enviar. Preferimos romper al
-  // cargar el módulo (primer request que lo importe) antes que fallar en silencio.
-  throw new Error(
-    '[email/resend] RESEND_API_KEY no está definida. Configurala en .env.local (dev) y en las variables de entorno del deploy.',
-  )
-}
+/** Mensaje único de key faltante: lo comparten el throw interno y el resultado de sendEmail. */
+const MISSING_KEY_ERROR =
+  '[email/resend] RESEND_API_KEY no está definida. Configurala en .env.local (dev) y en las variables de entorno del deploy.'
 
-/** Cliente Resend instanciado (service-side). */
-export const resend = new Resend(apiKey)
+/** Cliente memoizado. Se crea una sola vez, en el primer envío. */
+let client: Resend | null = null
+
+/**
+ * Devuelve el cliente de Resend, creándolo la primera vez. Lanza (con mensaje claro) si
+ * falta RESEND_API_KEY. El error queda contenido en el flujo de envío: `sendEmail` lo
+ * captura y lo devuelve como `{ ok: false, error }`, nunca escapa al importar el módulo.
+ */
+function getResendClient(): Resend {
+  if (client) return client
+
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) {
+    throw new Error(MISSING_KEY_ERROR)
+  }
+
+  client = new Resend(apiKey)
+  return client
+}
 
 /** Dirección remitente. Configurable por env; fallback al sandbox de Resend. */
 export const EMAIL_FROM = process.env.RESEND_FROM || 'onboarding@resend.dev'
@@ -35,6 +54,8 @@ export interface SendEmailResult {
 /**
  * Envía UN email. Devuelve `{ ok, error? }` en vez de lanzar, para poder registrar el
  * resultado por destinatario (un fallo individual no debe cortar el loop de envío).
+ * La key faltante entra por la misma puerta: se reporta como `{ ok: false, error }` con
+ * el mensaje explicativo, no como una excepción hacia arriba.
  */
 export async function sendEmail(params: {
   to: string
@@ -42,6 +63,8 @@ export async function sendEmail(params: {
   html: string
 }): Promise<SendEmailResult> {
   try {
+    const resend = getResendClient()
+
     const { error } = await resend.emails.send({
       from: EMAIL_FROM,
       to: params.to,
