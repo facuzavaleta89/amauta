@@ -3,14 +3,13 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { difusionEnvioSchema } from '@/lib/validations/difusion.schema'
+import { DIFUSION_LIMITE_DIARIO } from '@/constants/difusion'
 import { sendEmail } from '@/lib/email/resend'
 import { renderDifusionEmailHtml } from '@/lib/email/difusion-template'
 
 // El SDK de Resend requiere runtime Node (no Edge).
 export const runtime = 'nodejs'
 
-/** Tope diario de emails del free tier de Resend. */
-const DAILY_LIMIT = 100
 /** Pausa entre envíos para respetar el rate del API de Resend (~2/s). */
 const SEND_GAP_MS = 600
 
@@ -98,7 +97,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // ── Verificación del límite diario (100/día por tenant) ──────
+    // ── Verificación del límite diario (por tenant) ──────────────
     // difusion_envios queda acotado al tenant por su RLS (envios_select), así que este
     // count con el cliente de sesión ya es tenant-scoped. Contamos filas con enviado_at
     // dentro del día actual.
@@ -116,13 +115,13 @@ export async function POST(request: NextRequest) {
     }
 
     const yaHoy = enviadosHoy ?? 0
-    if (yaHoy + destinatarios.length > DAILY_LIMIT) {
+    if (yaHoy + destinatarios.length > DIFUSION_LIMITE_DIARIO) {
       return NextResponse.json(
         {
-          error: `Se superaría el límite diario de envíos (${DAILY_LIMIT}). Hoy ya se enviaron ${yaHoy} y este envío intentaba ${destinatarios.length}. Reducí la lista de destinatarios o esperá al día siguiente.`,
+          error: `Se superaría el límite diario de envíos (${DIFUSION_LIMITE_DIARIO}). Hoy ya se enviaron ${yaHoy} y este envío intentaba ${destinatarios.length}. Reducí la lista de destinatarios o esperá al día siguiente.`,
           enviados_hoy: yaHoy,
           intentaba: destinatarios.length,
-          limite: DAILY_LIMIT,
+          limite: DIFUSION_LIMITE_DIARIO,
         },
         { status: 429 },
       )

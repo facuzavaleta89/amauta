@@ -24,8 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-
-const LIMITE_DIARIO = 100
+import { DIFUSION_LIMITE_DIARIO } from '@/constants/difusion'
 
 interface Destinatario {
   id: string
@@ -130,7 +129,7 @@ export function EnviarModal({ postId, postTitulo, open, onOpenChange }: EnviarMo
   }, [destinatarios, search, obraFilter, sexoFilter])
 
   const total = selected.size
-  const excedeLimite = total > LIMITE_DIARIO
+  const excedeLimite = total > DIFUSION_LIMITE_DIARIO
   const visiblesTodosTildados = visibles.length > 0 && visibles.every((d) => selected.has(d.id))
 
   // ── Acciones de selección ──────────────────────────────────────
@@ -356,7 +355,7 @@ export function EnviarModal({ postId, postTitulo, open, onOpenChange }: EnviarMo
             </span>
             {excedeLimite && (
               <span className="text-xs text-amber-700 dark:text-amber-400">
-                · el límite diario es {LIMITE_DIARIO}; destildá algunos
+                · el límite diario es {DIFUSION_LIMITE_DIARIO}; destildá algunos
               </span>
             )}
           </div>
