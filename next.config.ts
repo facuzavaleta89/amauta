@@ -27,14 +27,28 @@ const securityHeaders = [
       isDev
         ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
         : "script-src 'self' 'unsafe-inline'",
-      // Estilos propios + inline (requerido por muchos frameworks UI)
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      // Fuentes de Google Fonts si las usás
-      "font-src 'self' https://fonts.gstatic.com",
-      // Imágenes: propias + Supabase Storage
-      "img-src 'self' data: blob: https://*.supabase.co",
+      // Estilos propios + inline. 'unsafe-inline' es IRREDUCTIBLE: Radix escribe
+      // atributos style="" para posicionar popovers/selects/diálogos y los nonces
+      // NO aplican a atributos style (solo a elementos <style>/<script>).
+      "style-src 'self' 'unsafe-inline'",
+      // Inter la auto-hostea next/font en build time (/_next/static/media/*.woff2):
+      // no se pega al CDN de Google, así que 'self' alcanza.
+      "font-src 'self'",
+      // Imágenes propias + data: (QR generado con qrcode, firma/logo en base64) +
+      // blob:. Storage NO va acá: los archivos se sirven por proxy same-origin
+      // (/api/estudios/[id]), el navegador nunca pega a Supabase por imágenes.
+      "img-src 'self' data: blob:",
       // Previene que la app sea embebida en frames externos
       "frame-ancestors 'none'",
+      // No hay <object>/<embed> en la app; sin esto heredarían 'self' de default-src
+      "object-src 'none'",
+      // base-uri y form-action NO heredan de default-src: sin declararlas quedan
+      // abiertas. Cierran inyección de <base> y posteo de formularios a terceros.
+      "base-uri 'self'",
+      "form-action 'self'",
+      // Solo en producción: en dev se entra por IP de LAN sobre HTTP
+      // (ver allowedDevOrigins) y esto forzaría https, rompiendo ese acceso.
+      ...(isDev ? [] : ['upgrade-insecure-requests']),
     ].join('; '),
   },
 ]
