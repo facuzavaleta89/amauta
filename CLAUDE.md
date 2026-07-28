@@ -61,7 +61,8 @@ Node LTS 20+. Tailwind v4 se configura en `src/app/globals.css` con `@theme`
     /shared          → reutilizables (qr-verificacion, page-header…)
     /pacientes /turnero /pedidos /certificados /difusion /perfil
     /mensajes /notas /notificaciones /dashboard /recetas
-  /constants         → nav-items.ts (navegación por rol+permiso), obra-sociales.ts
+  /constants         → nav-items.ts (navegación por rol+permiso), obra-sociales.ts,
+                       difusion.ts (DIFUSION_LIMITE_DIARIO, compartida cliente/servidor)
   /contexts          → permisos-context.tsx (+ MensajesContext para badge no leídos)
   /hooks             → stubs vacíos (la lógica vive en Server Components/Actions)
   /lib
@@ -320,6 +321,17 @@ Tanda de **Difusión por email (Resend)** (sin migración; ver reglas de negocio
 - **Autorización: tenant-only.** Ambos endpoints resuelven el tenant con el mismo patrón que el
   resto de `/api/difusion` y **no chequean rol**: cualquier miembro del tenant puede enviar,
   coherente con la nota técnica 14 (difusión es permisiva a propósito).
+
+Tanda de **Lazy-init del cliente Resend** (sin migración; ver nota técnica 16):
+- La instanciación del cliente pasó del **nivel superior del módulo** al **primer envío**
+  (`getResendClient()` memoizado en `lib/email/resend.ts`). Antes, la falta de `RESEND_API_KEY`
+  lanzaba **al importar** y **tiraba abajo el build** (`next build` importa el módulo al
+  recolectar los datos de `/api/difusion/enviar`); un deploy real se cayó por eso. Ahora la key
+  faltante se reporta como `{ ok: false, error }` de `sendEmail`, o sea **por destinatario**,
+  igual que cualquier otro error de envío. Detalle completo en la **nota técnica 16**.
+- **Constante única del límite diario:** `DIFUSION_LIMITE_DIARIO` en `constants/difusion.ts`
+  (módulo neutro), importada por el endpoint de envío y por el modal. Antes el `100` estaba
+  duplicado en dos constantes independientes que podían divergir en silencio.
 
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`

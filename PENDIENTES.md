@@ -30,7 +30,9 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   `components/ui/checkbox.tsx`, y el resumen de envío + lista de "a quién no le llegó" en el
   detalle (`(app)/difusion/[id]/page.tsx` → `difusion-preview.tsx`). Es **tenant-only**: sin
   chequeo de rol, coherente con que difusión no tenga permiso granular. Ver `CLAUDE.md` → regla de
-  negocio 12 y nota técnica 16. **Quedan pendientes** los cuatro ítems de difusión listados abajo.
+  negocio 12 y nota técnica 16. **Quedan pendientes** los **cinco** ítems de difusión listados
+  abajo (opt-out, dominio de Resend, envío por lotes, reintento de fallidos y corte del día en
+  UTC), más **WhatsApp**, que no es un pendiente activo sino un canal **fuera de alcance**.
 - **Recetas:** bloqueadas por certificación ANMAT. `src/app/api/recetas/route.ts` es
   stub y `src/lib/pdf/receta-template.tsx` es un placeholder vacío (esperado; dejar
   documentado que está en pausa).
@@ -69,8 +71,9 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   de Resend es **100**; hoy, si el envío lo superaría, el endpoint **rechaza con 429 sin enviar
   nada** y el usuario tiene que **destildar destinatarios a mano** (el modal se lo avisa en el
   footer). Falta: partir el envío en lotes, persistir el progreso y **retomar al día siguiente**
-  desde donde quedó (o subir el plan de Resend). Código: `src/app/api/difusion/enviar/route.ts`
-  (`DAILY_LIMIT`).
+  desde donde quedó (o subir el plan de Resend). Código: `src/app/api/difusion/enviar/route.ts`;
+  el tope vive en una **fuente única**, `DIFUSION_LIMITE_DIARIO` de `src/constants/difusion.ts`
+  (la comparten endpoint y modal), así que subir el plan es cambiar ese único número.
 - **Difusión — no se puede reintentar un envío parcial.** Con **un solo** envío exitoso el post
   pasa a `estado='enviado'`, y a partir de ahí el POST responde **409** ("ya fue enviado"). Los
   destinatarios que fallaron quedan listados en el detalle, pero **no hay forma de reintentarles**
