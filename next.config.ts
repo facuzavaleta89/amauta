@@ -32,8 +32,11 @@ const securityHeaders = [
       // NO aplican a atributos style (solo a elementos <style>/<script>).
       "style-src 'self' 'unsafe-inline'",
       // Inter la auto-hostea next/font en build time (/_next/static/media/*.woff2):
-      // no se pega al CDN de Google, así que 'self' alcanza.
-      "font-src 'self'",
+      // no se pega al CDN de Google, así que no hace falta el CDN de Google Fonts.
+      // ⚠ data: ES NECESARIO — NO QUITAR: FullCalendar inyecta su CSS por JS con la
+      // fuente de íconos `fcicons` EMBEBIDA como data:application/x-font-ttf. Sin
+      // data: el turnero pierde los íconos (violación real vista en producción).
+      "font-src 'self' data:",
       // Imágenes propias + data: (QR generado con qrcode, firma/logo en base64) +
       // blob:. Storage NO va acá: los archivos se sirven por proxy same-origin
       // (/api/estudios/[id]), el navegador nunca pega a Supabase por imágenes.
