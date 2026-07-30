@@ -333,11 +333,51 @@ Tanda de **Lazy-init del cliente Resend** (sin migración; ver nota técnica 16)
   (módulo neutro), importada por el endpoint de envío y por el modal. Antes el `100` estaba
   duplicado en dos constantes independientes que podían divergir en silencio.
 
+Tanda de **Endurecimiento de la CSP** (Fases 1a y 1b, sin migración; ver nota técnica 17):
+- **Fase 1a — CSP de enforcement (`next.config.ts`, 2026-07-28).** Se cerraron las directivas
+  que faltaban: `object-src 'none'` (no hay `<object>`/`<embed>` en la app; sin declararla
+  heredaba `'self'` de `default-src`) y **`base-uri 'self'` + `form-action 'self'`, que NO
+  heredan de `default-src`**: sin declararlas quedaban **sin restricción** — era un agujero
+  real (inyección de `<base>` y posteo de formularios a terceros). Se sumó
+  `upgrade-insecure-requests` **solo en producción**: en dev se entra por **IP de LAN sobre
+  HTTP** (`allowedDevOrigins`) y forzar https rompería ese acceso.
+- **Fase 1a — permisos muertos removidos:** `fonts.googleapis.com` de `style-src`,
+  `fonts.gstatic.com` de `font-src` (Inter la **auto-hostea `next/font`** en build time desde
+  `/_next/static/media/*.woff2`: el navegador nunca pega al CDN de Google) y
+  `https://*.supabase.co` de `img-src` (los archivos de Storage se sirven por **proxy
+  same-origin**, p. ej. `/api/estudios/[id]`; el navegador nunca pide imágenes a Supabase).
+- **Fix posterior (2026-07-29) — `font-src 'self' data:`. ⚠ El `data:` NO SE PUEDE QUITAR:**
+  FullCalendar inyecta su CSS por JS con la fuente de íconos **`fcicons` embebida como
+  `data:application/x-font-ttf`**. Sin `data:` el turnero pierde los íconos — fue una violación
+  real vista en producción, no una precaución teórica.
+- **Fase 1b — CSP de ENSAYO en report-only (`src/proxy.ts`, 2026-07-29).** El middleware emite
+  una **segunda** cabecera, `Content-Security-Policy-Report-Only`, con un **nonce por request**
+  (`buildReportOnlyCsp` + `nextWithNonce`). **Convive** con la CSP de enforcement de
+  `next.config.ts`, que sigue siendo el **piso** efectivo: la report-only **no bloquea nada**,
+  solo reporta. A propósito **sin `report-uri`/`report-to`** — las violaciones se leen en la
+  consola del navegador, no hay endpoint de reportes.
+- Lo **único** que la report-only ensaya es `script-src 'self' 'nonce-…' 'strict-dynamic'`
+  **sin `'unsafe-inline'`** (ni `'unsafe-eval'`); **el resto de las directivas copia** la de
+  enforcement, directiva por directiva. `'strict-dynamic'` hace que los navegadores que lo
+  soportan **ignoren `'self'`** y confíen solo en lo que cuelga de un script nonceado (así los
+  chunks del runtime de Next quedan permitidos sin listarlos); `'self'` queda como fallback
+  para los que no lo soportan.
+- El nonce viaja en los **request headers** (`x-nonce` + la propia cabecera report-only) porque
+  Next lee de ahí para inyectar `nonce="…"` en los `<script>` que genera; los headers se
+  **rearman en cada `NextResponse.next()`** para no perder la mutación de cookies del refresh
+  de sesión de Supabase.
+- **Estado: el enforcement todavía NO se puede activar.** En producción (Vercel) el nonce **no
+  llega a inyectarse** en los `<script>`, así que todas las rutas reportan violaciones de
+  `script-src`. Síntoma medido, causa abierta y alternativas en `PENDIENTES.md` → Bloque B →
+  "Endurecer la CSP".
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
-ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live) y la
-sección "Recetas" (bloqueada por certificación ANMAT). El canal **WhatsApp** sigue **sin
-implementar** (`difusion_posts.canal` lo acepta, pero solo se envía por email).
+ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live), la
+**Fase 2 de la CSP** (sacar `script-src 'unsafe-inline'` del enforcement — bloqueada porque el
+nonce no se propaga en Vercel, ver nota 17) y la sección "Recetas" (bloqueada por certificación
+ANMAT). El canal **WhatsApp** sigue **sin implementar** (`difusion_posts.canal` lo acepta, pero
+solo se envía por email).
 
 ---
 
@@ -462,3 +502,17 @@ implementar** (`difusion_posts.canal` lo acepta, pero solo se envía por email).
       SDK de Resend no corre en Edge.
     - Ambas están documentadas en `.env.example` (`RESEND_API_KEY` activa con placeholder,
       `RESEND_FROM` comentada por ser opcional) y en `README.md` → Variables de entorno.
+17. **CSP — dos cabeceras, y dos permisos que NO son residuo.** Hoy conviven a propósito la
+    **CSP de enforcement** de `next.config.ts` (el piso real, endurecido en la Fase 1a) y la
+    **`Content-Security-Policy-Report-Only`** con nonce por request de `src/proxy.ts` (el ensayo
+    de la Fase 1b, que no bloquea nada). Antes de "limpiar" cualquiera de las dos:
+    - **`font-src data:` es NECESARIO** — FullCalendar embebe su fuente de íconos `fcicons` como
+      data-URI; quitarlo rompe los íconos del turnero (ya pasó en producción).
+    - **`style-src 'unsafe-inline'` es IRREDUCTIBLE** con las librerías actuales: Radix (y
+      Sonner, FullCalendar) escriben **atributos `style=""`** para posicionar popovers, selects y
+      diálogos, y **los nonces no aplican a atributos** `style` (solo a elementos
+      `<style>`/`<script>`). No intentar sacarlo.
+    - ⚠ **El nonce no se propaga en Vercel:** síntoma confirmado en producción (los `<script>`
+      salen sin `nonce=`), causa **abierta**; **Turbopack quedó descartado** (el mismo build con
+      `next start` local sí inyecta el nonce). Es lo que bloquea la Fase 2 (sacar de verdad
+      `'unsafe-inline'` de `script-src` en enforcement). Detalle en `PENDIENTES.md` → Bloque B.

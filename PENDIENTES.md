@@ -107,6 +107,26 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   omitía la fecha y no sanitizaba): ahora ambos producen **exactamente el mismo nombre**.
   Consumidores: `api/pedidos/[id]/pdf/route.ts:31`, `api/certificados/[id]/pdf/route.ts:31`,
   `components/pedidos/pedido-pdf.tsx:64` y `components/certificados/certificado-pdf.tsx:71`.
+- **⚠ HALLAZGO (2026-07-29) — Dashboard: "próximos turnos" muestra la hora en UTC, no en hora
+  local.** `src/components/dashboard/next-appointments.tsx:56` hace
+  `new Date(turno.fecha_inicio)` y lo formatea con `format` de date-fns en las líneas `:66`
+  (`'EEE'`), `:69` (`'d'`) y `:76` (`'HH:mm'`). `NextAppointments` es un **Server Component**, y
+  `format` renderiza en la zona horaria **del runtime** → **UTC en Vercel**: un turno de **12:00
+  ART** figura como **15:00**. Como el **mismo `Date`** alimenta el día de la semana y el día del
+  mes, un turno **nocturno puede mostrarse en el día equivocado**, no solo con la hora corrida.
+  ⚠ **Es un bug solo de producción:** con `npm run dev` en una máquina en UTC-3 se ve bien; para
+  reproducirlo hay que ir al deploy o forzar `TZ=UTC`. **Preexistente y ajeno a la CSP.**
+- **⚠ HALLAZGO (2026-07-29) — el contador de la campanita de notificaciones no aparece.** El
+  número del badge no se muestra en la UI. **La causa NO está confirmada, y el componente parece
+  correcto:** en `src/components/layout/notificaciones-bell.tsx:207-210` el guard
+  `{count > 0 && …}` y el `<span>` del contador están bien escritos, y las clases `h-4.5`/`w-4.5`
+  **son válidas en Tailwind v4** (escala de espaciado dinámica), así que no es una clase
+  inexistente. **Causa probable, aguas arriba: `count` llegando en 0** —
+  `notificaciones-bell.tsx:69` (`solicitudes.length + mensajes.length`), alimentado por
+  `obtenerMensajesNoLeidos()` (`src/app/(app)/notificaciones/actions.ts:212`, invocada en
+  `src/app/(app)/layout.tsx:75` **solo si** `tieneAccesoMensajeria`) y por la query de
+  solicitudes. **Preexistente y ajeno a la CSP**; investigar en tanda propia, empezando por si
+  esas dos fuentes devuelven filas.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -159,6 +179,19 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 - **Queda 1 stub, a propósito:** `src/lib/pdf/receta-template.tsx`. Se **mantuvo** como
   marcador del template de recetas, bloqueado por ANMAT pero a implementar cuando se
   certifique. Eliminarlo o implementarlo cuando se desbloquee la funcionalidad.
+- **⚠ HALLAZGO (2026-07-29) — `src/app/page.tsx` sigue siendo la plantilla de
+  `create-next-app`.** Es el "Get started by editing…" original, con el logo de Next y enlaces a
+  `vercel.com`/`nextjs.org`. Se compila como **ruta estática** pero es **inalcanzable**: los
+  redirects de `src/proxy.ts` mandan `/` a `/dashboard` (con sesión) o a `/login` (sin sesión).
+  **Reemplazarla por un `redirect()`** a `/dashboard` (dejando que el guard resuelva el resto),
+  en vez de mantener una página estática con branding ajeno. Ajeno a la CSP.
+- **⚠ HALLAZGO (2026-07-29) — Recharts es dependencia muerta.** `package.json:39`
+  (`"recharts": "^3.8.1"`) con **cero** imports en `src/`: el único consumidor era
+  `pacientes/evolucion-charts.tsx`, uno de los 11 stubs eliminados en la tanda de
+  reproducibilidad. Dos caminos: **(a) desinstalarla** (menos peso y menos superficie), o **(b)**
+  si se implementan los **gráficos de evolución** de la HC, asumir que Recharts fija atributos
+  `style=""` inline y por lo tanto **cementa `style-src 'unsafe-inline'`** en la CSP (ver Bloque B
+  → CSP). Decidir antes de tocar la CSP de estilos.
 
 ### Lint preexistente (deuda técnica menor)
 - **Errores/warnings de lint preexistentes** (no introducidos por los cambios recientes,
@@ -259,24 +292,56 @@ Información Pública**). Hallazgos:
   repo; A VERIFICAR en producción, DevTools → Application → Cookies).
 
 ### Transporte, cabeceras y cifrado
-- **⚠ Endurecer la CSP (diagnosticada, pendiente de su propia tanda).** En producción la CSP de
-  `next.config.ts` sigue con `script-src 'unsafe-inline'`, que debilita la defensa anti-XSS. El
-  diagnóstico (2026-07-24) dejó el plan concreto:
-  - **`script-src`: removible con nonce.** La app **no tiene scripts inline propios** (verificado:
-    cero `dangerouslySetInnerHTML`/`<script>`/`next/script`); los únicos inline son los de Next, que
-    el nonce cubre. Se implementa en `proxy.ts` (el middleware de esta versión de Next; patrón
-    verificado contra `node_modules/next/dist/docs/.../content-security-policy.md`).
-  - **`style-src 'unsafe-inline'` es INEVITABLE con las librerías actuales.** Radix/shadcn, Recharts
-    y FullCalendar (y el `Toaster` de Sonner) fijan **atributos `style=""` inline**, y **los nonces
-    NO aplican a atributos `style`** (solo a elementos `<style>`/`<script>`). Sacarlo rompería el
-    posicionamiento de popovers/dialogs y los gráficos.
-  - **Costo del nonce:** fuerza **render dinámico** en toda la app (se pierden `/login` y `/registro`
-    estáticas, ISR y PPR). Es un trabajo de varias iteraciones (report-only primero) que **no
-    bloquea** recibir pacientes → se hará **después del bloque estético**, en tanda propia.
-  - Aprovechar para sumar `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`,
-    `upgrade-insecure-requests`.
+- **⚠ Endurecer la CSP — Fases 1a y 1b HECHAS y en producción; la Fase 2 (sacar
+  `script-src 'unsafe-inline'`) está BLOQUEADA.** Estado al 2026-07-29:
+  - **✅ Fase 1a — enforcement (`next.config.ts`, 2026-07-28).** Se agregaron `object-src 'none'`
+    y **`base-uri 'self'` + `form-action 'self'`** — estas dos **no heredan de `default-src`**, así
+    que hasta ahora estaban **sin restricción**: era un agujero real (inyección de `<base>`,
+    posteo de formularios a terceros). Se sumó `upgrade-insecure-requests` **solo en producción**
+    (en dev se entra por IP de LAN sobre HTTP y forzar https rompería ese acceso). Se **quitaron
+    permisos muertos**: `fonts.googleapis.com` (`style-src`), `fonts.gstatic.com` (`font-src`) —
+    Inter la auto-hostea `next/font` — y `https://*.supabase.co` (`img-src`) — Storage se sirve
+    por proxy same-origin, el navegador nunca pega a Supabase por imágenes.
+  - **✅ Fix `font-src 'self' data:` (2026-07-29). ⚠ NO volver a quitar el `data:`:** FullCalendar
+    embebe su fuente de íconos `fcicons` como `data:application/x-font-ttf`; sin `data:` el
+    turnero pierde los íconos (violación real vista en producción).
+  - **✅ Fase 1b — CSP de ensayo en report-only (`src/proxy.ts`, 2026-07-29).** El middleware
+    emite `Content-Security-Policy-Report-Only` con **nonce por request**, conviviendo con la CSP
+    de enforcement (que sigue siendo el piso). **No bloquea nada.** Ensaya
+    `script-src 'self' 'nonce-…' 'strict-dynamic'` **sin `'unsafe-inline'`**; el resto de las
+    directivas copia la enforcement. Sin `report-uri`/`report-to`: las violaciones se leen en la
+    consola del navegador.
+  - **⚠ BLOQUEANTE de la Fase 2 — el nonce NO se inyecta en los `<script>` en producción.**
+    Síntoma **confirmado** contra Vercel: la cabecera report-only llega **con** nonce, pero el
+    HTML sale con **0** `<script nonce=`, también en **rutas dinámicas** (p. ej.
+    `/verificar/[codigo]`: 17 `<script>`, ninguno nonceado). Como `'strict-dynamic'` hace que el
+    navegador **ignore `'self'`**, esos scripts —aunque sean del propio origen— se reportan como
+    violación: **todas las rutas reportan `script-src`**. Mientras esto no se resuelva, **el
+    enforcement no se puede activar**.
+  - **Causa ABIERTA (a investigar). NO es Turbopack — quedó descartado:** el **mismo build** con
+    `next start` **local** sí inyecta el nonce (20 `<script nonce=`). **Esa es la pista
+    principal: en local funciona, en Vercel no** → lo que cambia es la plataforma, no el bundler.
+    **Hipótesis a investigar:** la propagación de los **request headers del middleware a la
+    función de render** en Vercel. El middleware corre como **Edge Function separada** de la
+    función que renderiza; `NextResponse.next({ request: { headers } })` propaga los headers por
+    el mecanismo interno **`x-middleware-override-headers`**, y ése es el eslabón que parece no
+    cruzar el límite middleware→render. Next extrae el nonce del **request header**
+    (`node_modules/next/dist/server/app-render/app-render.js:166`): si el header no llega, no hay
+    nonce que inyectar — exactamente lo observado.
+  - **Alternativas a explorar si el nonce no se puede propagar:** CSP por **hashes** de los
+    scripts, o **`experimental.sri`** (Subresource Integrity generada por Next).
+  - **Sub-pendiente subordinado (secundario al anterior): `/login` y `/registro` son estáticas.**
+    Se prerenderizan en build time —cuando no hay request— así que sus `<script>` no pueden
+    recibir nonce; la solución documentada es `await connection()` en cada page
+    (`node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md:195-217`). **Pero
+    mientras el nonce no se propague en Vercel, arreglar esas dos rutas no destraba nada.**
+  - **Nota permanente: `style-src 'unsafe-inline'` es IRREDUCTIBLE — no intentar sacarlo.**
+    Radix/shadcn (y Sonner, FullCalendar) fijan **atributos `style=""`** para posicionar
+    popovers/selects/diálogos, y **los nonces NO aplican a atributos `style`** (solo a elementos
+    `<style>`/`<script>`). Sacarlo rompería el posicionamiento.
 - **Ya presentes:** HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`,
-  `Permissions-Policy` y la CSP base (`next.config.ts`).
+  `Permissions-Policy`, la CSP de enforcement (`next.config.ts`, endurecida en la Fase 1a) y la
+  CSP de ensayo en report-only (`src/proxy.ts`, Fase 1b).
 - **En reposo:** Supabase cifra el storage/DB en reposo por defecto — documentarlo como
   control existente. Datos sensibles guardados como **base64 en columnas** (`firma_url`,
   `logo_url`, y binarios de estudios) — revisar tamaño y exposición.
