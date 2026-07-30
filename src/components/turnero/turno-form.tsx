@@ -251,8 +251,6 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
     }
   }
 
-  const estadoActual = form.watch('estado')
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px] max-h-[90vh] overflow-y-auto">

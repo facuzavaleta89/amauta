@@ -122,7 +122,9 @@ export function CalendarView() {
   const [blockModalOpen, setBlockModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: string; end: string } | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null)
-  const [currentView, setCurrentView] = useState('timeGridWeek')
+  // El valor no se lee en ningún lado; se conserva el setter porque FullCalendar
+  // lo llama en viewDidMount/datesSet y ese re-render es el comportamiento actual.
+  const [, setCurrentView] = useState('timeGridWeek')
   const [creationMode, setCreationMode] = useState<'turno' | 'bloqueo'>('turno')
   const [showFilterPanel, setShowFilterPanel] = useState(false)
   const filterPanelRef = useRef<HTMLDivElement>(null)

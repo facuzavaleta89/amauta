@@ -4,10 +4,6 @@ import { isValidDateStr, colorHexSchema } from './shared'
 // ── Constantes ────────────────────────────────────────────────────────────────
 const MIN_DURATION_MS = 10 * 60 * 1000 // 10 minutos mínimo
 
-function getHourDecimal(d: Date) {
-  return d.getHours() + d.getMinutes() / 60
-}
-
 // ── Turno base ────────────────────────────────────────────────────────────────
 export const turnoBaseSchema = z.object({
   paciente_id: z.string().uuid().optional().nullable(),

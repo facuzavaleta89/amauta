@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { AlertCircle, Loader2, LogIn, CheckCircle2 } from 'lucide-react'
+import { AlertCircle, Loader2, LogIn } from 'lucide-react'
 
 export default function LoginPage() {
   const [state, action, isPending] = useActionState(login, undefined)

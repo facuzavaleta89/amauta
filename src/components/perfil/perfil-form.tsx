@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import {
-  User, Shield, FileSignature, Users, Loader2, Trash2, Upload, AlertCircle, FileImage, Plus, Building2,
+  User, Shield, FileSignature, Users, Loader2, Trash2, Upload, FileImage, Plus, Building2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
 import { SignaturePad } from './signature-pad'

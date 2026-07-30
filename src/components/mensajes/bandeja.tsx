@@ -1,7 +1,6 @@
 'use client'
 
-import { useState, useEffect, startTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { MessageSquare, Plus, Users, User, Send, Trash2 } from 'lucide-react'
@@ -30,7 +29,6 @@ interface Props {
 }
 
 export function Bandeja({ threads: initialThreads, currentUserId, usuarios, hiloInicial }: Props) {
-  const router = useRouter()
   const { esMedico } = usePermisos()
   const [threads, setThreads] = useState<MensajeInterno[]>(initialThreads)
   // Abrir de entrada el hilo del deep-link (sin efecto → evita set-state-in-effect)
