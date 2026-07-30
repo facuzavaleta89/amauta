@@ -8,11 +8,10 @@ import {
   User, Calendar, Award, Clock, Ban, AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { formatFecha, formatFechaLarga } from '@/lib/utils'
+import { formatFechaLarga } from '@/lib/utils'
 import { buildDocumentoFilename } from '@/lib/pdf/filename'
 
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import {
   AlertDialog,
   AlertDialogAction,

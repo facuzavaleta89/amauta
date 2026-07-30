@@ -2,7 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { rateLimitAction, getIpFromHeaders } from '@/lib/rate-limit'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { CheckCircle2, XCircle, AlertTriangle, ShieldCheck, User, Calendar, FileText, Award, Clock } from 'lucide-react'
+import { XCircle, AlertTriangle, ShieldCheck, User, Calendar, FileText, Award, Clock } from 'lucide-react'
 import React from 'react'
 
 interface PageProps {

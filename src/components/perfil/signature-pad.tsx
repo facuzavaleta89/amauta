@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { Eraser, Check, MousePointer, Paintbrush } from 'lucide-react'
+import { Eraser, Check, Paintbrush } from 'lucide-react'
 
 interface SignaturePadProps {
   onSave: (base64Image: string) => void

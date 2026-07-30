@@ -2,8 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { CalendarDays, Clock } from 'lucide-react'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { formatFechaAR } from '@/lib/utils/format-date'
 
 const estadoBadge: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
   pendiente:    { label: 'Pendiente', variant: 'secondary' },
@@ -53,7 +52,6 @@ export async function NextAppointments() {
                 turno.paciente_nombre_libre ??
                 'Sin nombre'
               const bad = estadoBadge[turno.estado] ?? estadoBadge.pendiente
-              const fecha = new Date(turno.fecha_inicio)
 
               return (
                 <div
@@ -63,17 +61,17 @@ export async function NextAppointments() {
                   <div className="flex items-center gap-3">
                     <div className="flex flex-col items-center bg-primary/8 rounded-md px-2 py-1 min-w-[50px]">
                       <span className="text-[10px] text-primary/80 font-medium uppercase">
-                        {format(fecha, 'EEE', { locale: es })}
+                        {formatFechaAR(turno.fecha_inicio, 'EEE')}
                       </span>
                       <span className="text-sm font-bold text-primary leading-none">
-                        {format(fecha, 'd')}
+                        {formatFechaAR(turno.fecha_inicio, 'd')}
                       </span>
                     </div>
                     <div>
                       <p className="text-sm font-medium text-foreground leading-tight">{nombre}</p>
                       <span className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
                         <Clock className="h-3 w-3" />
-                        {format(fecha, 'HH:mm')}
+                        {formatFechaAR(turno.fecha_inicio, 'HH:mm')}
                       </span>
                     </div>
                   </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { turnoSchema } from '@/lib/validations/turno.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { formatFechaAR } from '@/lib/utils/format-date'
 
 export const dynamic = 'force-dynamic'
 
@@ -178,7 +179,7 @@ export async function POST(request: NextRequest) {
     if (profile?.role === 'asistente') {
       const asistenteName = user.user_metadata?.nombre_completo || user.email || 'Un asistente';
       const pacienteInfo = t.paciente_nombre_libre || 'un paciente';
-      const fechaCorta = new Date(t.fecha_inicio).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+      const fechaCorta = formatFechaAR(t.fecha_inicio, 'dd/MM/yyyy HH:mm');
       
       await supabase.from('notificaciones').insert({
         medico_id: tenantMedicoId,

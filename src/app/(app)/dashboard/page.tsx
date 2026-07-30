@@ -4,6 +4,7 @@ import { StatsCards } from '@/components/dashboard/stats-cards'
 import { NextAppointments } from '@/components/dashboard/next-appointments'
 import { RecentPatients } from '@/components/dashboard/recent-patients'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatFechaAR } from '@/lib/utils/format-date'
 
 export const metadata: Metadata = {
   title: 'Dashboard',
@@ -24,12 +25,7 @@ function WidgetSkeleton() {
 }
 
 export default function DashboardPage() {
-  const today = new Date().toLocaleDateString('es-AR', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
+  const today = formatFechaAR(new Date(), "EEEE, d 'de' MMMM 'de' yyyy")
 
   return (
     <div className="space-y-6">

@@ -2,8 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Users, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { formatFechaAR } from '@/lib/utils/format-date'
 
 export async function RecentPatients() {
   const supabase = await createClient()
@@ -70,7 +69,7 @@ export async function RecentPatients() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground hidden sm:block">
-                      {format(new Date(p.created_at), "d MMM", { locale: es })}
+                      {formatFechaAR(p.created_at, 'd MMM')}
                     </span>
                     <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-primary transition-colors" />
                   </div>

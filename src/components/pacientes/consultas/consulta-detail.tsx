@@ -322,8 +322,8 @@ function ConsultaForm({
       toast.success(estado === 'finalizada' ? 'Consulta finalizada correctamente' : 'Borrador guardado')
 
       onSaved(data)
-    } catch (err: any) {
-      toast.error(err.message || 'Ocurrió un error')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Ocurrió un error')
     } finally {
       setIsSubmitting(false)
     }
