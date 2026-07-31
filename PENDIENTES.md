@@ -92,6 +92,36 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 - **`recetas` necesitará su `emisor_snapshot`:** la columna se agregó (mig. 028) solo a
   `pedidos` y `certificados`. Cuando se habilite la emisión de recetas (bloqueada por ANMAT),
   sumar la misma columna a `recetas` y escribir el snapshot al emitir, igual que en los otros dos.
+- **Badge de "Mensajes" del sidebar: no se actualiza en vivo. PREEXISTENTE y POR DISEÑO — no es un
+  bug de regresión. Severidad BAJA.** Detectado al verificar la 1B-parte-1 (2026-07-31), pero es un
+  límite del diseño original, no algo que se haya roto. El número sale de `MensajesContext`
+  (`src/contexts/permisos-context.tsx:70-82`), que es un **pasamanos**: recibe `mensajesNoLeidos` ya
+  calculado por `contarMensajesNoLeidos()` en el **Server Component** `(app)/layout.tsx` y lo expone
+  con `useMensajes()` (`sidebar.tsx:27`). **No tiene suscripción Realtime propia** —en toda la app
+  hay exactamente dos canales (`notificaciones-bell.tsx` y `layout-shell.tsx`, este último para
+  permisos del asistente) y **ninguno lo alimenta**—, así que el valor solo cambia cuando ese layout
+  se vuelve a ejecutar: **carga completa (F5) o `router.refresh()`**. Resolverlo requiere una
+  decisión de producto: darle al contexto una fuente en vivo propia, o compartir estado con la
+  campanita para que ambos badges deriven del mismo lugar. **Ítem de producto, no bug.** Nota: el
+  badge de la campanita para mensajes **sí** tiene canal — que hoy no entregue es otro problema, el
+  del ítem de Realtime en "Bugs menores detectados".
+- **Tanda 1B — parte 2: Realtime de notificaciones. ⚠ REORDENADA — ya no es lo que estaba
+  planeado.** El plan original era *"agregar `notificaciones` a la publicación `supabase_realtime` y
+  suscribirla en la campanita, replicando el patrón de `mensajes_internos`, que ya funciona"*.
+  **Esa premisa cayó:** el Realtime de mensajes **no está entregando en vivo** (ver el hallazgo en
+  "Bugs menores detectados"), así que copiar ese patrón habría reproducido la misma falla. Orden
+  correcto:
+  1. **Primero:** entender y arreglar por qué el canal de `mensajes_internos` no entrega. Es
+     **cliente/runtime, no base** — la tabla ya está en la publicación, verificado. Empezar por el
+     callback de estado en `channel.subscribe()`.
+  2. **Recién después:** sumar `notificaciones` al mismo mecanismo. Eso **sí requiere migración**
+     (agregarla a la publicación `supabase_realtime`), con el mismo patrón idempotente de la
+     migración `023_realtime_mensajes_internos.sql`, más la suscripción en `notificaciones-bell.tsx`
+     junto a las dos que ya están.
+
+  ⚠ **Se verifica con DOS sesiones abiertas (médico + asistente), no con que compile.** El Realtime
+  no se prueba con `tsc`/`build`: hay que ver el badge subir sin recargar. Y conviene probar contra
+  **producción**, porque el StrictMode de dev es una de las hipótesis de la falla actual.
 
 ### Bugs menores detectados
 - **✅ RESUELTO (2026-07-26) — Filename de certificados sin tipo → `certificado_null_...`.** El
@@ -136,17 +166,83 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - **`src/app/verificar/[codigo]/page.tsx:12`** define un `formatFechaLarga` **local** que
     duplica el de `src/lib/utils.ts`. Candidato a deduplicar, **con cuidado**: es la página
     pública de verificación (datos sensibles, Ley 25.326) y el cambio merece su propia revisión.
-- **⚠ HALLAZGO (2026-07-29) — el contador de la campanita de notificaciones no aparece.** El
-  número del badge no se muestra en la UI. **La causa NO está confirmada, y el componente parece
-  correcto:** en `src/components/layout/notificaciones-bell.tsx:207-210` el guard
-  `{count > 0 && …}` y el `<span>` del contador están bien escritos, y las clases `h-4.5`/`w-4.5`
-  **son válidas en Tailwind v4** (escala de espaciado dinámica), así que no es una clase
-  inexistente. **Causa probable, aguas arriba: `count` llegando en 0** —
-  `notificaciones-bell.tsx:69` (`solicitudes.length + mensajes.length`), alimentado por
-  `obtenerMensajesNoLeidos()` (`src/app/(app)/notificaciones/actions.ts:212`, invocada en
-  `src/app/(app)/layout.tsx:75` **solo si** `tieneAccesoMensajeria`) y por la query de
-  solicitudes. **Preexistente y ajeno a la CSP**; investigar en tanda propia, empezando por si
-  esas dos fuentes devuelven filas.
+- **✅ RESUELTO (tanda 1B — parte 1, 2026-07-31) — el badge de la campanita no contaba los avisos
+  del sistema.**
+  > ⚠ **La versión anterior de este ítem era INCORRECTA** y quedó refutada por el diagnóstico.
+  > Decía que *"el número del badge no se muestra"* y apuntaba a un `count` llegando en 0, con el
+  > guard de `notificaciones-bell.tsx:207-210` como sospechoso. **El count llegaba bien**, y tanto
+  > el guard como las clases `h-4.5`/`w-4.5` estaban correctos.
+
+  **El bug real era otro:** el contador hacía `count = solicitudes.length + mensajes.length` y
+  **NUNCA leía la tabla `notificaciones`**. Por eso los avisos del sistema —turno agendado por un
+  asistente, recordatorio enviado— **no incrementaban el número**, aunque sí aparecían en la página
+  `/notificaciones`, que es la única que consultaba la tabla. **No era una regresión: la conexión
+  nunca existió** — verificado en el historial, ningún commit la quitó, y el que unificó la
+  campanita (`098dbc1`) de hecho **amplió** el count de solo solicitudes a solicitudes + mensajes.
+  De yapa, la columna `notificaciones.leida` **jamás se escribía en `true`** en todo el repo.
+
+  **Qué se hizo:**
+  - **Fuente de verdad compartida y normalizada** en `src/app/(app)/notificaciones/actions.ts`:
+    `leerNotificacionesSistema()` (privada, **único lugar del repo que lee la tabla**) y
+    `leerSolicitudesNormalizadas()`, con dos wrappers por contexto —`obtenerItemsPagina()` para la
+    página (solicitudes + avisos, **historial completo**) y `obtenerNotificacionesNoLeidas()` para
+    el badge (solo lo **no leído**)—. Badge y página derivan del mismo shape, así que **un `tipo`
+    nuevo de notificación entra una sola vez y lo ven los dos**: era el objetivo del fix, no solo
+    tapar el número.
+  - **Tipo de dominio nuevo:** `src/types/notificacion.ts` (`Notificacion`, `NotificacionTipo`,
+    `ItemPendiente`, `ITEM_TYPE_SOLICITUD`), exportado desde el barrel. La tabla no tenía tipo TS.
+  - **Tercer sumando en el badge:** `notificaciones-bell.tsx` suma los avisos no leídos, que viajan
+    por la cadena de props ya existente (`(app)/layout.tsx` → `layout-shell` → `header` → bell).
+    **Solo para el médico:** la RLS `notificaciones_select` es `medico_id = auth.uid()`, así que el
+    asistente no lee esas filas y la consulta ni se dispara. ⚠ Esa prop **no siembra `useState`**, a
+    propósito y a diferencia de solicitudes/mensajes (que el Realtime muta en el cliente): con
+    estado local el badge **nunca bajaría**, porque `router.refresh()` no pisa el estado de un
+    componente que no se remonta.
+  - **Marcado de leído**, que no existía: `marcarNotificacionesLeidas()` pone `leida = true` al
+    **entrar** a `/notificaciones`, disparado desde el Client Component
+    `src/components/notificaciones/marcar-leidas.tsx`, más un botón **"Marcar todas como leídas"**.
+    Va en un efecto y no en el render porque **`revalidatePath` no está soportado durante el
+    render**; el listado de esa visita conserva sus puntos azules (los snapshotea
+    `NotificacionesList` en su `useState`), así que el médico ve qué venía sin leer.
+  - **`src/app/api/turnero/route.ts`:** el insert de la notificación **no chequeaba su error** —un
+    fallo era completamente invisible—. Ahora se loguea sin datos personales del paciente (Ley
+    25.326: solo el id del turno) y **el POST no falla** por eso, porque el turno ya se creó.
+  - **Sin migración:** la columna `leida` y su política de UPDATE **ya existían** en la base.
+
+  **Verificación:** `tsc` y `build` limpios; el lint bajó **75 → 73** (dos `no-explicit-any`
+  desaparecieron solos al mover el mapeo inline de la página a la fuente tipada). Verificado a mano
+  en la app: el badge cuenta el turno agendado por un asistente y baja al entrar a
+  `/notificaciones`. **El Realtime quedó FUERA a propósito** (ver los dos ítems de Realtime de acá
+  abajo y la 1B-parte-2 en "Funcionalidades incompletas").
+- **⚠ HALLAZGO NUEVO (2026-07-31) — el Realtime de `mensajes_internos` no entrega eventos en vivo.
+  PREEXISTENTE, causa ABIERTA.** Surgió al verificar a mano la 1B-parte-1: con **dos sesiones**
+  abiertas, un mensaje interno nuevo **no** incrementa el badge de la campanita hasta hacer **F5**.
+  - **No lo causó la 1B-parte-1.** El `useEffect` de suscripción de
+    `src/components/layout/notificaciones-bell.tsx` es **byte-idéntico** al de antes de esa tanda
+    (comprobado extrayendo el bloque completo en las dos versiones y diffeándolo: 0 diferencias), y
+    la prop nueva del badge **no entró** en su array de dependencias, que sigue siendo
+    `[userId, tenantId, esMedico]` — tres primitivos estables.
+  - **DESCARTADO: no es la base.** Se verificó por consulta que **`mensajes_internos` SÍ está en la
+    publicación `supabase_realtime`** (`SELECT … FROM pg_publication_tables WHERE pubname =
+    'supabase_realtime'`), o sea que la migración 023 está aplicada y cumplió su función. También
+    quedó descartada la **CSP**: `next.config.ts` y `src/proxy.ts` declaran
+    `connect-src … wss://*.supabase.co` y el host del proyecto matchea el comodín.
+  - **Hipótesis vivas, todas de CLIENTE/RUNTIME:** (a) **timing de autenticación del socket** —
+    `channel.subscribe()` corre apenas se monta el efecto, mientras que el `realtime.setAuth(token)`
+    de supabase-js se dispara con el evento de sesión, que es asíncrono; sin JWT en el canal la RLS
+    filtra los eventos y la suscripción "anda" pero no llega nada. (b) **StrictMode en dev** —
+    `reactStrictMode` no está seteado en `next.config.ts`, así que vale `true` y el efecto corre
+    `subscribe → removeChannel → subscribe` sobre el **mismo topic** y el mismo cliente (el
+    `createBrowserClient` de `@supabase/ssr` es **singleton** en el navegador), una fuente conocida
+    de canales que quedan en error; **se descarta probando contra producción, no `next dev`**.
+    (c) **Realtime deshabilitado a nivel proyecto** en el dashboard de Supabase.
+  - **⚠ PRIMER PASO, barato y previo a seguir teorizando:** `channel.subscribe()`
+    (`notificaciones-bell.tsx:184`) se llama **sin callback de estado**, y todo el efecto está
+    envuelto en un `try/catch` que se traga los errores. Hoy **es imposible saber desde la app si el
+    canal siquiera se unió**: no se distingue "no llegó ningún mensaje" de "el canal nunca conectó".
+    Pasarle el callback (`SUBSCRIBED` / `CHANNEL_ERROR` / `TIMED_OUT` / `CLOSED`) es lo primero.
+  - **Ligado a la 1B-parte-2** (ver "Funcionalidades incompletas"): esa tanda asumía replicar *"el
+    patrón de mensajes, que ya funciona"*, premisa que este hallazgo invalida.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
