@@ -4,7 +4,11 @@ import { LayoutShell } from '@/components/layout/layout-shell'
 import type { UserRole, PermisosAsistente } from '@/types/roles'
 import { PERMISOS_DEFAULT } from '@/types/roles'
 import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
-import { contarMensajesNoLeidos, obtenerMensajesNoLeidos } from '@/app/(app)/notificaciones/actions'
+import {
+  contarMensajesNoLeidos,
+  obtenerMensajesNoLeidos,
+  obtenerNotificacionesNoLeidas,
+} from '@/app/(app)/notificaciones/actions'
 
 export default async function AppLayout({
   children,
@@ -74,6 +78,12 @@ export default async function AppLayout({
   const mensajesNoLeidos = tieneAccesoMensajeria ? await contarMensajesNoLeidos() : 0
   const mensajesIniciales = tieneAccesoMensajeria ? await obtenerMensajesNoLeidos() : []
 
+  // Avisos del sistema sin leer (turno agendado por un asistente, recordatorio
+  // enviado): el tercer sumando del badge de la campanita. SOLO para el médico —
+  // la RLS de `notificaciones` es `medico_id = auth.uid()`, así que para un
+  // asistente la consulta no tiene sentido (ver notificaciones/actions.ts).
+  const notificacionesSistema = userRole === 'medico' ? await obtenerNotificacionesNoLeidas() : []
+
   return (
     <LayoutShell
       userFullName={userFullName}
@@ -86,6 +96,7 @@ export default async function AppLayout({
       solicitudesPendientes={solicitudesPendientes ?? []}
       mensajesNoLeidos={mensajesNoLeidos}
       mensajesIniciales={mensajesIniciales}
+      notificacionesSistema={notificacionesSistema}
     >
       {children}
     </LayoutShell>

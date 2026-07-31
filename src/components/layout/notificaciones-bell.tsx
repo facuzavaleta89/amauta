@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { responderSolicitud } from '@/app/onboarding/actions'
 import {
   Bell,
+  CalendarPlus,
   Check,
   X,
   Loader2,
@@ -25,6 +26,7 @@ import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import type { MensajeNoLeido } from '@/types/mensaje'
+import type { ItemPendiente } from '@/types/notificacion'
 
 interface Solicitud {
   id: string
@@ -43,6 +45,12 @@ interface Props {
   esMedico: boolean
   solicitudesIniciales: Solicitud[]
   mensajesIniciales: MensajeNoLeido[]
+  /**
+   * Avisos del sistema SIN LEER (tabla `notificaciones`, solo médico).
+   * A diferencia de los dos anteriores NO lleva sufijo `Iniciales` a propósito:
+   * no siembra estado local, se lee directo de la prop (ver el `count`).
+   */
+  notificacionesSistema: ItemPendiente[]
 }
 
 function timeAgo(dateStr: string): string {
@@ -59,6 +67,7 @@ export function NotificacionesBell({
   esMedico,
   solicitudesIniciales,
   mensajesIniciales,
+  notificacionesSistema,
 }: Props) {
   const [solicitudes, setSolicitudes] = useState<Solicitud[]>(solicitudesIniciales)
   const [mensajes, setMensajes] = useState<MensajeNoLeido[]>(mensajesIniciales)
@@ -66,7 +75,13 @@ export function NotificacionesBell({
   const [respondiendo, setRespondiendo] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
-  const count = solicitudes.length + mensajes.length
+  // Las tres fuentes del contador. Solicitudes y mensajes viven en estado local
+  // porque el Realtime de más abajo los MUTA en el cliente; los avisos del
+  // sistema, en cambio, se leen DIRECTO de la prop (sin useState) a propósito:
+  // así el badge baja apenas el layout se vuelve a renderizar tras marcarlos
+  // leídos en /notificaciones (un useState se quedaría con el valor inicial,
+  // que `router.refresh()` no pisa).
+  const count = solicitudes.length + mensajes.length + notificacionesSistema.length
 
   // ── Realtime: solicitudes (solo médico) + mensajes (todos con acceso) ──────
   useEffect(() => {
@@ -235,7 +250,7 @@ export function NotificacionesBell({
             </div>
             <p className="text-sm font-medium text-foreground">Todo al día</p>
             <p className="text-xs text-muted-foreground mt-1">
-              No tenés solicitudes ni mensajes sin leer.
+              No tenés novedades sin leer.
             </p>
           </div>
         ) : (
@@ -361,6 +376,48 @@ export function NotificacionesBell({
                       </div>
                       <p className="text-xs text-muted-foreground truncate mt-0.5">
                         {m.asunto}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            {/* ── Bloque: Avisos del sistema (solo médico) ── */}
+            {/* No se marcan leídos al abrir el panel: eso pasa al ENTRAR a
+                /notificaciones (ver notificaciones/marcar-leidas.tsx). */}
+            {notificacionesSistema.length > 0 && (
+              <div>
+                {(solicitudes.length > 0 || mensajes.length > 0) && <Separator />}
+                <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Avisos
+                </p>
+                {notificacionesSistema.map((n) => (
+                  <Link
+                    key={n.id}
+                    href="/notificaciones"
+                    onClick={() => setOpen(false)}
+                    className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                      {n.type === 'turno_creado' ? (
+                        <CalendarPlus className="h-4 w-4 text-primary" />
+                      ) : (
+                        <Bell className="h-4 w-4 text-primary" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {n.title}
+                        </p>
+                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground shrink-0">
+                          <Clock className="h-3 w-3" />
+                          {timeAgo(n.date)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5 leading-relaxed">
+                        {n.message}
                       </p>
                     </div>
                   </Link>

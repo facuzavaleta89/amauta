@@ -17,3 +17,4 @@ export * from './turno'      // TurnoEstado, Turno, BloqueoAgenda, TurnoAuditLog
 export * from './difusion'   // DifusionEstado, DifusionCanal, DifusionPost, DifusionEnvio
 export * from './mensaje'    // MensajeInterno, MensajeInsertar, MensajeFormValues
 export * from './nota'       // Nota, NotaInsert, NotaUpdate
+export * from './notificacion' // Notificacion, NotificacionTipo, ItemPendiente, ITEM_TYPE_SOLICITUD

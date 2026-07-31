@@ -1,8 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { NotificacionesList } from '@/components/notificaciones/list'
+import { MarcarLeidas } from '@/components/notificaciones/marcar-leidas'
 import PageHeader from '@/components/shared/page-header'
-import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
+import { obtenerItemsPagina } from './actions'
+import { ITEM_TYPE_SOLICITUD } from '@/types/notificacion'
 
 export const metadata = {
   title: 'Notificaciones',
@@ -27,38 +29,19 @@ export default async function NotificacionesPage() {
     redirect('/dashboard')
   }
 
-  // Solicitudes de vinculación pendientes
-  const rawSolicitudes = (await obtenerSolicitudesPendientes()).data || []
+  // Fuente de verdad compartida con el badge de la campanita (ver actions.ts):
+  // solicitudes de vinculación pendientes + avisos del sistema, ya normalizados y
+  // ordenados por fecha. Acá se pide el HISTORIAL COMPLETO —leídos y no leídos—,
+  // mientras que el badge pide solo lo no leído.
+  const notificaciones = await obtenerItemsPagina()
 
-  // Notificaciones del sistema
-  const { data: dbNotificaciones } = await supabase
-    .from('notificaciones')
-    .select('*')
-    .eq('medico_id', user.id)
-    .order('created_at', { ascending: false })
-
-  const solicitudesMap = rawSolicitudes.map((s: any) => ({
-    id: s.id,
-    type: 'solicitud',
-    title: 'Solicitud de vinculación',
-    message: `${s.solicitante_nombre} (${s.solicitante_email}) quiere vincularse como tu asistente.`,
-    date: s.created_at,
-    read: false,
-    payload: s,
-  }))
-
-  const systemMap = (dbNotificaciones || []).map((n: any) => ({
-    id: n.id,
-    type: n.tipo,
-    title: n.titulo,
-    message: n.mensaje,
-    date: n.created_at,
-    read: n.leida,
-    payload: n.payload,
-  }))
-
-  const notificaciones = [...solicitudesMap, ...systemMap].sort((a, b) =>
-    new Date(b.date).getTime() - new Date(a.date).getTime()
+  // ⚠ ORDEN DELIBERADO: esta página solo LEE. El marcado como leído lo dispara
+  //   <MarcarLeidas> desde el cliente, después de que el listado ya se renderizó
+  //   con `read` tal como estaba al entrar (así el médico ve cuáles venían sin
+  //   leer, con su punto azul). Marcar acá, durante el render, además rompería:
+  //   la action llama `revalidatePath`, no soportado durante el render.
+  const hayNoLeidas = notificaciones.some(
+    (n) => n.type !== ITEM_TYPE_SOLICITUD && !n.read
   )
 
   return (
@@ -66,7 +49,9 @@ export default async function NotificacionesPage() {
       <PageHeader
         title="Notificaciones"
         description="Solicitudes de vinculación de asistentes y avisos del sistema."
-      />
+      >
+        <MarcarLeidas hayNoLeidas={hayNoLeidas} />
+      </PageHeader>
       <NotificacionesList
         notificaciones={notificaciones}
         isMedico={isMedico}
