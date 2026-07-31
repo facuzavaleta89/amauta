@@ -107,15 +107,35 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   omitía la fecha y no sanitizaba): ahora ambos producen **exactamente el mismo nombre**.
   Consumidores: `api/pedidos/[id]/pdf/route.ts:31`, `api/certificados/[id]/pdf/route.ts:31`,
   `components/pedidos/pedido-pdf.tsx:64` y `components/certificados/certificado-pdf.tsx:71`.
-- **⚠ HALLAZGO (2026-07-29) — Dashboard: "próximos turnos" muestra la hora en UTC, no en hora
-  local.** `src/components/dashboard/next-appointments.tsx:56` hace
-  `new Date(turno.fecha_inicio)` y lo formatea con `format` de date-fns en las líneas `:66`
-  (`'EEE'`), `:69` (`'d'`) y `:76` (`'HH:mm'`). `NextAppointments` es un **Server Component**, y
-  `format` renderiza en la zona horaria **del runtime** → **UTC en Vercel**: un turno de **12:00
-  ART** figura como **15:00**. Como el **mismo `Date`** alimenta el día de la semana y el día del
-  mes, un turno **nocturno puede mostrarse en el día equivocado**, no solo con la hora corrida.
-  ⚠ **Es un bug solo de producción:** con `npm run dev` en una máquina en UTC-3 se ve bien; para
-  reproducirlo hay que ir al deploy o forzar `TZ=UTC`. **Preexistente y ajeno a la CSP.**
+- **✅ RESUELTO (tanda 1A, 2026-07-30) — Dashboard: "próximos turnos" mostraba la hora en UTC.**
+  El fix **no fue local a ese archivo**: se centralizó en un helper compartido,
+  **`src/lib/utils/format-date.ts`** → `formatFechaAR(fecha, patron)`, que formatea con
+  `formatInTimeZone` de **`date-fns-tz`** (dependencia nueva) fijando la zona
+  `America/Argentina/Buenos_Aires`, expuesta como const **`TZ_AR`**. Se reutilizó el stub muerto
+  que ya existía en esa ruta en vez de crear un archivo nuevo. Se aplicó a los **cuatro** sitios
+  **server-side** que formateaban en la zona del runtime:
+  `src/components/dashboard/next-appointments.tsx` (las 3 llamadas; se eliminó el `new Date()`
+  intermedio y ahora el helper recibe el string ISO original), `src/app/api/turnero/route.ts:181`
+  (**texto de la notificación** al médico: "…agendó un turno para X el …", que también salía
+  corrido), `src/app/(app)/dashboard/page.tsx:27` (subtítulo con el día de hoy, que después de
+  las 21:00 ART mostraba el día siguiente) y `src/components/dashboard/recent-patients.tsx:73`.
+  Verificado con `TZ=UTC` sobre el caso borde que motivaba el hallazgo —un turno de
+  `2026-07-30T01:30Z`—: ahora sale **mié 29, 22:30** en vez de jue 30, 01:30, así que el salto de
+  día del turno nocturno queda cerrado. **Confirmado en producción.** ⚠ Los formateos
+  **client-side** (turnero, `turno-form`) **no se tocaron**: renderizan en la zona del navegador y
+  no tenían el bug. Regla de uso en `CLAUDE.md` → nota técnica 18.
+- **⚠ PENDIENTE NUEVO (2026-07-30) — quedan dos helpers de fecha sin unificar contra
+  `formatFechaAR`.** Surgió al hacer el fix de TZ; **no hay bug activo hoy**, pero conviene
+  cerrarlo en la próxima tanda que toque fechas:
+  - `formatFecha` / `formatFechaLarga` de **`src/lib/utils.ts`** tampoco fijan zona. Parchean el
+    caso "fecha sin hora" concatenando `T12:00:00`, lo cual **funciona** para columnas `DATE`
+    (fecha de nacimiento, `fecha_certificado`, `valido_hasta`) —que es lo único que hoy les
+    pasan sus consumidores—, pero si alguna vez se les pasa un **`timestamptz` con hora**
+    reaparece exactamente el bug del ítem anterior. Candidatas a reimplementarse sobre
+    `formatFechaAR`.
+  - **`src/app/verificar/[codigo]/page.tsx:12`** define un `formatFechaLarga` **local** que
+    duplica el de `src/lib/utils.ts`. Candidato a deduplicar, **con cuidado**: es la página
+    pública de verificación (datos sensibles, Ley 25.326) y el cambio merece su propia revisión.
 - **⚠ HALLAZGO (2026-07-29) — el contador de la campanita de notificaciones no aparece.** El
   número del badge no se muestra en la UI. **La causa NO está confirmada, y el componente parece
   correcto:** en `src/components/layout/notificaciones-bell.tsx:207-210` el guard
@@ -149,9 +169,16 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   definiciones reales (`consultas_{paciente_id,medico_id,fecha_hora}_idx` y
   `idx_notificaciones_{medico,leida,created}`), verificados contra `pg_indexes`. Confirmado
   contra la base: **no hay índices duplicados**; son exactamente 8 contando los dos `*_pkey`.
-- **Migración vacía:** `supabase/migrations/20260326204733_fix_rls_recursion.sql`
-  tiene **0 bytes**. Su intención (recursión RLS en `profiles`) ya está cubierta por la
-  `014` + `019`/`021`. Eliminarla del historial o dejar un comentario no-op.
+- **✅ RESUELTO (tanda 1A, 2026-07-30) — Migración vacía eliminada.**
+  `supabase/migrations/20260326204733_fix_rls_recursion.sql` (**0 bytes**) se **borró del
+  historial**. Era un no-op: se creó con `supabase migration new` (es la única con nombre en
+  formato timestamp del CLI) y nunca se completó; su intención —recursión RLS en `profiles`— ya
+  está cubierta por la `014` + `019`/`021`. Borrar un archivo vacío **no puede alterar el
+  esquema**: no se ejecutó nada contra la base ni se tocó ninguna otra migración. El único efecto
+  posible es cosmético —si en su momento se aplicó con el CLI, quedaría una fila huérfana en
+  `supabase_migrations.schema_migrations` que `supabase migration repair` limpia—, irrelevante
+  mientras la secuencia siga sin ser ejecutable desde cero (ver el ítem de baseline arriba). El
+  directorio queda solo con las migraciones numeradas `001` → `031`.
 
 ### Desajustes tipo TypeScript ↔ esquema DB
 - **✅ RESUELTOS (2026-07-23).** Los cinco desajustes vigentes se corrigieron:
@@ -176,29 +203,104 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   stub (`use-auth`, `use-pacientes`, `use-role`, `use-turnos`) y el **barrel redundante**
   `src/types/supabase.ts` (0 consumidores; `types/index.ts` es el barrel completo).
   `use-view-mode.ts` se conservó (tiene lógica real).
+- **✅ RESUELTO (tanda 1A, 2026-07-30) — los 2 utils stub que habían sobrevivido a esa limpieza.**
+  La tanda de reproducibilidad barrió componentes y hooks, pero **no** `src/lib/utils/`, donde
+  quedaban dos archivos con `export {};` y **cero consumidores**:
+  `src/lib/utils/calcular-imc.ts` se **borró** (el IMC ya se calcula inline en
+  `consulta-detail.tsx:252-257`) y `src/lib/utils/format-date.ts` se **reutilizó** como casa del
+  helper `formatFechaAR` (ver el fix de zona horaria en "Bugs menores detectados").
 - **Queda 1 stub, a propósito:** `src/lib/pdf/receta-template.tsx`. Se **mantuvo** como
   marcador del template de recetas, bloqueado por ANMAT pero a implementar cuando se
   certifique. Eliminarlo o implementarlo cuando se desbloquee la funcionalidad.
-- **⚠ HALLAZGO (2026-07-29) — `src/app/page.tsx` sigue siendo la plantilla de
-  `create-next-app`.** Es el "Get started by editing…" original, con el logo de Next y enlaces a
-  `vercel.com`/`nextjs.org`. Se compila como **ruta estática** pero es **inalcanzable**: los
-  redirects de `src/proxy.ts` mandan `/` a `/dashboard` (con sesión) o a `/login` (sin sesión).
-  **Reemplazarla por un `redirect()`** a `/dashboard` (dejando que el guard resuelva el resto),
-  en vez de mantener una página estática con branding ajeno. Ajeno a la CSP.
-- **⚠ HALLAZGO (2026-07-29) — Recharts es dependencia muerta.** `package.json:39`
-  (`"recharts": "^3.8.1"`) con **cero** imports en `src/`: el único consumidor era
-  `pacientes/evolucion-charts.tsx`, uno de los 11 stubs eliminados en la tanda de
-  reproducibilidad. Dos caminos: **(a) desinstalarla** (menos peso y menos superficie), o **(b)**
-  si se implementan los **gráficos de evolución** de la HC, asumir que Recharts fija atributos
-  `style=""` inline y por lo tanto **cementa `style-src 'unsafe-inline'`** en la CSP (ver Bloque B
-  → CSP). Decidir antes de tocar la CSP de estilos.
+- **✅ RESUELTO (tanda 1A, 2026-07-30) — `src/app/page.tsx` era la plantilla de
+  `create-next-app`.** Se reemplazó el "Get started by editing…" (logo de Next, enlaces a
+  `vercel.com`/`nextjs.org`) por un Server Component mínimo que hace `redirect('/dashboard')` con
+  `redirect` de `next/navigation`, siguiendo el patrón ya establecido en `onboarding/page.tsx` y
+  `(app)/layout.tsx`; el guard de `src/proxy.ts` y el de `(app)/layout.tsx` resuelven el resto
+  (con sesión → dashboard, sin sesión → login). Se borraron además los **5 SVG** de la plantilla
+  que quedaban huérfanos —`public/{next,vercel,file,globe,window}.svg`—: los tres últimos ya no
+  tenían **ninguna** referencia y los dos primeros los usaba solo la página reemplazada, así que
+  `public/` quedó vacío (el favicon vive en `src/app/favicon.ico`, no ahí). Nota: `/` sigue
+  figurando como **ruta estática** en el build —Next materializa el redirect en build time—, pero
+  en la práctica el middleware intercepta antes.
+- **✅ DECISIÓN TOMADA (2026-07-30) — Recharts SE CONSERVA. No proponer desinstalarla.**
+  `package.json:39` (`"recharts": "^3.8.1"`) hoy tiene **cero** imports en `src/` —su único
+  consumidor era `pacientes/evolucion-charts.tsx`, uno de los 11 stubs eliminados en la tanda de
+  reproducibilidad—, pero eso es un **hecho, no un problema a resolver**: queda **reservada a
+  propósito** para los **gráficos de evolución de la historia clínica**, previstos para una
+  versión futura (**v1.2 / 2.0**, junto con recetas cuando se destrabe ANMAT). Los tokens
+  `--chart-1…5` de `globals.css` ya están definidos para eso (ver `DESIGN.md` → Charts).
+  ⚠ **No reabrir la decisión en futuras tandas de limpieza:** aparece como dependencia sin usar en
+  cualquier barrido de código muerto, y la respuesta ya está tomada.
+  ⚠ **Advertencia técnica que sigue vigente para la CSP:** cuando esos gráficos se implementen,
+  Recharts fija atributos `style=""` **inline**, así que **cementa `style-src 'unsafe-inline'`**
+  (ver Bloque B → CSP). Hoy esa directiva ya es irreductible por Radix/Sonner/FullCalendar
+  (`CLAUDE.md` → nota técnica 17), pero tenerlo presente antes de tocar la CSP de estilos.
 
-### Lint preexistente (deuda técnica menor)
-- **Errores/warnings de lint preexistentes** (no introducidos por los cambios recientes,
-  detectados al pasar por esos archivos): `@typescript-eslint/no-explicit-any` en
-  `src/components/pacientes/consultas/consulta-detail.tsx`, y warnings de alt-text /
-  `no-explicit-any` en `src/lib/pdf/consulta-template.tsx`. Limpiar cuando se pase por ahí;
-  no bloquean el build.
+### Lint preexistente (deuda técnica — amerita tanda propia)
+
+> ⚠ **Corrección (2026-07-30):** la versión anterior de este ítem decía que el lint preexistente
+> se reducía a **dos archivos** (`consulta-detail.tsx` y `consulta-template.tsx`) y atribuía un
+> `@typescript-eslint/no-explicit-any` a `src/lib/pdf/consulta-template.tsx`. **Ambas cosas eran
+> falsas** y quedaron verificadas en el diagnóstico de la tanda 1A: el lint del proyecto tenía
+> **96 problemas en 34 archivos**, y `consulta-template.tsx` **no tiene ni un `any`** (sus únicos
+> problemas eran los warnings de alt-text, ya resueltos). No es un ítem menor de dos archivos:
+> es una **tanda dedicada**.
+
+- **✅ RESUELTO PARCIALMENTE (tanda 1A, 2026-07-30) — 96 → 75 problemas (−21).** Se limpió solo
+  lo acotado y seguro, sin tocar el resto:
+  - **8 `jsx-a11y/alt-text`** en los tres templates PDF (`consulta-template.tsx:255,280`,
+    `certificado-template.tsx:352,448,459`, `pedido-template.tsx:313,402,413`) eran **falsos
+    positivos**: ese `<Image>` es de **`@react-pdf/renderer`**, no `next/image` ni un `<img>` del
+    DOM —renderiza a un PDF, que no tiene árbol de accesibilidad HTML— y sus `ImageProps` **no
+    incluyen `alt`**, así que agregarla rompería `tsc`. Se resolvió con un **override acotado** en
+    `eslint.config.mjs` que apaga la regla **solo para `src/lib/pdf/**`** (no globalmente),
+    con el porqué comentado en el propio archivo. **No agregar `alt` a esos `<Image>`.**
+  - **12 `no-unused-vars`** (imports y variables muertas de un renglón) en `login/page.tsx`,
+    `verificar/[codigo]/page.tsx`, `certificado-pdf.tsx`, `perfil-form.tsx`, `signature-pad.tsx`,
+    `bandeja.tsx`, `hilo-modal.tsx`, `turno.schema.ts`, `calendar-view.tsx` y `turno-form.tsx`.
+  - **1 `no-explicit-any`**: el `catch (err: any)` de `consulta-detail.tsx:325` pasó a
+    `catch (err)` con narrowing por `instanceof Error`.
+  - `tsc`, `build` y `lint` pasan, y la comparación programática antes/después confirma **cero
+    problemas nuevos** introducidos.
+- **Deuda que QUEDA: 75 problemas preexistentes.** Desglose por regla, para dimensionar la tanda
+  dedicada:
+  - **63 `@typescript-eslint/no-explicit-any`** — mayormente `catch (error: any)` de Route
+    Handlers (trivial, mecánico) y los handlers de FullCalendar en `calendar-view.tsx` (16),
+    `turno-form.tsx` (4) y `perfil/actions.ts` (7), que necesitan los tipos de
+    `@fullcalendar/core` (`EventClickArg`, `DateSelectArg`, etc.).
+  - **4 `@typescript-eslint/no-unused-vars`** — los 3 de `src/app/api/consultas/[id]/route.ts`
+    (`:57`, `:111`, `:237`; son `catch (error)` sin usar, se solapan con los `any` de ese mismo
+    archivo) y `consulta-detail.tsx:198` (`mode`).
+  - **6 `@next/next/no-img-element`** — `<img>` crudos en `pedido-pdf.tsx`, `certificado-pdf.tsx`,
+    `perfil-form.tsx` y `qr-verificacion.tsx`.
+  - **2 `react-hooks/set-state-in-effect`** — `calendar-view.tsx:37` y `onboarding-client.tsx:44`.
+  - Ninguno **bloquea el build**.
+- **⚠ PENDIENTE NUEVO (2026-07-30) — nudo de tipos en `consulta-detail.tsx`. Severidad baja,
+  requiere `tsc`.** Se dejó **deliberadamente afuera** de la tanda 1A porque no es limpieza
+  mecánica sino un desajuste real de tipos, y los tres puntos van **juntos** (tocar ese archivo
+  una sola vez):
+  - `:215` — `resolver: zodResolver(consultaSchema) as any`. `consultaSchema`
+    (`src/lib/validations/consulta.schema.ts`) termina en un **`.transform()`** que pasa los `''`
+    de los campos numéricos a `null`, así que **`z.input` ≠ `z.output`** y por eso el archivo
+    exporta los dos tipos (`ConsultaFormInput` / `ConsultaFormData`). El `as any` tapa
+    exactamente ese desajuste. **Fix correcto:** el tercer genérico de react-hook-form →
+    `useForm<ConsultaFormInput, unknown, ConsultaFormData>({ resolver: zodResolver(consultaSchema) })`,
+    sin cast.
+  - `:333` — `const numericProps = (field: any)`. **Fix correcto:**
+    `ControllerRenderProps<ConsultaFormInput, FieldPath<ConsultaFormInput>>`. **Depende del
+    anterior:** si cambia el genérico del `useForm`, cambia este tipo.
+  - `:198` — `mode` desestructurado y nunca usado (el componente distingue por `consulta ? …`).
+  - ⚠ El cambio **propaga** a `form.getValues()`, `form.setValue()` (`:279`, `:281`, `:292`) y al
+    `field` de cada `FormField` (12 campos numéricos): hay que **compilar** para confirmar que la
+    combinación RHF 7 + Zod 4 + `@hookform/resolvers` acepta la firma sin arrastrar otros errores.
+- **⚠ DECISIÓN PENDIENTE (2026-07-30) — `calendar-view.tsx:125`, el `currentView` "sin usar".**
+  El linter marcaba `currentView`, pero **`setCurrentView` SÍ se usa** (`:532` `viewDidMount` y
+  `:533` `datesSet`): borrar el estado entero habría quitado un re-render que hoy ocurre al
+  cambiar de vista, o sea un **cambio de comportamiento disfrazado de limpieza**. Quedó como
+  `const [, setCurrentView] = useState('timeGridWeek')` con el porqué comentado en el código. Si
+  se decide eliminar el estado completo, evaluar antes si ese re-render hace falta para el
+  turnero — es una decisión aparte, no lint.
 
 ### Datos / catálogo
 - **"Particular / Sin obra social"** existe como **registro real** en la seed de
