@@ -29,6 +29,7 @@ ver `PENDIENTES.md`).
 | DB / Auth | Supabase (PostgreSQL) + `@supabase/ssr` 0.9 |
 | Formularios | React Hook Form 7 + Zod **4** |
 | Calendario | FullCalendar 6 |
+| Fechas | date-fns 4 + **`date-fns-tz` 3** (formateo en zona AR en el servidor — ver nota 18) |
 | Gráficos | Recharts 3 |
 | Drag & drop | `@dnd-kit` |
 | PDF | `@react-pdf/renderer` 4 + jsPDF 4 |
@@ -142,6 +143,11 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   local y Context puntual (`permisos-context`, `MensajesContext`).
 - **Cliente Supabase:** `server.ts` en RSC/Actions · `client.ts` en browser ·
   `admin.ts` (service role, **bypass RLS**) solo server y solo cuando es imprescindible.
+- **Fechas para el usuario en el servidor:** en Server Components y Route Handlers, formatear
+  **siempre** con `formatFechaAR` (`src/lib/utils/format-date.ts`), **nunca** con `format()` de
+  date-fns ni `toLocaleString()` a secas — esos renderizan en la zona del **runtime**, que en
+  Vercel es UTC. Ver **nota técnica 18**. (En Client Components no aplica: el navegador ya está
+  en la zona del usuario.)
 - **Imports:** alias `@/` → `src/`. Agrupar externas → componentes → lib → types.
   Preferí importar tipos desde `@/types` (barrel `index.ts`).
 - Al tocar tipos, mantené la organización por dominio existente (no consolidar en
@@ -371,6 +377,24 @@ Tanda de **Endurecimiento de la CSP** (Fases 1a y 1b, sin migración; ver nota t
   `script-src`. Síntoma medido, causa abierta y alternativas en `PENDIENTES.md` → Bloque B →
   "Endurecer la CSP".
 
+Tanda **1A — bugs chicos y limpieza suelta** (2026-07-30, sin migración; ver nota técnica 18):
+- **Fix de zona horaria en fechas server-side.** Nuevo helper compartido
+  **`src/lib/utils/format-date.ts`** → `formatFechaAR(fecha, patron)` (`formatInTimeZone` de
+  **`date-fns-tz`** + const `TZ_AR = 'America/Argentina/Buenos_Aires'`), aplicado a los **4**
+  sitios que formateaban en la zona del runtime: `dashboard/next-appointments.tsx`,
+  `api/turnero/route.ts` (texto de la notificación), `(app)/dashboard/page.tsx` (subtítulo del
+  día) y `dashboard/recent-patients.tsx`. Los formateos **client-side no se tocaron**.
+- **`src/app/page.tsx`** dejó de ser la plantilla de `create-next-app`: ahora es un
+  `redirect('/dashboard')`. Se borraron los 5 SVG huérfanos de `public/` (quedó vacía).
+- Se borró la **migración de 0 bytes** `20260326204733_fix_rls_recursion.sql` (no-op; su
+  intención ya estaba cubierta por la `014` + `019`/`021`). **No se tocó la base.**
+- **Limpieza de lint acotada: 96 → 75 problemas.** Override en `eslint.config.mjs` que apaga
+  `jsx-a11y/alt-text` **solo en `src/lib/pdf/**`** (falso positivo del `<Image>` de
+  `@react-pdf/renderer`, que no acepta `alt`), 12 imports/vars muertos y 1 `catch (err: any)`.
+  Se borró el stub muerto `src/lib/utils/calcular-imc.ts`. La deuda restante (63 `any`, etc.) y
+  el **nudo de tipos de `consulta-detail.tsx`** quedan para una tanda dedicada: `PENDIENTES.md`
+  → Bloque A → "Lint preexistente".
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
 ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live), la
@@ -516,3 +540,23 @@ solo se envía por email).
       salen sin `nonce=`), causa **abierta**; **Turbopack quedó descartado** (el mismo build con
       `next start` local sí inyecta el nonce). Es lo que bloquea la Fase 2 (sacar de verdad
       `'unsafe-inline'` de `script-src` en enforcement). Detalle en `PENDIENTES.md` → Bloque B.
+18. **Fechas: en el servidor se formatea SIEMPRE con `formatFechaAR`, nunca con `format()` a
+    secas.** `src/lib/utils/format-date.ts` expone `formatFechaAR(fecha, patron)` —
+    `formatInTimeZone` de **`date-fns-tz`** fijando `TZ_AR = 'America/Argentina/Buenos_Aires'` —
+    y acepta un string ISO o un `Date`.
+    - **Por qué existe (bug real, no precaución teórica):** `format()` de date-fns y
+      `toLocaleString()` renderizan en la zona horaria **del runtime**, y en **Vercel el runtime
+      es UTC**. Todo lo formateado en Server Components y Route Handlers salía **+3 h**; y como
+      el mismo instante alimenta día y hora, un **turno nocturno se mostraba en el día
+      equivocado** (un turno de las 22:30 ART figuraba al día siguiente, 01:30). ⚠ **Es
+      invisible en dev:** con la máquina en UTC-3 se ve bien; para reproducirlo hay que ir al
+      deploy o forzar `TZ=UTC`.
+    - **El parseo NUNCA fue el problema:** PostgREST serializa los `timestamptz` como ISO **con
+      offset**, así que `new Date(...)` siempre construyó el instante correcto. Lo que hay que
+      fijar es la zona **de salida**. Por eso el helper recibe el **string ISO original** y no un
+      `Date` ya parseado — no agregar `new Date()` intermedios al llamarlo.
+    - **Alcance:** aplica a **server-side**. En Client Components el navegador ya está en la zona
+      del usuario, y ahí sí se usa `format()`/`toLocaleString()` (turnero, `turno-form`, etc.).
+    - ⚠ **Todavía sin unificar:** `formatFecha`/`formatFechaLarga` de `lib/utils.ts` tampoco
+      fijan zona. Hoy **no hay bug** porque solo reciben columnas `DATE` (sin hora), pero pasarles
+      un `timestamptz` reactiva el problema. Ver `PENDIENTES.md` → Bloque A → "Bugs menores".

@@ -14,7 +14,7 @@ y asistentes) y un sistema de permisos granulares.
 
 Next.js 16 (App Router) · React 19 · TypeScript · Supabase (PostgreSQL + Auth) ·
 Tailwind CSS v4 · shadcn/ui (Radix) · React Hook Form + Zod · FullCalendar ·
-Recharts · `@react-pdf/renderer` + jsPDF · Resend · Sonner.
+date-fns + date-fns-tz · Recharts · `@react-pdf/renderer` + jsPDF · Resend · Sonner.
 
 ---
 
