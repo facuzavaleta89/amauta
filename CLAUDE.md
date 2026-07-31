@@ -100,7 +100,7 @@ del usuario actual.
 | `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos. `difusion_envios` es el **log de envíos**: una fila por destinatario, la escribe `POST /api/difusion/enviar` | `medico_id` |
 | `solicitudes_asistente` | Workflow de vinculación (onboarding) | — |
 | `notas` | Notas personales por usuario | `user_id` |
-| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). Realtime (migración 023) | `medico_id` / `user_id` |
+| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). En la publicación `supabase_realtime` (migración 023), pero ⚠ la entrega en vivo **no está verificada** (ver `PENDIENTES.md` → Realtime) | `medico_id` / `user_id` |
 | `notificaciones` | Avisos del sistema para el médico (turno agendado, recordatorio enviado). Estructura verificada y reconstruida en `schema.sql`; ⚠ **sigue sin migración fuente** | `medico_id` |
 
 Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()`,
@@ -238,7 +238,9 @@ Tanda de pulidos posterior (P1–P5):
 3. **UI:** selector mosaico/lista compartido (`shared/view-toggle`, hook `use-view-mode`,
    preferencia en localStorage) en difusión y notas; `post-list.tsx` implementado.
 4. **Notificaciones:** campanita del header `NotificacionesBell` unifica solicitudes +
-   mensajes no leídos, con Realtime para `mensajes_internos` (migración 023).
+   mensajes no leídos, con **canal de Realtime montado** para `mensajes_internos` (migración 023).
+   ⚠ **La entrega en vivo NO está verificada:** hoy el badge de mensajes sube recién tras F5
+   (hallazgo 2026-07-31, preexistente y de causa abierta — ver `PENDIENTES.md` → Bloque A).
 5. **Pacientes/documentos:** archivar en vez de borrar (`archivado_at`, migración 024);
    documentos solo se anulan (ver reglas de negocio 5 y 9).
 
@@ -394,6 +396,27 @@ Tanda **1A — bugs chicos y limpieza suelta** (2026-07-30, sin migración; ver 
   Se borró el stub muerto `src/lib/utils/calcular-imc.ts`. La deuda restante (63 `any`, etc.) y
   el **nudo de tipos de `consulta-detail.tsx`** quedan para una tanda dedicada: `PENDIENTES.md`
   → Bloque A → "Lint preexistente".
+
+Tanda **1B — parte 1: el badge de notificaciones cuenta los avisos del sistema + marcado de leído**
+(2026-07-31, **sin migración**; ver nota técnica 19):
+- **El bug:** el badge de la campanita hacía `count = solicitudes.length + mensajes.length` y
+  **nunca leía la tabla `notificaciones`**, así que un turno agendado por un asistente aparecía en
+  la página `/notificaciones` pero **no incrementaba el número**. **No era una regresión:** la
+  conexión nunca existió. Y `notificaciones.leida` **jamás se escribía en `true`**.
+- **Fuente de verdad compartida** en `src/app/(app)/notificaciones/actions.ts`: la tabla se lee en
+  **un único lugar** (`leerNotificacionesSistema`, privada) y dos wrappers sirven a cada contexto —
+  `obtenerItemsPagina()` (página: solicitudes + avisos, historial completo) y
+  `obtenerNotificacionesNoLeidas()` (badge: solo no leídos). Badge y página comparten el shape
+  normalizado `ItemPendiente`, así que un `tipo` nuevo entra una vez y lo ven los dos.
+- **Tipo nuevo** `src/types/notificacion.ts` (`Notificacion`, `NotificacionTipo`, `ItemPendiente`,
+  `ITEM_TYPE_SOLICITUD`), en el barrel. La tabla no tenía tipo TS.
+- **Marcado de leído** (no existía): `marcarNotificacionesLeidas()` + el Client Component
+  `components/notificaciones/marcar-leidas.tsx`, que marca al **entrar** a `/notificaciones` y
+  aporta el botón "Marcar todas como leídas".
+- **`api/turnero/route.ts`:** el insert de la notificación ahora **chequea su error** (antes era
+  silencioso); se loguea sin datos personales y el POST **no falla** por eso.
+- ⚠ **El Realtime quedó explícitamente FUERA** (es la 1B-parte-2, hoy **reordenada**: ver
+  `PENDIENTES.md` → Bloque A).
 
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
@@ -560,3 +583,27 @@ solo se envía por email).
     - ⚠ **Todavía sin unificar:** `formatFecha`/`formatFechaLarga` de `lib/utils.ts` tampoco
       fijan zona. Hoy **no hay bug** porque solo reciben columnas `DATE` (sin hora), pero pasarles
       un `timestamptz` reactiva el problema. Ver `PENDIENTES.md` → Bloque A → "Bugs menores".
+19. **Notificaciones: el badge y la página derivan de UNA fuente compartida — no agregar una query
+    suelta.** Todo lo "pendiente de leer" se normaliza a `ItemPendiente`
+    (`src/types/notificacion.ts`) en `src/app/(app)/notificaciones/actions.ts`, y **la tabla
+    `notificaciones` se lee en un único lugar** (`leerNotificacionesSistema`, privada), con dos
+    wrappers por contexto: `obtenerItemsPagina()` (página: solicitudes + avisos, **historial
+    completo**) y `obtenerNotificacionesNoLeidas()` (badge: **solo no leídos**). El bug que esto
+    cierra fue precisamente que cada lado definiera su propio universo por su cuenta: el badge
+    contaba solicitudes + mensajes y la página leía la tabla, así que un aviso de "turno agendado"
+    salía en la lista pero no en el número. **Si aparece un `tipo` nuevo de notificación, entra por
+    ahí y lo ven los dos; no sumar una query aparte en el layout ni en la página.**
+    - **Alcance por rol:** los avisos del sistema **solo los lee el médico**. La RLS
+      `notificaciones_select` es `medico_id = auth.uid()` (no `get_medico_id()`), así que para un
+      asistente la consulta devolvería siempre vacío — un resultado engañoso, indistinguible de "no
+      hay avisos". Por eso `leerNotificacionesSistema` **corta con `[]` si el rol no es médico**,
+      antes de tocar la tabla, y el `(app)/layout.tsx` ni siquiera la invoca para asistentes. El
+      chequeo va en la función y no solo en el llamador porque se exporta desde un archivo
+      `'use server'`: es invocable por cualquier cliente autenticado.
+    - ⚠ **El tercer sumando del badge NO vive en `useState`**, a diferencia de solicitudes y
+      mensajes (que el Realtime muta en el cliente): se lee **directo de la prop**. Con estado local
+      el badge **nunca bajaría** al marcar leído, porque `router.refresh()` no pisa el estado de un
+      componente que no se remonta.
+    - El **marcado de leído** corre en un **efecto de cliente**
+      (`components/notificaciones/marcar-leidas.tsx`), no en el render de la página: la action llama
+      `revalidatePath`, **no soportado durante el render**.
