@@ -181,15 +181,29 @@ export async function POST(request: NextRequest) {
       const pacienteInfo = t.paciente_nombre_libre || 'un paciente';
       const fechaCorta = formatFechaAR(t.fecha_inicio, 'dd/MM/yyyy HH:mm');
       
-      await supabase.from('notificaciones').insert({
+      const { error: notifError } = await supabase.from('notificaciones').insert({
         medico_id: tenantMedicoId,
         titulo: 'Nuevo turno agendado',
         mensaje: `${asistenteName} agendó un turno para ${pacienteInfo} el ${fechaCorta}`,
         tipo: 'turno_creado',
         payload: { turno_id: nuevoTurno.id, fecha: t.fecha_inicio }
       })
+
+      // El aviso es secundario: el turno YA se creó, así que un fallo acá NO debe
+      // tumbar el POST. Pero tampoco puede pasar en silencio (antes ni siquiera se
+      // miraba el error). Se loguea SIN datos personales del paciente (Ley 25.326):
+      // solo el id del turno y el error de Postgres.
+      if (notifError) {
+        console.error(`Error creando la notificación del turno ${nuevoTurno.id}:`, notifError)
+      }
     }
     // -- FIN NOTIFICACIONES --
+    // Sin `revalidatePath` a propósito: este POST corre en la request del ASISTENTE,
+    // y el badge del médico se arma en el layout que renderiza SU sesión, en SU
+    // navegador. Invalidar caché acá no cruza de una sesión a la otra, así que no
+    // adelantaría nada. Que el aviso aparezca al instante es trabajo del Realtime
+    // sobre `notificaciones` (tanda aparte: requiere sumarla a la publicación
+    // supabase_realtime). Hasta entonces el médico lo ve en su próxima carga completa.
 
     return NextResponse.json({ data: nuevoTurno }, { status: 201 })
   } catch (error: any) {

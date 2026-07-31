@@ -15,6 +15,7 @@ import { NotificacionesBell } from './notificaciones-bell'
 import { LogOut, Menu, User } from 'lucide-react'
 import type { UserRole } from '@/types/roles'
 import type { MensajeNoLeido } from '@/types/mensaje'
+import type { ItemPendiente } from '@/types/notificacion'
 import Link from 'next/link'
 
 interface Solicitud {
@@ -34,6 +35,8 @@ interface HeaderProps {
   userTitulo?: string | null
   solicitudesPendientes?: Solicitud[]
   mensajesIniciales?: MensajeNoLeido[]
+  /** Avisos del sistema sin leer (solo médico) — tercer sumando del badge */
+  notificacionesSistema?: ItemPendiente[]
   tieneAccesoMensajeria?: boolean
   onMenuToggle?: () => void
 }
@@ -47,6 +50,7 @@ export function Header({
   userTitulo,
   solicitudesPendientes = [],
   mensajesIniciales = [],
+  notificacionesSistema = [],
   tieneAccesoMensajeria = false,
   onMenuToggle,
 }: HeaderProps) {
@@ -79,7 +83,8 @@ export function Header({
 
       {/* ── Acciones ────────────────────────────────────────── */}
       <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-        {/* Campanita unificada — solicitudes (médico) + mensajes no leídos (médico y asistente con acceso) */}
+        {/* Campanita unificada — solicitudes + avisos del sistema (médico) +
+            mensajes no leídos (médico y asistente con acceso) */}
         {(userRole === 'medico' || tieneAccesoMensajeria) && (
           <NotificacionesBell
             esMedico={userRole === 'medico'}
@@ -87,6 +92,7 @@ export function Header({
             tenantId={userRole === 'medico' ? userId : (medicoId ?? '')}
             solicitudesIniciales={solicitudesPendientes}
             mensajesIniciales={mensajesIniciales}
+            notificacionesSistema={notificacionesSistema}
           />
         )}
 

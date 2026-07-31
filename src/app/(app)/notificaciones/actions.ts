@@ -3,7 +3,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
+import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
 import type { MensajeNoLeido } from '@/types/mensaje'
+import { ITEM_TYPE_SOLICITUD, type ItemPendiente } from '@/types/notificacion'
 
 const mensajeSchema = z.object({
   destinatario_id: z.string().nullable().optional(),
@@ -281,4 +283,169 @@ export async function obtenerMensajesNoLeidos(): Promise<MensajeNoLeido[]> {
   } catch {
     return []
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FUENTE DE VERDAD COMPARTIDA — badge de la campanita + página /notificaciones
+// ══════════════════════════════════════════════════════════════════════════
+// El badge sumaba `solicitudes + mensajes` y NUNCA leía la tabla `notificaciones`,
+// mientras que la página sí la leía: por eso un turno agendado por un asistente
+// aparecía en el listado pero no en el número. Para que no vuelvan a divergir,
+// cada fuente se lee y se normaliza en UN SOLO lugar, a la forma `ItemPendiente`
+// (la que la página ya armaba inline).
+//
+// Camino elegido: (b) normalizador por fuente + wrappers finos por contexto, en
+// vez de (a) una única función con flags. Motivos:
+//   · Los dos consumidores no piden "lo mismo filtrado": la página quiere el
+//     HISTORIAL de solicitudes + avisos (sin mensajes) y el badge quiere lo NO
+//     LEÍDO. Con flags la firma terminaba en (incluirMensajes, incluirSolicitudes,
+//     soloNoLeidas): ilegible en el call site y fácil de invocar mal.
+//   · Cada wrapper nombra su contexto y documenta su subconjunto en un solo lugar.
+//
+// ⚠ Por qué NO hay un `obtenerItemsBadge()` que traiga las tres fuentes juntas:
+//   el dropdown renderiza solicitudes y mensajes con datos ricos (email del
+//   solicitante, thread_id, es_grupal) y sobre todo los MUTA en el cliente por
+//   Realtime (notificaciones-bell.tsx). Si el count llegara ya calculado del
+//   servidor, un mensaje entrante por Realtime dejaría de incrementarlo. Por eso
+//   el count se sigue armando en el cliente y de acá sale solo su tercer sumando.
+//   La garantía anti-divergencia no se pierde: la tabla `notificaciones` se lee
+//   en UN único lugar (`leerNotificacionesSistema`), que alimenta a los dos.
+//
+// Nota: no hay normalizador de MENSAJES porque hoy ningún consumidor los pide en
+// esta forma (la página los excluye por decisión de producto y el dropdown
+// necesita el shape rico de `MensajeNoLeido`). Si alguna vez hacen falta
+// normalizados, el lugar es acá, junto a los otros dos.
+
+/** Tope de avisos que viajan al badge. El contador muestra "9+" a partir de 10,
+ *  así que un tope alto no cambia lo que se ve y acota el payload del layout.
+ *  Mismo criterio que `obtenerMensajesNoLeidos` (que corta en 15). */
+const LIMITE_NOTIFICACIONES_BADGE = 20
+
+/**
+ * Base: lee y normaliza los avisos del sistema (tabla `notificaciones`).
+ * ⚠ ÚNICO lugar del repo que lee esa tabla — si aparece un `tipo` nuevo, entra
+ *   por acá y lo ven a la vez el badge y la página.
+ *
+ * Solo corre para el MÉDICO: la RLS `notificaciones_select` es
+ * `medico_id = auth.uid()`, así que para un asistente devolvería siempre vacío
+ * (un resultado engañoso, indistinguible de "no hay avisos"). Se corta antes.
+ * Devuelve [] ante cualquier error para no romper el layout de la app.
+ */
+async function leerNotificacionesSistema(
+  opts: { soloNoLeidas: boolean; limite?: number }
+): Promise<ItemPendiente[]> {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return []
+
+    const { data: myProfile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    // Los avisos son del médico (tenant key = su propio id). Un asistente no los lee.
+    if (myProfile?.role !== 'medico') return []
+
+    let query = supabase
+      .from('notificaciones')
+      .select('id, titulo, mensaje, tipo, leida, payload, created_at')
+      .eq('medico_id', user.id)
+      .order('created_at', { ascending: false })
+
+    if (opts.soloNoLeidas) query = query.eq('leida', false)
+    if (opts.limite) query = query.limit(opts.limite)
+
+    const { data } = await query
+
+    return (data ?? []).map((n) => ({
+      id: n.id,
+      type: n.tipo,
+      title: n.titulo,
+      message: n.mensaje,
+      date: n.created_at,
+      read: n.leida ?? false,   // la columna es nullable con DEFAULT false
+      payload: n.payload,
+    }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Normaliza las solicitudes de vinculación pendientes (solo las recibe el médico).
+ * Reutiliza `obtenerSolicitudesPendientes()` en vez de repetir su query + el
+ * enriquecido con nombre/email del solicitante.
+ */
+async function leerSolicitudesNormalizadas(): Promise<ItemPendiente[]> {
+  const { data } = await obtenerSolicitudesPendientes()
+  return (data ?? []).map((s) => ({
+    id: s.id,
+    type: ITEM_TYPE_SOLICITUD,
+    title: 'Solicitud de vinculación',
+    message: `${s.solicitante_nombre} (${s.solicitante_email}) quiere vincularse como tu asistente.`,
+    date: s.created_at,
+    read: false,          // una solicitud pendiente es, por definición, algo sin atender
+    payload: s,
+  }))
+}
+
+/**
+ * Para la PÁGINA /notificaciones: solicitudes pendientes + avisos del sistema,
+ * con el HISTORIAL COMPLETO (leídos y no leídos), ordenado por fecha descendente.
+ * Sin mensajes: esos viven en /mensajes (decisión de producto).
+ */
+export async function obtenerItemsPagina(): Promise<ItemPendiente[]> {
+  const [solicitudes, avisos] = await Promise.all([
+    leerSolicitudesNormalizadas(),
+    leerNotificacionesSistema({ soloNoLeidas: false }),
+  ])
+
+  return [...solicitudes, ...avisos].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  )
+}
+
+/**
+ * Para el BADGE de la campanita: avisos del sistema SIN LEER — el tercer sumando
+ * del contador, junto a las solicitudes y los mensajes que ya llegan por props.
+ * Devuelve [] si el usuario no es el médico.
+ */
+export async function obtenerNotificacionesNoLeidas(): Promise<ItemPendiente[]> {
+  return leerNotificacionesSistema({
+    soloNoLeidas: true,
+    limite: LIMITE_NOTIFICACIONES_BADGE,
+  })
+}
+
+/**
+ * Marca como leídos TODOS los avisos del sistema del médico actual.
+ *
+ * Usa el cliente de servidor con la sesión del usuario, NO el admin client: la
+ * RLS `notificaciones_update` es `medico_id = auth.uid()`, así que el propio
+ * médico puede hacerlo (y un asistente no afecta ninguna fila, aunque llame).
+ * Idempotente: si no hay filas sin leer, el UPDATE toca 0 filas y no falla.
+ */
+export async function marcarNotificacionesLeidas(): Promise<{ error: string | null }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'No autenticado' }
+
+  const { error } = await supabase
+    .from('notificaciones')
+    .update({ leida: true })
+    .eq('medico_id', user.id)
+    .eq('leida', false)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/notificaciones')
+  // El contador del badge se calcula en (app)/layout.tsx. Los grupos de rutas no
+  // agregan segmento a la URL, así que el layout de `(app)` se invalida por la
+  // raíz: es la única forma de alcanzarlo con revalidatePath. Barato acá porque
+  // todas las rutas de la app son dinámicas (dependen de la sesión) y no hay
+  // caché de página que perder.
+  revalidatePath('/', 'layout')
+  return { error: null }
 }
