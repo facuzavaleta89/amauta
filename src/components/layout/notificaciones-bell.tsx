@@ -44,11 +44,16 @@ interface Props {
   /** Si el usuario es el médico (muestra el bloque de solicitudes y su suscripción) */
   esMedico: boolean
   solicitudesIniciales: Solicitud[]
+  /**
+   * Mensajes SIN LEER según el servidor. ⚠ Conserva el nombre histórico, pero YA NO
+   * es una semilla: se lee en cada render como fuente base de la lista (ver el merge
+   * de abajo). Sembrarla en un `useState` era justamente el bug — el badge se
+   * quedaba pegado al valor del montaje y no bajaba al marcar un mensaje leído.
+   */
   mensajesIniciales: MensajeNoLeido[]
   /**
    * Avisos del sistema SIN LEER (tabla `notificaciones`, solo médico).
-   * A diferencia de los dos anteriores NO lleva sufijo `Iniciales` a propósito:
-   * no siembra estado local, se lee directo de la prop (ver el `count`).
+   * No siembra estado local: se lee directo de la prop (ver el `count`).
    */
   notificacionesSistema: ItemPendiente[]
 }
@@ -70,17 +75,33 @@ export function NotificacionesBell({
   notificacionesSistema,
 }: Props) {
   const [solicitudes, setSolicitudes] = useState<Solicitud[]>(solicitudesIniciales)
-  const [mensajes, setMensajes] = useState<MensajeNoLeido[]>(mensajesIniciales)
   const [open, setOpen] = useState(false)
   const [respondiendo, setRespondiendo] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
-  // Las tres fuentes del contador. Solicitudes y mensajes viven en estado local
-  // porque el Realtime de más abajo los MUTA en el cliente; los avisos del
-  // sistema, en cambio, se leen DIRECTO de la prop (sin useState) a propósito:
-  // así el badge baja apenas el layout se vuelve a renderizar tras marcarlos
-  // leídos en /notificaciones (un useState se quedaría con el valor inicial,
-  // que `router.refresh()` no pisa).
+  // ── Mensajes: prop del servidor + lo que llegó por Realtime ────────────────
+  // La prop NO siembra un useState (ese ERA el bug del badge que no bajaba: el
+  // estado se quedaba con el valor del montaje y ninguna revalidación del
+  // servidor lo pisaba, porque el componente no se remonta). Pero tampoco
+  // alcanza con leer la prop a secas: el Realtime AGREGA mensajes en el cliente
+  // y se perderían. Solución: guardar aparte SOLO lo que llegó en vivo y
+  // mergear por id en cada render, con la prop como base. Mismo criterio de
+  // `notificacionesSistema` (CLAUDE.md → nota técnica 19), adaptado a una lista
+  // que además se muta en el cliente.
+  const [mensajesRealtime, setMensajesRealtime] = useState<MensajeNoLeido[]>([])
+  // Abiertos desde el panel: se ocultan al instante aunque la prop todavía los
+  // traiga, hasta que el servidor termine de recalcular y deje de mandarlos.
+  const [mensajesAbiertos, setMensajesAbiertos] = useState<string[]>([])
+
+  const idsDeLaProp = new Set(mensajesIniciales.map((m) => m.id))
+  const mensajes = [
+    // Los de Realtime primero (son los más nuevos). Los que la prop ya incorporó
+    // se descartan acá: por eso el estado extra no necesita limpiarse aparte.
+    ...mensajesRealtime.filter((m) => !idsDeLaProp.has(m.id)),
+    ...mensajesIniciales,
+  ].filter((m) => !mensajesAbiertos.includes(m.id))
+
+  // Las tres fuentes del contador.
   const count = solicitudes.length + mensajes.length + notificacionesSistema.length
 
   // ── Realtime: solicitudes (solo médico) + mensajes (todos con acceso) ──────
@@ -186,7 +207,9 @@ export function NotificacionesBell({
               .eq('id', nuevo.remitente_id)
               .single()
 
-            setMensajes((prev) =>
+            // Va al estado de "llegados en vivo"; el merge con la prop y el
+            // deduplicado final ocurren en el render (ver arriba).
+            setMensajesRealtime((prev) =>
               prev.some((m) => m.id === nuevo.id)
                 ? prev
                 : [
@@ -233,10 +256,12 @@ export function NotificacionesBell({
     })
   }
 
-  // Al abrir el mensaje desde la campanita, se marcará leído en el hilo; lo sacamos
-  // del estado local para que el badge baje al instante.
+  // Al abrir el mensaje desde la campanita, se marcará leído en el hilo; lo ocultamos
+  // para que el badge baje al instante. Va a una lista de ids y no a un filtro del
+  // estado porque el mensaje puede venir de la PROP, que no podemos mutar; cuando el
+  // servidor recalcule y deje de mandarlo, el merge lo deja de mostrar igual.
   function handleAbrirMensaje(id: string) {
-    setMensajes((prev) => prev.filter((m) => m.id !== id))
+    setMensajesAbiertos((prev) => (prev.includes(id) ? prev : [...prev, id]))
     setOpen(false)
   }
 
