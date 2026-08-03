@@ -96,10 +96,20 @@ export async function marcarMensajeLeido(id: string) {
   if (!msg) return { error: 'Mensaje no encontrado' }
 
   if (msg.es_grupal) {
-    // Para grupales: insertar en mensajes_lecturas (upsert para idempotencia)
+    // Para grupales: registrar mi lectura en mensajes_lecturas.
+    // ⚠ `ignoreDuplicates: true` NO es cosmético: emite
+    // `Prefer: resolution=ignore-duplicates` → `INSERT … ON CONFLICT DO NOTHING`.
+    // Sin él (merge-duplicates → `ON CONFLICT DO UPDATE`) marcar dos veces el mismo
+    // mensaje toma el camino de UPDATE, y `mensajes_lecturas` NO tiene política de
+    // UPDATE (solo `lecturas_select_own` e `lecturas_insert_own`, ver schema.sql),
+    // así que el reintento fallaba. Y no hay nada que actualizar: la fila es solo
+    // la PK (mensaje_id, user_id). Se resuelve sin tocar la base.
     const { error } = await supabase
       .from('mensajes_lecturas')
-      .upsert({ mensaje_id: id, user_id: user.id }, { onConflict: 'mensaje_id,user_id' })
+      .upsert(
+        { mensaje_id: id, user_id: user.id },
+        { onConflict: 'mensaje_id,user_id', ignoreDuplicates: true }
+      )
     if (error) return { error: error.message }
   } else {
     // Para individuales: update leido = true
@@ -112,6 +122,11 @@ export async function marcarMensajeLeido(id: string) {
   }
 
   revalidatePath('/notificaciones')
+  revalidatePath('/mensajes')
+  // El contador de los dos badges se calcula en (app)/layout.tsx. Los grupos de
+  // rutas no agregan segmento a la URL, así que el layout de `(app)` solo se
+  // alcanza invalidando por la raíz — mismo criterio que marcarNotificacionesLeidas.
+  revalidatePath('/', 'layout')
   return { error: null }
 }
 
