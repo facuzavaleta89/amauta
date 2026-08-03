@@ -105,23 +105,24 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   campanita para que ambos badges deriven del mismo lugar. **Ítem de producto, no bug.** Nota: el
   badge de la campanita para mensajes **sí** tiene canal — que hoy no entregue es otro problema, el
   del ítem de Realtime en "Bugs menores detectados".
-- **Tanda 1B — parte 2: Realtime de notificaciones. ⚠ REORDENADA — ya no es lo que estaba
-  planeado.** El plan original era *"agregar `notificaciones` a la publicación `supabase_realtime` y
-  suscribirla en la campanita, replicando el patrón de `mensajes_internos`, que ya funciona"*.
-  **Esa premisa cayó:** el Realtime de mensajes **no está entregando en vivo** (ver el hallazgo en
-  "Bugs menores detectados"), así que copiar ese patrón habría reproducido la misma falla. Orden
-  correcto:
-  1. **Primero:** entender y arreglar por qué el canal de `mensajes_internos` no entrega. Es
-     **cliente/runtime, no base** — la tabla ya está en la publicación, verificado. Empezar por el
-     callback de estado en `channel.subscribe()`.
-  2. **Recién después:** sumar `notificaciones` al mismo mecanismo. Eso **sí requiere migración**
-     (agregarla a la publicación `supabase_realtime`), con el mismo patrón idempotente de la
-     migración `023_realtime_mensajes_internos.sql`, más la suscripción en `notificaciones-bell.tsx`
-     junto a las dos que ya están.
+- **Tanda 1B — parte 2: ejecutada A MEDIAS (2026-08-02). El fix del badge SALIÓ; el Realtime quedó
+  DIFERIDO.** El plan original era *"agregar `notificaciones` a la publicación `supabase_realtime` y
+  suscribirla en la campanita, replicando el patrón de `mensajes_internos`, que ya funciona"*. Esa
+  premisa cayó (el Realtime de mensajes no entrega), así que la tanda se reordenó y terminó
+  entregando solo la mitad que no dependía del Realtime:
+  - **✅ Hecho — el badge de la campanita ahora BAJA al leer** (ver el ítem resuelto en "Bugs menores
+    detectados") y `marcarMensajeLeido` revalida las rutas que corresponden.
+  - **⏸ Diferido — el canal en vivo.** El diagnóstico agotó todo lo que depende de nuestro código y
+    de la base; la causa quedó acotada a **infraestructura del servicio Realtime** (ver el ítem
+    "Realtime de `mensajes_internos` — DIFERIDO" más abajo).
+  - **⛔ Bloqueado detrás de lo anterior — sumar `notificaciones` a la publicación.** Sigue
+    pendiente y **sí requiere migración** (mismo patrón idempotente de
+    `023_realtime_mensajes_internos.sql`), más la suscripción en `notificaciones-bell.tsx` junto a
+    las dos que ya están. **No hacerlo hasta que el canal de mensajes entregue:** hoy solo
+    agregaría una segunda suscripción muda.
 
   ⚠ **Se verifica con DOS sesiones abiertas (médico + asistente), no con que compile.** El Realtime
-  no se prueba con `tsc`/`build`: hay que ver el badge subir sin recargar. Y conviene probar contra
-  **producción**, porque el StrictMode de dev es una de las hipótesis de la falla actual.
+  no se prueba con `tsc`/`build`: hay que ver el badge subir sin recargar.
 
 ### Bugs menores detectados
 - **✅ RESUELTO (2026-07-26) — Filename de certificados sin tipo → `certificado_null_...`.** El
@@ -214,35 +215,132 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   en la app: el badge cuenta el turno agendado por un asistente y baja al entrar a
   `/notificaciones`. **El Realtime quedó FUERA a propósito** (ver los dos ítems de Realtime de acá
   abajo y la 1B-parte-2 en "Funcionalidades incompletas").
-- **⚠ HALLAZGO NUEVO (2026-07-31) — el Realtime de `mensajes_internos` no entrega eventos en vivo.
-  PREEXISTENTE, causa ABIERTA.** Surgió al verificar a mano la 1B-parte-1: con **dos sesiones**
-  abiertas, un mensaje interno nuevo **no** incrementa el badge de la campanita hasta hacer **F5**.
-  - **No lo causó la 1B-parte-1.** El `useEffect` de suscripción de
-    `src/components/layout/notificaciones-bell.tsx` es **byte-idéntico** al de antes de esa tanda
-    (comprobado extrayendo el bloque completo en las dos versiones y diffeándolo: 0 diferencias), y
-    la prop nueva del badge **no entró** en su array de dependencias, que sigue siendo
-    `[userId, tenantId, esMedico]` — tres primitivos estables.
-  - **DESCARTADO: no es la base.** Se verificó por consulta que **`mensajes_internos` SÍ está en la
-    publicación `supabase_realtime`** (`SELECT … FROM pg_publication_tables WHERE pubname =
-    'supabase_realtime'`), o sea que la migración 023 está aplicada y cumplió su función. También
-    quedó descartada la **CSP**: `next.config.ts` y `src/proxy.ts` declaran
-    `connect-src … wss://*.supabase.co` y el host del proyecto matchea el comodín.
-  - **Hipótesis vivas, todas de CLIENTE/RUNTIME:** (a) **timing de autenticación del socket** —
-    `channel.subscribe()` corre apenas se monta el efecto, mientras que el `realtime.setAuth(token)`
-    de supabase-js se dispara con el evento de sesión, que es asíncrono; sin JWT en el canal la RLS
-    filtra los eventos y la suscripción "anda" pero no llega nada. (b) **StrictMode en dev** —
-    `reactStrictMode` no está seteado en `next.config.ts`, así que vale `true` y el efecto corre
-    `subscribe → removeChannel → subscribe` sobre el **mismo topic** y el mismo cliente (el
-    `createBrowserClient` de `@supabase/ssr` es **singleton** en el navegador), una fuente conocida
-    de canales que quedan en error; **se descarta probando contra producción, no `next dev`**.
-    (c) **Realtime deshabilitado a nivel proyecto** en el dashboard de Supabase.
-  - **⚠ PRIMER PASO, barato y previo a seguir teorizando:** `channel.subscribe()`
-    (`notificaciones-bell.tsx:184`) se llama **sin callback de estado**, y todo el efecto está
-    envuelto en un `try/catch` que se traga los errores. Hoy **es imposible saber desde la app si el
-    canal siquiera se unió**: no se distingue "no llegó ningún mensaje" de "el canal nunca conectó".
-    Pasarle el callback (`SUBSCRIBED` / `CHANNEL_ERROR` / `TIMED_OUT` / `CLOSED`) es lo primero.
-  - **Ligado a la 1B-parte-2** (ver "Funcionalidades incompletas"): esa tanda asumía replicar *"el
-    patrón de mensajes, que ya funciona"*, premisa que este hallazgo invalida.
+- **✅ RESUELTO (tanda 1B — parte 2, 2026-08-02) — el badge de la campanita no BAJABA al leer un
+  mensaje.** Segundo síntoma encontrado al diagnosticar el Realtime, e **independiente de él**: al
+  abrir un mensaje el número no se descontaba hasta un F5. La causa era un **`useState` sembrado con
+  una prop**: `mensajesIniciales` se usaba como valor inicial de estado local, así que el componente
+  se quedaba **pegado al valor del montaje** — `router.refresh()` y `revalidatePath` recalculaban la
+  prop en el servidor, pero nada pisaba el estado de un componente que no se remonta. Es el **mismo
+  error de fondo** que la nota técnica 19 ya documentaba para los avisos del sistema.
+  - **Fix (`src/components/layout/notificaciones-bell.tsx`):** se eliminó ese `useState`. La lista
+    ahora se **deriva en cada render** de la prop del servidor (base) **mergeada con los mensajes
+    que llegaron por Realtime y todavía no están en la prop**, deduplicados por id; un estado
+    aparte, `mensajesAbiertos`, oculta al instante los que el usuario abre desde el panel. El estado
+    local guarda **solo lo que el servidor todavía no sabe**, no una copia de lo que ya manda.
+  - **`marcarMensajeLeido` (`(app)/notificaciones/actions.ts`):** revalidaba solo `/notificaciones`;
+    ahora suma **`revalidatePath('/mensajes')`** y **`revalidatePath('/', 'layout')`** — el contador
+    de los dos badges se calcula en `(app)/layout.tsx`, y los **grupos de rutas no agregan segmento
+    a la URL**, así que ese layout solo se alcanza invalidando por la raíz (mismo criterio que
+    `marcarNotificacionesLeidas`).
+  - **Bug de base descubierto de paso:** el upsert en `mensajes_lecturas` usaba el default
+    (`merge-duplicates` → `ON CONFLICT DO UPDATE`), y **`mensajes_lecturas` no tiene política de
+    UPDATE** (solo `lecturas_select_own` / `lecturas_insert_own`), así que **marcar dos veces el
+    mismo mensaje grupal fallaba**. Se pasó a **`ignoreDuplicates: true`**
+    (`ON CONFLICT DO NOTHING`), que además es lo semánticamente correcto: la fila es solo la PK
+    `(mensaje_id, user_id)`, no hay nada que actualizar. **Se resolvió sin tocar la base.**
+  - **Limpieza:** se borró `src/components/notificaciones/mensaje-card.tsx` (145 líneas, **cero
+    importadores**).
+- **✅ RESUELTO (2026-08-03) — el clic en un mensaje de la campanita no abría el modal del hilo.**
+  El clic cambiaba la URL a `/mensajes?hilo=X` pero el modal **solo aparecía tras F5**.
+  **PREEXISTENTE:** nació con el deep-link en `098dbc1`, no lo introdujo el fix del badge — el
+  `href` del `<Link>` y la ausencia de `router.push` son **byte-idénticos** antes y después de esa
+  tanda. Lo que la tanda del badge sí hizo fue volverlo **más visible**, al revalidar `/mensajes` y
+  hacer más frecuente el flujo "abro un hilo → cierro → clickeo otro".
+  - **Causa:** `bandeja.tsx` derivaba el hilo abierto de un **inicializador perezoso de `useState`**,
+    que corre **una sola vez al montar**. En una navegación en cliente `Bandeja` no se remonta, así
+    que el prop nuevo llegaba pero el estado no se recalculaba. Fallaba siempre que el componente ya
+    estuviera montado: estando en `/mensajes`, o con un `?hilo` viejo en la URL (cerrar el modal
+    **no lo limpiaba**), o al clickear dos veces el mismo mensaje (URL idéntica → Next ni navega).
+  - **Fix (Opción A — la URL como única fuente de verdad):** el hilo abierto se **deriva de
+    `useSearchParams()` durante el render** (sin `useState` ni `useEffect`), que sí es reactivo a
+    los cambios de URL sin remontaje. Abrir y cerrar **sincronizan la URL**, y cerrar **limpia el
+    `?hilo`**. Se eliminó el prop `hiloInicial` de `mensajes/page.tsx` para no dejar una segunda
+    fuente de verdad: mantenerlo como fallback **reabría el modal solo** al cerrarlo (la URL pierde
+    el param al instante, la prop del servidor tarda un round-trip). El clic **dentro de la bandeja**
+    se unificó al mismo mecanismo, así que hay **un solo camino** para abrir el modal.
+  - Detalle del patrón y del porqué de la History API en `CLAUDE.md` → **nota técnica 20**.
+- **⚠ PENDIENTE NUEVO (2026-08-02) — un mensaje individual quedó contado como NO LEÍDO de forma
+  persistente. Severidad BAJA, es de APLICACIÓN (no infraestructura).** Primer síntoma detectado al
+  diagnosticar la mensajería, y **el único de los tres que sigue abierto**. Una fila de mensaje
+  individual **con `parent_id`** (o sea, una **respuesta** dentro de un hilo) quedó marcada como no
+  leída y **sobrevive al F5**, así que no es un problema de estado en el cliente: la fila está
+  realmente sin marcar en la base.
+  - **Descartado:** que el marcado no recorra las respuestas. Se verificó que **sí** las recorre.
+  - **Causa candidata — un error tragado en silencio.** `src/components/mensajes/hilo-modal.tsx`
+    marca leído con `await Promise.all(noLeidos.map((m) => marcarMensajeLeido(m.id)))` y
+    **descarta el `{ error }` que devuelve cada llamada**. Si una falla (RLS, carrera, red), el
+    usuario **no se entera** y la fila queda sin marcar para siempre. Encaja con el síntoma: falla
+    puntual, persistente, sin rastro.
+  - **Primer paso cuando se retome:** **dejar de tragar esos errores** — juntar los resultados,
+    loguear/avisar los que fallaron (sin datos personales, Ley 25.326) y recién ahí decidir si hace
+    falta un reintento. Barato y previo a cualquier teoría.
+  - Nota: el upsert de **grupales** ya se arregló (ver el `ignoreDuplicates` del ítem del badge);
+    este síntoma es de mensajes **individuales**, que van por el `UPDATE leido = true` — camino
+    distinto, que sí tiene política.
+- **⚠ LIMITACIÓN CONOCIDA (2026-08-03) — el deep-link no abre hilos fuera de las 100 conversaciones
+  más recientes. Severidad MUY BAJA.** `obtenerBandeja()` trae los mensajes raíz con **`.limit(100)`**
+  (`src/app/(app)/mensajes/actions.ts:46`), y `bandeja.tsx` resuelve el `?hilo=X` buscando **dentro
+  de esa lista**. Si el hilo no está, el modal **simplemente no abre** — no crashea ni rompe la
+  página. **Se decidió no implementar un fetch puntual:** pedía una server action nueva, estado
+  async, spinner y manejo de "no existe / sin permiso", demasiada superficie para un caso hoy casi
+  inalcanzable desde la campanita, que solo lista mensajes **no leídos** (recientes por definición).
+  Si algún día se agrega búsqueda de mensajes o el volumen crece, revisarlo junto con paginar la
+  bandeja.
+- **⏸ DIFERIDO (2026-08-02) — el Realtime de `mensajes_internos` no entrega eventos en vivo. Causa
+  acotada a INFRAESTRUCTURA de Supabase, fuera de nuestro código.** Detectado el 2026-07-31 al
+  verificar a mano la 1B-parte-1 (**preexistente**, no lo causó esa tanda): con **dos sesiones**
+  abiertas, un mensaje nuevo **no** incrementa el badge de la campanita hasta hacer **F5**. Se
+  diagnosticó a fondo y se difirió: todo lo que está bajo nuestro control quedó descartado **por
+  experimento**, no por deducción.
+
+  > Este ítem **consolida y reemplaza** el archivo suelto `NOTA-realtime-pendiente.md`, que se
+  > borró al cerrar la tanda. Este es el único lugar donde vive el estado del diagnóstico.
+
+  **Descartado POR EXPERIMENTO (cada punto se probó, no se dedujo):**
+  - **Suscripción del canal:** el `subscribe` llega a **`SUBSCRIBED`**. El transporte funciona.
+  - **Autenticación del socket:** el frame `phx_join` viaja con un **JWT válido**
+    (`role=authenticated`, `sub` correcto). Descarta la hipótesis del timing de `setAuth`.
+  - **Suscripción aceptada por el servidor:** `phx_reply` con `status: ok` y un id asignado a
+    `mensajes_internos`.
+  - **Publicación:** `mensajes_internos` está en `supabase_realtime` con `pubinsert = true`
+    (migración 023, verificado en `pg_publication_tables`). Desactivar y reactivar el toggle de
+    replicación en el dashboard **no tuvo efecto**.
+  - **REPLICA IDENTITY:** la **migración 032** (`REPLICA IDENTITY FULL`) se aplicó y la base quedó
+    en `relreplident = 'f'`. **Su hipótesis quedó REFUTADA:** era la explicación más prometedora
+    —el canal filtra por `medico_id`, que no es la PK— pero con FULL aplicado **el evento sigue sin
+    llegar**. La migración se conserva igual (ver más abajo).
+  - **RLS:** probada con una policy **permisiva `USING(true)`** → el evento **igual no llega**. No
+    es la policy.
+  - **GRANTs:** idénticos a los de `pacientes`, que es la tabla de referencia sana.
+  - **Persistencia:** la tabla **no** es UNLOGGED (`relpersistence = 'p'`), así que sí genera WAL.
+  - **El INSERT:** es estándar —cliente normal (anon + cookies, **no** service_role), `.insert()`
+    directo por PostgREST, todos los campos seteados—, el mismo camino de escritura que el insert
+    de `notificaciones` del turnero.
+  - **El frontend:** descartado con instrumentación. El log estaba en la **primera línea** del
+    handler y nunca apareció; en el **WebSocket crudo** solo se ven heartbeats, **ningún frame** del
+    mensaje. El evento no llega al cliente en absoluto — no es que llegue y se descarte.
+
+  **Conclusión:** agotados publicación, replica identity, RLS, GRANTs, persistencia, forma del
+  INSERT y cliente, lo que queda es el **servicio Realtime del proyecto** (replication slot, salud
+  del servicio, o un problema del lado de Supabase). **Fuera del alcance del repo.**
+
+  **Próximo paso cuando se retome, en este orden:**
+  1. **Logs del servicio Realtime** en el dashboard de Supabase (Logs → Realtime): ver si el
+     servicio registra siquiera el cambio.
+  2. Estado del **replication slot** y salud del servicio Realtime del proyecto.
+  3. Si todo lo anterior está sano: **ticket a soporte de Supabase** — es el destino más probable.
+
+  **Estado del código y de la base:**
+  - La **instrumentación `[RT avisos]` fue REMOVIDA** al diferir (el canal volvió a
+    `channel.subscribe()` sin callback, como antes de instrumentar). **Al retomar hay que
+    reinstrumentar:** callback de estado en el `subscribe` y logs de evento recibido en los
+    handlers de `mensajes_internos` y `solicitudes_asistente`.
+  - **La migración 032 NO se revierte** aunque su hipótesis haya fallado: deja la tabla en el estado
+    que el filtro por `medico_id` necesita para cuando el servicio vuelva a entregar. Ver
+    `schema.sql` → sección REALTIME.
+  - El **filtro por tenant** del canal (`medico_id=eq.${tenantId}`) quedó **activo**: el filtro de
+    prueba que se usó para diagnosticar fue revertido.
+  - ⚠ **Se verifica con DOS sesiones y a mano.** No se prueba con `tsc`/`build`.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -359,9 +457,9 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     `catch (err)` con narrowing por `instanceof Error`.
   - `tsc`, `build` y `lint` pasan, y la comparación programática antes/después confirma **cero
     problemas nuevos** introducidos.
-- **Deuda que QUEDA: 75 problemas preexistentes.** Desglose por regla, para dimensionar la tanda
-  dedicada:
-  - **63 `@typescript-eslint/no-explicit-any`** — mayormente `catch (error: any)` de Route
+- **Deuda que QUEDA: 73 problemas preexistentes** (63 errores + 10 warnings; medido 2026-08-03, sin
+  cambios desde la 1B-parte-1). Desglose por regla, para dimensionar la tanda dedicada:
+  - **61 `@typescript-eslint/no-explicit-any`** — mayormente `catch (error: any)` de Route
     Handlers (trivial, mecánico) y los handlers de FullCalendar en `calendar-view.tsx` (16),
     `turno-form.tsx` (4) y `perfil/actions.ts` (7), que necesitan los tipos de
     `@fullcalendar/core` (`EventClickArg`, `DateSelectArg`, etc.).
@@ -372,8 +470,10 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     `perfil-form.tsx` y `qr-verificacion.tsx`.
   - **2 `react-hooks/set-state-in-effect`** — `calendar-view.tsx:37` y `onboarding-client.tsx:44`.
   - Ninguno **bloquea el build**.
-- **⚠ PENDIENTE NUEVO (2026-07-30) — nudo de tipos en `consulta-detail.tsx`. Severidad baja,
-  requiere `tsc`.** Se dejó **deliberadamente afuera** de la tanda 1A porque no es limpieza
+- **⚠ PENDIENTE — nudo de tipos en `consulta-detail.tsx`. Severidad baja, requiere `tsc`.**
+  (Abierto 2026-07-30; **sigue vigente al 2026-08-03**: el `as any` está en
+  `src/components/pacientes/consultas/consulta-detail.tsx:215`.) Se dejó **deliberadamente afuera**
+  de la tanda 1A porque no es limpieza
   mecánica sino un desajuste real de tipos, y los tres puntos van **juntos** (tocar ese archivo
   una sola vez):
   - `:215` — `resolver: zodResolver(consultaSchema) as any`. `consultaSchema`

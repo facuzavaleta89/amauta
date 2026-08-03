@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→031).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→032).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -33,7 +33,11 @@
 -- 031 (rate limiting efectivo: tabla `rate_limits` [fixed-window counter, RLS on SIN
 -- políticas] + función `check_rate_limit` [SECURITY DEFINER, conteo atómico, EXECUTE
 -- solo service_role/postgres]. Reemplaza el rate limiter en memoria, inútil en
--- serverless — ver sección RATE LIMITING al final).
+-- serverless — ver sección RATE LIMITING al final),
+-- 032 (REPLICA IDENTITY FULL en `mensajes_internos`: no cambia columnas ni datos,
+-- solo la identidad de fila que viaja en la replicación lógica. Compañera de la 023;
+-- ⚠ NO resolvió el problema de Realtime que la motivaba — ver sección REALTIME al
+-- final y PENDIENTES.md → Bloque A).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -532,6 +536,8 @@ CREATE INDEX notas_user_created_idx ON public.notas(user_id, created_at DESC);
 
 -- ── mensajes_internos ───────────────────────────────────────────────────────
 -- Mensajería interna asíncrona (individual o grupal). medico_id = tenant key.
+-- ⚠ Esta tabla tiene REPLICA IDENTITY FULL (migración 032) y está en la publicación
+--   `supabase_realtime` (migración 023). Ver la sección REALTIME al final.
 CREATE TABLE public.mensajes_internos (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   medico_id       UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -1220,6 +1226,48 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) TO service_role;
 GRANT  EXECUTE ON FUNCTION public.check_rate_limit(TEXT, INT, INT) TO postgres;
+
+
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │ REALTIME — publicación `supabase_realtime` (migs. 023 y 032)               │
+-- └──────────────────────────────────────────────────────────────────────────┘
+-- Estado de la replicación lógica que alimenta el Realtime de Supabase.
+-- NO se declara con CREATE acá: la publicación `supabase_realtime` la administra
+-- Supabase y las migraciones solo le AGREGAN tablas. Esta sección documenta el
+-- estado verificado contra la base, no una estructura a recrear.
+--
+-- Tablas en la publicación:
+--   · public.mensajes_internos  → agregada por la migración 023 (solo INSERT).
+--     Verificado en la base: aparece en pg_publication_tables con pubname =
+--     'supabase_realtime' y pubinsert = true.
+--
+-- REPLICA IDENTITY:
+--   · public.mensajes_internos → FULL (migración 032). Verificado: pg_class.
+--     relreplident = 'f' (antes 'd' = DEFAULT, solo PK).
+--     Motivo: el canal de la campanita se suscribe filtrando por `medico_id`, que
+--     NO es la PK; con identidad DEFAULT la fila replicada no lleva esa columna y
+--     el filtro no se puede evaluar. Costo aceptado: UPDATE/DELETE escriben la fila
+--     vieja completa en el WAL (volumen despreciable en esta tabla).
+--   · El resto de las tablas conserva REPLICA IDENTITY DEFAULT.
+--
+-- ⚠ ESTADO FUNCIONAL: el Realtime de `mensajes_internos` NO ENTREGA EVENTOS.
+--   La 032 se aplicó y su efecto en la base es el esperado ('f'), pero la hipótesis
+--   que la motivaba —que el filtro por `medico_id` era lo que descartaba el evento—
+--   quedó REFUTADA: con la migración aplicada el evento sigue sin llegar, y tampoco
+--   llega sin filtro ni con una policy permisiva USING(true). El diagnóstico descartó
+--   por experimento todo lo que depende de la base (publicación, replica identity,
+--   RLS, GRANTs, persistencia de la tabla, forma del INSERT), así que la causa quedó
+--   acotada a INFRAESTRUCTURA del servicio Realtime del proyecto, fuera de este
+--   esquema y fuera del código de la app. Trabajo DIFERIDO — detalle completo,
+--   lista de descartes y próximo paso en PENDIENTES.md → Bloque A.
+--
+--   No revertir la 032 por esto: deja la tabla en el estado que el filtro necesita
+--   cuando el servicio vuelva a entregar. Reversible con
+--   `ALTER TABLE public.mensajes_internos REPLICA IDENTITY DEFAULT;`.
+--
+-- Verificación:
+--   SELECT * FROM pg_publication_tables WHERE pubname = 'supabase_realtime';
+--   SELECT relname, relreplident FROM pg_class WHERE relname = 'mensajes_internos';
 
 
 -- ============================================================================
