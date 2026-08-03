@@ -22,5 +22,5 @@ El badge de la campanita/sidebar no sube en vivo cuando llega un mensaje. Supaba
 
 ## Estado del código:
 - Fix del badge que SÍ baja al leer (síntoma 2) aplicado y commiteado (a286ab9).
-- Instrumentación [RT avisos] sigue puesta en notificaciones-bell.tsx — QUITAR cuando se cierre esto.
+- Instrumentación [RT avisos] REMOVIDA de notificaciones-bell.tsx al diferir la tanda (el canal quedó como antes de instrumentar: `channel.subscribe()` sin callback). Al retomar el diagnóstico hay que REINSTRUMENTAR: volver a poner los logs de estado del subscribe (callback en `channel.subscribe((status, err) => …)`) y los de evento recibido en los handlers de mensajes_internos y solicitudes_asistente.
 - Migración 032 (REPLICA IDENTITY FULL) aplicada a la base y versionada, pendiente de merge.

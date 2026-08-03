@@ -111,19 +111,6 @@ export function NotificacionesBell({
       const supabase = createClient()
       const channel = supabase.channel(`avisos-${userId}`)
 
-      // ── Instrumentación de diagnóstico (tanda 1B — parte 2) ──────────────
-      // TEMPORAL: el canal fallaba en SILENCIO (subscribe sin callback + este
-      // try/catch que traga todo), así que era imposible distinguir "no se
-      // conectó" de "conectó pero no llegan eventos" de "llegan y se descartan".
-      // Filtrar la consola por `[RT avisos]`. Si acá se ve montar → limpiar →
-      // montar en sucesión rápida, es el StrictMode de dev duplicando el efecto.
-      // Solo se loguean UUIDs de usuario/tenant — nunca contenido ni datos de
-      // paciente (Ley 25.326).
-      console.log(
-        '[RT avisos] montando canal · userId:', userId,
-        '· tenantId:', tenantId, '· esMedico:', esMedico
-      )
-
       // Solicitudes de vinculación (solo el médico las recibe)
       if (esMedico) {
         channel.on(
@@ -140,8 +127,6 @@ export function NotificacionesBell({
               mensaje: string | null
               created_at: string
             }
-            // Diagnóstico: confirma que el evento LLEGÓ (antes de cualquier otra cosa).
-            console.log('[RT avisos] evento solicitudes_asistente recibido · id:', nueva.id)
             const res = await fetch(`/api/solicitudes/${nueva.id}/info`).catch(() => null)
             if (res?.ok) {
               const info = await res.json()
@@ -185,19 +170,10 @@ export function NotificacionesBell({
               created_at: string
             }
 
-            // Diagnóstico: confirma que el evento LLEGÓ, antes del filtro de destinatario.
-            // Sin `asunto` ni nombres: solo ids y flags.
-            console.log(
-              '[RT avisos] evento mensajes_internos recibido · id:', nuevo.id,
-              '· es_grupal:', nuevo.es_grupal
-            )
-
             // ¿Es un mensaje no leído dirigido a mí?
             const esParaMi = nuevo.es_grupal
               ? nuevo.remitente_id !== userId
               : nuevo.destinatario_id === userId && nuevo.remitente_id !== userId
-            // Diagnóstico: distingue "no llega el evento" de "llega y se descarta acá".
-            console.log('[RT avisos] mensaje esParaMi:', esParaMi, '· id:', nuevo.id)
             if (!esParaMi) return
 
             // Nombre del remitente (RLS permite leer perfiles del mismo tenant)
@@ -228,15 +204,9 @@ export function NotificacionesBell({
         )
       }
 
-      // El callback SOLO observa: no cambia el timing ni el comportamiento del
-      // canal. `status` es 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'TIMED_OUT' | 'CLOSED'.
-      channel.subscribe((status, err) => {
-        console.log('[RT avisos] subscribe status:', status)
-        if (err) console.error('[RT avisos] subscribe error:', err)
-      })
+      channel.subscribe()
 
       return () => {
-        console.log('[RT avisos] limpiando canal · userId:', userId)
         supabase.removeChannel(channel)
       }
     } catch {
