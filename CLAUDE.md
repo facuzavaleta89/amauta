@@ -148,6 +148,14 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   date-fns ni `toLocaleString()` a secas — esos renderizan en la zona del **runtime**, que en
   Vercel es UTC. Ver **nota técnica 18**. (En Client Components no aplica: el navegador ya está
   en la zona del usuario.)
+- **`catch`: nunca anotar `any`.** Si el cuerpo **no usa** la variable, va **optional catch binding**
+  —`} catch {`, sin paréntesis— que además evita el `no-unused-vars`; ya es el patrón del repo
+  (`hooks/use-view-mode.ts`, `(app)/notificaciones/actions.ts`, los Route Handlers de la tanda L1) y
+  compila con el `target: ES2017` actual. Si **sí** la usa, `catch (error)` a secas: queda tipada
+  `unknown`, y **`console.error(...)` la acepta sin narrowing** — no agregar `instanceof Error` de
+  adorno. El narrowing se justifica solo cuando se **lee una propiedad** (`.message`, `.code`), y ahí
+  ⚠ tener presente que los errores de `supabase-js` (`PostgrestError`) **no son instancias de
+  `Error`**: un `instanceof Error` a secas los manda al mensaje genérico.
 - **Imports:** alias `@/` → `src/`. Agrupar externas → componentes → lib → types.
   Preferí importar tipos desde `@/types` (barrel `index.ts`).
 - Al tocar tipos, mantené la organización por dominio existente (no consolidar en
