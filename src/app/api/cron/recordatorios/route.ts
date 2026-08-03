@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
       ids: resultados
     }, { status: 200 })
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error cron recordatorios:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }

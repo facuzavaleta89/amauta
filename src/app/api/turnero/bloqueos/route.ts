@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     if (insertError) throw insertError
 
     return NextResponse.json({ data: nuevoBloqueo }, { status: 201 })
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error creating bloqueo:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
