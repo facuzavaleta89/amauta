@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { MessageSquare, Plus, Users, User, Send, Trash2 } from 'lucide-react'
@@ -24,17 +25,12 @@ interface Props {
   threads: MensajeInterno[]
   currentUserId: string
   usuarios: Usuario[]
-  /** Id de hilo a abrir automáticamente al entrar (deep-link desde la campanita) */
-  hiloInicial?: string | null
 }
 
-export function Bandeja({ threads: initialThreads, currentUserId, usuarios, hiloInicial }: Props) {
+export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Props) {
   const { esMedico } = usePermisos()
+  const searchParams = useSearchParams()
   const [threads, setThreads] = useState<MensajeInterno[]>(initialThreads)
-  // Abrir de entrada el hilo del deep-link (sin efecto → evita set-state-in-effect)
-  const [hiloAbierto, setHiloAbierto] = useState<MensajeInterno | null>(
-    () => (hiloInicial ? initialThreads.find((t) => t.id === hiloInicial) ?? null : null)
-  )
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [confirmDeleteThreadId, setConfirmDeleteThreadId] = useState<string | null>(null)
 
@@ -43,6 +39,37 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios, hilo
     setThreads(initialThreads)
   }, [initialThreads])
 
+  // ── Hilo abierto: la URL es la ÚNICA fuente de verdad ──────────────────────
+  // Se DERIVA en cada render (ni `useState` ni `useEffect`). Antes vivía en un
+  // inicializador perezoso de `useState`, que corre SOLO al montar: al clickear
+  // un mensaje en la campanita se navegaba a `/mensajes?hilo=X` pero `Bandeja`
+  // no se remontaba, así que el modal no abría hasta un F5. `useSearchParams()`
+  // sí es reactivo a los cambios de URL sin remontaje.
+  // Hidratación: la ruta es DINÁMICA (auth por cookies), así que el hook ya
+  // tiene el param en el render del servidor y el primer render del cliente
+  // coincide — no hay mismatch ni hace falta un <Suspense> alrededor.
+  const hiloId = searchParams.get('hilo')
+  // ⚠ Si el id no está entre los threads cargados, el modal simplemente no abre
+  // (no rompe). `obtenerBandeja()` trae las 100 conversaciones más recientes:
+  // un hilo más viejo que eso queda fuera. Ver la limitación en RESPUESTA.md.
+  const hiloAbierto = hiloId ? threads.find((t) => t.id === hiloId) ?? null : null
+
+  /**
+   * Escribe el param `hilo` en la URL. Usa la History API nativa —que Next
+   * integra con `useSearchParams`— en vez de `router.push/replace` para no
+   * pagar un round-trip al servidor (y su latencia) cada vez que se abre o
+   * cierra el modal: la bandeja ya está en pantalla y no hay nada que refetchear.
+   */
+  function sincronizarUrl(id: string | null, modo: 'push' | 'replace') {
+    const params = new URLSearchParams(searchParams.toString())
+    if (id) params.set('hilo', id)
+    else params.delete('hilo')
+    const qs = params.toString()
+    const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    if (modo === 'push') window.history.pushState(null, '', url)
+    else window.history.replaceState(null, '', url)
+  }
+
   function esNoLeido(m: MensajeInterno): boolean {
     if (m.remitente_id === currentUserId) return false
     if (m.es_grupal) return !(m.lecturas ?? []).some((l) => l.user_id === currentUserId)
@@ -50,8 +77,11 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios, hilo
   }
 
   function abrirHilo(m: MensajeInterno) {
-    setHiloAbierto(m)
-    
+    // Mismo mecanismo que el deep-link de la campanita: abrir = poner el hilo en
+    // la URL. Así hay UN solo camino para abrir el modal, no dos. Con `push` (y
+    // no `replace`) el botón "atrás" del navegador cierra el modal.
+    sincronizarUrl(m.id, 'push')
+
     // Marcar como leído localmente de inmediato para que desaparezca el indicador azul al hacer clic
     setThreads((prev) =>
       prev.map((t) => {
@@ -248,12 +278,14 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios, hilo
         </div>
       )}
 
-      {/* Modal de hilo */}
+      {/* Modal de hilo. Cerrar = sacar el `hilo` de la URL, con `replace` para no
+          dejar en el historial un estado de "modal cerrado" y para que el param
+          viejo no quede pisando un clic posterior en OTRO mensaje. */}
       {hiloAbierto && (
         <HiloModal
           mensajeRaiz={hiloAbierto}
           currentUserId={currentUserId}
-          onClose={() => setHiloAbierto(null)}
+          onClose={() => sincronizarUrl(null, 'replace')}
           onMensajeEnviado={handleRespuestaEnviada}
         />
       )}
