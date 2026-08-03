@@ -457,19 +457,62 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     `catch (err)` con narrowing por `instanceof Error`.
   - `tsc`, `build` y `lint` pasan, y la comparación programática antes/después confirma **cero
     problemas nuevos** introducidos.
-- **Deuda que QUEDA: 73 problemas preexistentes** (63 errores + 10 warnings; medido 2026-08-03, sin
-  cambios desde la 1B-parte-1). Desglose por regla, para dimensionar la tanda dedicada:
-  - **61 `@typescript-eslint/no-explicit-any`** — mayormente `catch (error: any)` de Route
-    Handlers (trivial, mecánico) y los handlers de FullCalendar en `calendar-view.tsx` (16),
-    `turno-form.tsx` (4) y `perfil/actions.ts` (7), que necesitan los tipos de
-    `@fullcalendar/core` (`EventClickArg`, `DateSelectArg`, etc.).
-  - **4 `@typescript-eslint/no-unused-vars`** — los 3 de `src/app/api/consultas/[id]/route.ts`
-    (`:57`, `:111`, `:237`; son `catch (error)` sin usar, se solapan con los `any` de ese mismo
-    archivo) y `consulta-detail.tsx:198` (`mode`).
+- **✅ RESUELTO (tanda L1, 2026-08-03) — 73 → 54 problemas (−19). Los `catch (error: any)` de los
+  Route Handlers.** Primera tanda del plan por niveles de riesgo: **solo lo mecánico y sin efecto
+  observable**. Se convirtieron los **17** `catch` con `any` bajo `src/app/api/**`, en dos patrones:
+  - **15 → `catch (error)`** (solo la firma; el cuerpo quedó **intacto**). **Sin `instanceof Error`
+    ni narrowing:** los 15 pasan la variable entera a `console.error(...)`, que acepta `unknown` sin
+    quejarse. Agregar narrowing habría sido ruido — el diagnóstico verificó que **ninguno** de los 17
+    lee `.message`, `.code` ni `.status`.
+  - **2 → `catch {`** (optional catch binding), en `api/consultas/[id]/route.ts` `:57` y `:237`, los
+    únicos que **no usaban** la variable. Esos dos disparaban **dos reglas en la misma línea**, así
+    que el binding opcional se llevó también **2 `no-unused-vars`**. Patrón ya vigente en el repo
+    (`hooks/use-view-mode.ts`, `(app)/notificaciones/actions.ts`), no es sintaxis nueva.
+  - **Impacto: −17 `no-explicit-any` y −2 `no-unused-vars`.** `tsc` y `build` limpios; la comparación
+    programática antes/después del linter confirma **cero problemas nuevos**. El diff es de **17
+    inserciones y 17 borrados** (una línea por `catch`): **no se tocó ningún cuerpo, ningún mensaje
+    al cliente ni ningún status HTTP**, así que el cambio no puede alterar ninguna respuesta de la API.
+- **Deuda que QUEDA: 54 problemas preexistentes** (46 errores + 8 warnings; medido 2026-08-03 tras la
+  tanda L1). Desglose por regla, para dimensionar las tandas que faltan:
+  - **44 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any` en Route
+    Handlers**. Lo que resta es de otra naturaleza: los handlers de FullCalendar en
+    `calendar-view.tsx` (16), `perfil/actions.ts` (7), `turno-form.tsx` (4) y `block-slot-modal.tsx`
+    (3) —que necesitan los tipos de `@fullcalendar/core` (`EventClickArg`, `DateSelectArg`, etc.) o
+    narrowing real porque leen `.message`—, los **4 de Route Handlers que NO son de `catch`** (ver
+    abajo), y sueltos en `consulta-detail.tsx` (2), `pedido-form.tsx` (2),
+    `historia-clinica-form.tsx` (2), `perfil-form.tsx`, `notificaciones/list.tsx`,
+    `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 cada uno).
+  - **2 `@typescript-eslint/no-unused-vars`** — `api/consultas/[id]/route.ts:111` (`_pid`) y
+    `consulta-detail.tsx:198` (`mode`). ⚠ **Corrección:** la versión anterior de este ítem decía que
+    *"los 3 de `consultas/[id]/route.ts` son `catch (error)` sin usar"*. **Solo 2 lo eran** (`:57` y
+    `:237`, ya resueltos en L1). El tercero, **`:111`, NO es un `catch`**: es un descarte de
+    destructuring —`const { paciente_id: _pid, ...updates } = result.data`— que saca `paciente_id`
+    del payload para que no entre en el `UPDATE`. El guion bajo **no lo salva** porque
+    `eslint.config.mjs` **no configura `no-unused-vars`** (usa los defaults, sin
+    `varsIgnorePattern: '^_'`), así que su arreglo **depende de una decisión de política en la
+    config**, no de tocar ese archivo.
   - **6 `@next/next/no-img-element`** — `<img>` crudos en `pedido-pdf.tsx`, `certificado-pdf.tsx`,
     `perfil-form.tsx` y `qr-verificacion.tsx`.
   - **2 `react-hooks/set-state-in-effect`** — `calendar-view.tsx:37` y `onboarding-client.tsx:44`.
   - Ninguno **bloquea el build**.
+- **⚠ Dentro de los Route Handlers quedan 4 `any` que NO son de `catch`.** Quedaron **deliberadamente
+  afuera** de L1: son **diseño de tipos, no limpieza mecánica**, así que L1 **no dejó esos archivos
+  en cero** y eso es esperado, no un fix a medias.
+  - `api/consultas/[id]/route.ts:22` y `api/consultas/route.ts:25` — `(profile as any)[permisoRequerido]`,
+    el **mismo helper duplicado** en los dos archivos. Se resolvería tipando la clave como
+    `PermisoKey` (ya existe en `src/types/roles.ts`) en vez de castear el objeto; de paso, el helper
+    es candidato a extraerse a `lib/`.
+  - `api/cron/recordatorios/route.ts:76` — `(t.paciente as any).nombre_completo` (forma del join).
+  - `api/pacientes/[id]/route.ts:12` — `async function getTenantMedicoId(supabase: any, …)`.
+- **Plan de las tandas restantes** (nota de planificación, no compromiso de fecha):
+  **L2** — los `any` de FullCalendar (`calendar-view.tsx`, `turno-form.tsx`) + los `catch` de turnero
+  que leen `.message`, `block-slot-modal.tsx` incluido. ⚠ Ojo en esos: los errores de `supabase-js`
+  (`PostgrestError`) **no son instancias de `Error`**, así que un `instanceof Error` a secas mandaría
+  el mensaje al fallback genérico y **el usuario perdería el detalle que hoy ve** — es un cambio de
+  comportamiento, no limpieza. · **L3** — `perfil/actions.ts`, los 6 `no-img-element`, los 2
+  `set-state-in-effect` y la **política de `_` en `eslint.config.mjs`** (destraba el `_pid`). ·
+  **L4** — el nudo de tipos del `zodResolver` en `consulta-detail.tsx`, **aislado** (ver el ítem de
+  abajo).
 - **⚠ PENDIENTE — nudo de tipos en `consulta-detail.tsx`. Severidad baja, requiere `tsc`.**
   (Abierto 2026-07-30; **sigue vigente al 2026-08-03**: el `as any` está en
   `src/components/pacientes/consultas/consulta-detail.tsx:215`.) Se dejó **deliberadamente afuera**
