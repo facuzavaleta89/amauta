@@ -54,7 +54,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     if (error || !data) return NextResponse.json({ error: 'Consulta no encontrada' }, { status: 404 })
 
     return NextResponse.json({ data })
-  } catch (error: any) {
+  } catch {
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }
@@ -195,7 +195,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ data: updated })
-  } catch (error: any) {
+  } catch (error) {
     console.error('[PATCH /api/consultas/[id]]', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
@@ -234,7 +234,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
     if (error) throw error
 
     return NextResponse.json({ success: true })
-  } catch (error: any) {
+  } catch {
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
 }

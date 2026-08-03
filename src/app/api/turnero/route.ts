@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
       turnos: turnosRes.data,
       bloqueos: bloqueosRes.data
     })
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error fetching turnos:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
@@ -206,7 +206,7 @@ export async function POST(request: NextRequest) {
     // supabase_realtime). Hasta entonces el médico lo ve en su próxima carga completa.
 
     return NextResponse.json({ data: nuevoTurno }, { status: 201 })
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error creating turno:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }

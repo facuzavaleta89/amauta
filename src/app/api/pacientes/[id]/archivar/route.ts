@@ -75,7 +75,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ data })
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error POST /api/pacientes/[id]/archivar:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }

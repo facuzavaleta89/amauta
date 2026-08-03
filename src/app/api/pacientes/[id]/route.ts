@@ -57,7 +57,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ data: paciente })
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error GET /api/pacientes/[id]:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
@@ -129,7 +129,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ data: paciente })
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error PATCH /api/pacientes/[id]:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
@@ -264,7 +264,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ success: true })
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error DELETE /api/pacientes/[id]:', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
   }
