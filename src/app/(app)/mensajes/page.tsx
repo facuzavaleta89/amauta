@@ -9,10 +9,11 @@ export const metadata = {
   title: 'Mensajes',
 }
 
-export default async function MensajesPage(props: {
-  searchParams?: Promise<{ hilo?: string }>
-}) {
-  const { hilo } = (await props.searchParams) ?? {}
+// El param `?hilo=` NO se lee acá: el modal se deriva de la URL en el cliente con
+// `useSearchParams()` (ver bandeja.tsx). Pasarlo además como prop era una segunda
+// fuente de verdad que se desincronizaba — al cerrar el modal la URL ya no tiene el
+// param pero la prop del servidor todavía sí, y el modal se reabría solo.
+export default async function MensajesPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -45,7 +46,6 @@ export default async function MensajesPage(props: {
         threads={threads}
         currentUserId={currentUserId}
         usuarios={usuarios ?? []}
-        hiloInicial={hilo ?? null}
       />
     </div>
   )
