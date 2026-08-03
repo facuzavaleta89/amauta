@@ -100,7 +100,7 @@ del usuario actual.
 | `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos. `difusion_envios` es el **log de envíos**: una fila por destinatario, la escribe `POST /api/difusion/enviar` | `medico_id` |
 | `solicitudes_asistente` | Workflow de vinculación (onboarding) | — |
 | `notas` | Notas personales por usuario | `user_id` |
-| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). En la publicación `supabase_realtime` (migración 023), pero ⚠ la entrega en vivo **no está verificada** (ver `PENDIENTES.md` → Realtime) | `medico_id` / `user_id` |
+| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). En la publicación `supabase_realtime` (mig. 023) y con `REPLICA IDENTITY FULL` (mig. 032), pero ⚠ la entrega en vivo **NO funciona y quedó DIFERIDA** — causa acotada a infraestructura de Supabase (ver `PENDIENTES.md` → Bloque A y `schema.sql` → REALTIME). ⚠ `mensajes_lecturas` **no tiene política de UPDATE**: los upserts van con `ignoreDuplicates` | `medico_id` / `user_id` |
 | `notificaciones` | Avisos del sistema para el médico (turno agendado, recordatorio enviado). Estructura verificada y reconstruida en `schema.sql`; ⚠ **sigue sin migración fuente** | `medico_id` |
 
 Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()`,
@@ -239,8 +239,10 @@ Tanda de pulidos posterior (P1–P5):
    preferencia en localStorage) en difusión y notas; `post-list.tsx` implementado.
 4. **Notificaciones:** campanita del header `NotificacionesBell` unifica solicitudes +
    mensajes no leídos, con **canal de Realtime montado** para `mensajes_internos` (migración 023).
-   ⚠ **La entrega en vivo NO está verificada:** hoy el badge de mensajes sube recién tras F5
-   (hallazgo 2026-07-31, preexistente y de causa abierta — ver `PENDIENTES.md` → Bloque A).
+   ⏸ **La entrega en vivo NO funciona y el trabajo está DIFERIDO:** el badge de mensajes sube recién
+   tras F5 (hallazgo 2026-07-31, **preexistente**). Diagnosticado a fondo en la 1B-parte-2: la causa
+   quedó acotada a **infraestructura del servicio Realtime de Supabase**, fuera de nuestro código
+   (ver `PENDIENTES.md` → Bloque A).
 5. **Pacientes/documentos:** archivar en vez de borrar (`archivado_at`, migración 024);
    documentos solo se anulan (ver reglas de negocio 5 y 9).
 
@@ -415,8 +417,53 @@ Tanda **1B — parte 1: el badge de notificaciones cuenta los avisos del sistema
   aporta el botón "Marcar todas como leídas".
 - **`api/turnero/route.ts`:** el insert de la notificación ahora **chequea su error** (antes era
   silencioso); se loguea sin datos personales y el POST **no falla** por eso.
-- ⚠ **El Realtime quedó explícitamente FUERA** (es la 1B-parte-2, hoy **reordenada**: ver
+- ⚠ **El Realtime quedó explícitamente FUERA** (es la 1B-parte-2: ver la tanda de acá abajo y
   `PENDIENTES.md` → Bloque A).
+
+Tanda **1B — parte 2: el badge BAJA al leer + el Realtime queda DIFERIDO** (2026-08-02,
+**migración 032**; ver nota técnica 19):
+- **El bug (segundo síntoma, independiente del Realtime):** al abrir un mensaje el badge **no se
+  descontaba** hasta un F5. Causa: `mensajesIniciales` **sembraba un `useState`**, así que el
+  componente se quedaba pegado al valor del montaje — `revalidatePath` recalculaba la prop en el
+  servidor pero nada pisa el estado de un componente que **no se remonta**. Es el mismo error de
+  fondo que la nota 19 ya documentaba para los avisos del sistema.
+- **Fix (`components/layout/notificaciones-bell.tsx`):** se eliminó ese `useState`. La lista se
+  **deriva en cada render** de la prop del servidor (base) **mergeada por id** con los mensajes que
+  llegaron por Realtime y todavía no están en la prop; un estado aparte (`mensajesAbiertos`) oculta
+  al instante los que el usuario abre. **El estado local guarda solo lo que el servidor todavía no
+  sabe**, no una copia de lo que ya manda.
+- **`marcarMensajeLeido` (`(app)/notificaciones/actions.ts`):** suma `revalidatePath('/mensajes')` y
+  `revalidatePath('/', 'layout')` — el contador de los dos badges se calcula en `(app)/layout.tsx`,
+  y los grupos de rutas no agregan segmento a la URL, así que ese layout solo se alcanza
+  invalidando por la raíz. Además el upsert de `mensajes_lecturas` pasó a **`ignoreDuplicates: true`**
+  (`ON CONFLICT DO NOTHING`): con el default (`DO UPDATE`) marcar dos veces el mismo mensaje grupal
+  **fallaba**, porque esa tabla **no tiene política de UPDATE**. Se resolvió **sin tocar la base**.
+- **Migración 032 — `REPLICA IDENTITY FULL` en `mensajes_internos`** (aplicada). Compañera de la
+  023: el canal filtra por `medico_id`, que **no es la PK**, y con identidad DEFAULT la fila
+  replicada no lleva esa columna. ⚠ **La hipótesis quedó REFUTADA** (con FULL aplicado el evento
+  sigue sin llegar), pero **la migración se conserva**: deja la tabla en el estado que el filtro
+  necesita. Ver `schema.sql` → sección REALTIME.
+- **Limpieza:** se borró `components/notificaciones/mensaje-card.tsx` (código muerto, 0 importadores).
+- ⏸ **El Realtime quedó DIFERIDO**, no resuelto: agotados publicación, replica identity, RLS,
+  GRANTs, persistencia, forma del INSERT y cliente —todo **descartado por experimento**—, la causa
+  quedó acotada a **infraestructura del servicio Realtime de Supabase**, fuera del repo. La
+  instrumentación `[RT avisos]` se **removió** al diferir. Diagnóstico completo, lista de descartes
+  y próximo paso (logs del dashboard → soporte) en `PENDIENTES.md` → Bloque A.
+
+Tanda del **modal del hilo desde la campanita** (2026-08-03, sin migración; ver nota técnica 20):
+- **El bug:** clickear un mensaje en la campanita cambiaba la URL a `/mensajes?hilo=X` pero el modal
+  **solo aparecía tras F5**. **PREEXISTENTE** —nació con el deep-link en `098dbc1`—, no lo introdujo
+  la tanda del badge: el `href` del `<Link>` es byte-idéntico antes y después.
+- **Causa:** `components/mensajes/bandeja.tsx` derivaba el hilo abierto de un **inicializador
+  perezoso de `useState`**, que corre **una sola vez al montar**; en una navegación en cliente
+  `Bandeja` no se remonta, así que el prop nuevo llegaba y el estado no se recalculaba.
+- **Fix — la URL como única fuente de verdad:** el hilo abierto se **deriva de `useSearchParams()`
+  durante el render**; abrir y cerrar sincronizan la URL (History API) y **cerrar limpia el
+  `?hilo`**. Se eliminó `hiloInicial` de `(app)/mensajes/page.tsx` (mantenerlo como fallback
+  **reabría el modal solo** al cerrarlo) y el clic **dentro de la bandeja** se unificó al mismo
+  mecanismo: **un solo camino** para abrir el modal.
+- **Limitación conocida:** si el hilo no está entre las **100** conversaciones que trae
+  `obtenerBandeja()` (`.limit(100)`), el modal **no abre** (no crashea). Anotada en `PENDIENTES.md`.
 
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
@@ -435,6 +482,34 @@ solo se envía por email).
 - **`schema.sql`** — snapshot consolidado del esquema (tablas, funciones, triggers, RLS). No reemplaza las migraciones de `supabase/migrations/`.
 - **`PENDIENTES.md`** — tareas de pulido (Funcional / Seguridad / Estético) con ubicaciones en el código.
 - **`src/types/`** — tipos por dominio + `index.ts` (barrel). Deriva del esquema; **no** hay tipos autogenerados por Supabase.
+
+---
+
+## Mapa de tipos (`src/types/`)
+
+Qué archivo abrir para revisar un tipo, **sin depender del barrel**. Los tipos se importan desde
+`@/types` (barrel `index.ts`), pero **viven agrupados por dominio** y un archivo puede contener
+varias entidades — `pedido.ts` es el caso extremo, con **seis**. Al tocar tipos, **mantené esta
+organización** (no consolidar en un archivo, no crear uno por entidad).
+
+| Archivo | Tipos que viven ahí |
+|---|---|
+| `roles.ts` | `UserRole`, `Profile` (+`Insert`/`Update`), `PermisosAsistente`, `PermisoKey`, `PERMISOS_DEFAULT`, `PERMISO_LABELS`, `PERMISOS_GRUPOS`, `Matricula`, `MatriculaTipo`, `TITULOS_DISPONIBLES`, `TituloPreset`, `SolicitudAsistente` (+`Insert`/`Update`), `SolicitudEstado` |
+| `paciente.ts` | `Paciente` (+`Insert`/`Update`), `PacienteWithObraSocial`, `ObraSocial` |
+| `consulta.ts` | `Consulta` (+`Insert`/`Update`), `ConsultaEstado`, `ConsultaConRelaciones`, `CampoExtra`, `CampoExtraSeccion` |
+| `pedido.ts` | ⚠ **seis entidades:** `Pedido`, `Certificado` (+`CertificadoTipo`), `Receta`, `Evolucion`, `HistoriaClinica` y `Estudio` (cada una con sus `Insert`/`Update`), más **`EmisorSnapshot`** (regla de negocio 11) |
+| `turno.ts` | `Turno` (+`Insert`/`Update`), `TurnoEstado`, `BloqueoAgenda` (+`Insert`), `TurnoAuditLog` |
+| `mensaje.ts` | `MensajeInterno`, `MensajeInsertar`, `MensajeFormValues`, `MensajeNoLeido`, `MensajeLectura` |
+| `notificacion.ts` | `Notificacion`, `NotificacionTipo`, `NotificacionTipoValor`, `ItemPendiente`, `ITEM_TYPE_SOLICITUD` |
+| `difusion.ts` | `DifusionPost` (+`Insert`/`Update`), `DifusionEstado`, `DifusionCanal`, `DifusionEnvio` (+`Insert`) |
+| `nota.ts` | `Nota` (+`Insert`/`Update`) |
+| `index.ts` | **barrel** — solo `export *`, sin declaraciones propias |
+
+**Trampas al buscar:** el nombre del archivo **no siempre coincide** con la entidad —`Certificado`,
+`Receta`, `HistoriaClinica`, `Estudio` y `Evolucion` están todos en `pedido.ts`; `UserRole` y los
+permisos en `roles.ts`—, y `MensajeLectura` refleja la **proyección del join** (`user_id`,
+`leido_at`), no la tabla `mensajes_lecturas` completa. Para el mapeo **tabla ↔ tipo**, la referencia
+es `schema.sql`.
 
 ---
 
@@ -600,10 +675,45 @@ solo se envía por email).
       antes de tocar la tabla, y el `(app)/layout.tsx` ni siquiera la invoca para asistentes. El
       chequeo va en la función y no solo en el llamador porque se exporta desde un archivo
       `'use server'`: es invocable por cualquier cliente autenticado.
-    - ⚠ **El tercer sumando del badge NO vive en `useState`**, a diferencia de solicitudes y
-      mensajes (que el Realtime muta en el cliente): se lee **directo de la prop**. Con estado local
-      el badge **nunca bajaría** al marcar leído, porque `router.refresh()` no pisa el estado de un
-      componente que no se remonta.
+    - ⚠ **Ningún sumando del badge se SIEMBRA en `useState` con una prop.** Los avisos del sistema se
+      leen **directo de la prop**; los mensajes se **derivan en cada render** de la prop mergeada por
+      id con lo que llegó por Realtime (`mensajesRealtime`), y solo eso último vive en estado. La
+      regla es: **el estado local guarda únicamente lo que el servidor todavía no sabe**. Sembrar la
+      prop en un `useState` fue exactamente el bug de la 1B-parte-2 — el badge se quedaba pegado al
+      valor del montaje y **no bajaba al leer**, porque `router.refresh()`/`revalidatePath` no pisan
+      el estado de un componente que **no se remonta**.
     - El **marcado de leído** corre en un **efecto de cliente**
       (`components/notificaciones/marcar-leidas.tsx`), no en el render de la página: la action llama
       `revalidatePath`, **no soportado durante el render**.
+    - ⚠ **`mensajes_lecturas` no tiene política de UPDATE.** Los upserts sobre esa tabla van con
+      **`ignoreDuplicates: true`** (`ON CONFLICT DO NOTHING`); con el default (`DO UPDATE`) marcar
+      dos veces el mismo mensaje grupal **falla por RLS**. Además no hay nada que actualizar: la fila
+      es solo la PK `(mensaje_id, user_id)`.
+20. **El modal del hilo se DERIVA de la URL — no volver a sembrarlo en `useState`.** En
+    `src/components/mensajes/bandeja.tsx` el hilo abierto sale de
+    `useSearchParams().get('hilo')` **durante el render**, y el modal se muestra buscando ese id
+    entre los threads. **No hay estado ni setter para el modal**, y `(app)/mensajes/page.tsx` **no**
+    pasa el param como prop.
+    - **Por qué (bug real, no precaución):** antes el hilo abierto se calculaba en un
+      **inicializador perezoso de `useState`**, que corre **una sola vez al montar**. Al clickear un
+      mensaje en la campanita se navega a `/mensajes?hilo=X`, pero si `Bandeja` **ya está montada**
+      React la reconcilia sin remontarla: el prop nuevo llegaba y el estado **no** se recalculaba, así
+      que el modal **solo abría tras F5**. Mismo error de fondo que la nota 19.
+    - **Una sola fuente de verdad.** No agregar un fallback tipo `searchParams.get('hilo') ?? prop`:
+      al cerrar, la URL pierde el param **al instante** pero la prop del servidor todavía trae el id
+      viejo, así que el fallback **reabre el modal solo**. Por la misma razón el clic **dentro de la
+      bandeja** también abre por URL: un solo camino, no dos mecanismos.
+    - **Se usa la History API (`window.history.pushState/replaceState`), no `router.push/replace`.**
+      Next las integra con el router y **sincronizan `useSearchParams`**
+      (`node_modules/next/dist/docs/01-app/02-guides/single-page-applications.md`). Con `router.*` cada
+      apertura y cierre dispararía un **round-trip RSC** (la page re-ejecuta auth + `obtenerBandeja` +
+      `obtenerUsuariosTenant`) y, como `useSearchParams` recién cambia cuando la navegación
+      *commitea*, el modal quedaría **esperando al servidor**: el clic se siente muerto. `push` al
+      abrir (el botón atrás cierra el modal), `replace` al cerrar (no ensucia el historial).
+    - **Hidratación:** `useSearchParams()` solo fuerza render en cliente si la ruta es
+      **prerenderizada**; `/mensajes` es **dinámica** (auth por cookies) —sale como `ƒ` en el build—,
+      así que el hook ya tiene el param en el render del servidor, el primer render del cliente
+      coincide y **no hace falta un `<Suspense>`**. Si alguna vez esa ruta se volviera estática, esto
+      hay que revisarlo.
+    - ⚠ **Limitación:** el hilo se busca entre los threads cargados y `obtenerBandeja()` tiene
+      `.limit(100)`; un hilo más viejo **no abre** (no rompe). Ver `PENDIENTES.md` → Bloque A.
