@@ -141,6 +141,109 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   ⚠ **Se verifica con DOS sesiones abiertas (médico + asistente), no con que compile.** El Realtime
   no se prueba con `tsc`/`build`: hay que ver el badge subir sin recargar.
 
+### Bugs activos con causa en la base (RLS)
+
+> Los dos ítems de esta sección comparten familia: **la política RLS que falta o no coincide con lo
+> que el endpoint permite**, y el fallo llega al usuario como un **falso éxito** (toast verde, nada
+> guardado). Conviene resolverlos en la **misma tanda**, con **una sola migración**.
+
+- **⚠ BUG ACTIVO (diagnosticado 2026-08-04) — editar un bloqueo de agenda NO persiste NINGÚN cambio,
+  y el modal dice que sí. Severidad ALTA. PREEXISTENTE desde el origen del turnero.**
+  - **Síntoma:** se abre un bloqueo existente, se le cambia (o agrega) el **motivo**, se guarda → el
+    modal muestra el toast **"Bloqueo actualizado"** y se cierra. Al reabrirlo, el motivo es el
+    viejo. **No es solo el motivo: no persiste ningún campo** — las fechas tampoco. El camino de
+    **creación (POST) funciona bien**; el que falla es exclusivamente el de **edición (PATCH)**.
+  - **Causa raíz — falta la política de UPDATE en la base.** `bloqueos_agenda` tiene
+    `bloqueos_select`, `bloqueos_insert` y `bloqueos_delete`, pero **nunca tuvo
+    `bloqueos_update`** (verificado en `005_turnos.sql:106-117`; las migraciones `013` y `015` solo
+    redefinen la de INSERT, ninguna crea una de UPDATE). Con RLS activa
+    (`schema.sql:822`) y sin política, **el `USING` filtra filas en vez de abortar**: el `UPDATE`
+    afecta **0 filas**, devuelve `error: null` y `data: []`, y no levanta ningún código de error.
+  - **⚠ El contraste que lo confirma:** `turnos` **sí** tiene `turnos_update`. Las dos tablas
+    nacieron en la misma migración con el mismo patrón y a `bloqueos_agenda` se le omitió
+    exactamente esa línea. Por eso **editar un turno persiste y editar un bloqueo no**.
+  - **El código de la app está CORRECTO — no hay nada que arreglar ahí.** Se verificaron los tres
+    puntos sospechables y los tres están bien: el modal manda el motivo (`block-slot-modal.tsx`
+    arma `payload = { ...data, fechas }` **una sola vez, antes** de elegir método/URL: es el
+    **mismo objeto** en POST y en PATCH), el schema lo deja pasar
+    (`bloqueoAgendaUpdateSchema = bloqueoAgendaBaseObject.partial()`, y `motivo` está en el objeto
+    base — `turno.schema.ts:144`) y el endpoint lo escribe (`.update(updates)` con el objeto
+    completo, sin `pick` de campos). **Lo único que falta es la política.**
+  - **Dos capas de enmascaramiento** — son las que convirtieron un fallo de permisos en un falso
+    positivo silencioso, y explican por qué pasó desapercibido desde el día uno:
+    1. **El endpoint no chequea "0 filas"**: `updated` queda `[]`, `updated[0]` es `undefined`, y
+       responde `{ data: undefined }` con status **200**.
+    2. **El modal solo mira `response.ok`** (`block-slot-modal.tsx:125`), nunca el cuerpo: un 200
+       que no actualizó nada es indistinguible de uno que sí.
+  - **PREEXISTENTE — ninguna tanda de tipos lo introdujo.** Verificado por historial, no por
+    deducción: `git log -S` sobre el payload del modal y sobre el `.update(updates)` del endpoint
+    devuelve **un único commit cada uno** (`03eb969`, "turnero funcionando, falta pulir"), o sea que
+    esas líneas se escribieron una vez y **nunca se modificaron**. **L2** y **T3** tocaron el modal
+    solo en `catch`/anotaciones de tipo y **T4** ni siquiera lo tocó. Argumento estructural
+    independiente: **una política RLS no se crea ni se quita desde TypeScript**, que además se borra
+    al compilar.
+  - **✅ DECISIÓN DE PRODUCTO TOMADA — la política espeja `turnos_update`:**
+    ```sql
+    USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'))
+    ```
+    O sea: **el asistente con `gestionar_turnos` PUEDE editar bloqueos**. Es lo coherente con lo que
+    el endpoint PATCH ya permite hoy (mismo chequeo que el POST) y con `turnos`, la tabla hermana.
+    ⚠ **Conviene confirmarlo con el médico como co-decisor** antes de aplicar —define quién puede
+    modificar la agenda—, pero **la decisión de partida es espejar `turnos`**, no inventar un
+    criterio nuevo.
+    > Contexto para esa charla: la otra política de la tabla, `bloqueos_delete`, es **solo-médico**
+    > (`medico_id = auth.uid() AND get_user_role(...) = 'medico'`), así que hoy **UPDATE y DELETE
+    > quedarían con criterios distintos**. Ver el ítem H1 acá abajo, que es la otra mitad de esa
+    > misma decisión.
+  - **Alcance del fix (para la tanda futura):**
+    - **Obligatorio — una migración nueva** (`033_*.sql`, o el número que corresponda) con el
+      `CREATE POLICY "bloqueos_update" ... FOR UPDATE` de arriba. Sigue el **flujo del proyecto**:
+      migración versionada en `supabase/migrations/` **+ archivo suelto
+      `MIGRACION-NN-descripcion.sql`** en la raíz, **ejecución manual en el SQL Editor por el
+      usuario**, y **verificación contra la base real** — no contra `schema.sql`, que es un
+      **snapshot** y ya tuvo drift (migración `029`).
+    - **Recomendado — guarda de "0 filas" en el endpoint PATCH** (y en el DELETE, ver H1), para que
+      un fallo de RLS devuelva **error** en vez de un 200 vacío. **Es lo que convierte fallos
+      silenciosos en diagnosticables**, y sin eso cualquier futuro problema de RLS sobre esta tabla
+      se va a repetir igual de mudo.
+    - **No hace falta tocar el modal.** `block-slot-modal.tsx` está correcto de punta a punta.
+  - **Hallazgos asociados (misma familia, resolver en la misma tanda):**
+    - **H1 (ACTIVO) — el DELETE de bloqueos tiene el MISMO falso positivo, y para el asistente es un
+      bug real.** La política `bloqueos_delete` es **solo-médico**, pero el endpoint `DELETE` deja
+      pasar al **asistente con `gestionar_turnos`** (mismo chequeo que el PATCH) y después hace
+      `.delete().eq('id', id)` **sin mirar cuántas filas borró**, devolviendo `{ success: true }`
+      incondicionalmente. Resultado: **el asistente ve "Bloqueo eliminado" y el bloqueo sigue ahí.**
+      ⚠ **Hay que decidir si esa asimetría médico/asistente es intencional: hoy la app y la base
+      discrepan.** Va junto con la decisión de la política de UPDATE.
+    - **H2 — arrastrar o redimensionar un bloqueo en el calendario tampoco persiste.** Mismo PATCH,
+      mismo origen (`calendar-view.tsx`, `handleEventDrop` y `handleEventResize` mandan un PATCH a
+      `/api/turnero/bloqueos/{id}` cuando el evento es un bloqueo). Es **más engañoso** que el caso
+      del motivo: el bloqueo se mueve visualmente, **no se dispara `revert()`** porque la respuesta
+      es 200, y el cambio se pierde en el próximo refetch o F5. **La migración lo arregla solo**,
+      pero **hay que incluirlo en la verificación**.
+    - **H3 — el chequeo de `updateError.code === '42501'` es código muerto**, en el PATCH y en el
+      DELETE. Ambos lo miran con el comentario *"Si falla aquí, es 100% RLS en Supabase"*, pero un
+      `UPDATE`/`DELETE` filtrado por RLS **nunca levanta 42501**: el `USING` filtra filas en
+      silencio y solo un `WITH CHECK` violado aborta. La rama es **inalcanzable por la vía que
+      pretende cubrir** y **da la falsa sensación de que el caso RLS está contemplado** — muy
+      probablemente parte de por qué el bug sobrevivió tanto.
+    - **H5 — `getTenantMedicoId` está duplicado inline también acá.** Los dos handlers de
+      `bloqueos/[id]/route.ts` repiten el bloque de perfil + tenant (~18 líneas cada uno) en vez de
+      usar el helper: **dos ocurrencias más** de la deuda ya anotada como *"extraer el helper a
+      `lib/`"* (ver "Lint preexistente" → los 4 `any` no-catch de Route Handlers). Sigue siendo
+      **otra tanda**: tocarla implica ~14 endpoints.
+  - **⚠ Verificación que requerirá el fix — navegador y CON DOS SESIONES.** `tsc`/`build`/`lint` no
+    cubren nada de esto: no cambia una línea de TypeScript.
+    1. **Médico:** editar el **motivo** de un bloqueo → reabrir → el motivo nuevo está.
+    2. **Médico:** editar las **fechas** desde el modal → persisten (confirma que el alcance era
+       mayor que el motivo).
+    3. **Médico:** **arrastrar y redimensionar** un bloqueo → **F5** → la posición se mantiene (H2).
+    4. **Asistente con `gestionar_turnos`:** confirmar que **puede editar** un bloqueo (según la
+       decisión tomada) **y que, si algo falla, ve un error en vez de un falso éxito**. Probar
+       también **eliminar**, por H1.
+    5. **Que la migración no rompa lo que ya andaba:** **crear** y **borrar** bloqueos siguen
+       funcionando.
+
 ### Bugs menores detectados
 - **✅ RESUELTO (2026-07-26) — Filename de certificados sin tipo → `certificado_null_...`.** El
   nombre del PDF interpolaba `certificado.tipo`, que llega **siempre `null`** desde que la
@@ -379,6 +482,33 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - El **filtro por tenant** del canal (`medico_id=eq.${tenantId}`) quedó **activo**: el filtro de
     prueba que se usó para diagnosticar fue revertido.
   - ⚠ **Se verifica con DOS sesiones y a mano.** No se prueba con `tsc`/`build`.
+- **⚠ PENDIENTE NUEVO (2026-08-04) — al editar un turno creado desde la HC, el campo "Paciente"
+  arranca VACÍO. Severidad BAJA. PREEXISTENTE.** Detectado al verificar la tanda T4; **no lo
+  causaron las tandas de tipos** (solo tocaron anotaciones).
+  - **Síntoma:** se abre un turno con `origen: 'desde_hc'` para editarlo y el buscador de paciente
+    aparece en blanco, **aunque el calendario sí muestra el nombre** del paciente en el evento.
+  - **Causa:** `turno-form.tsx` siembra el buscador **solo** desde
+    `initialData.paciente_nombre_libre` (`:165-166`) y **nunca lee `initialData.paciente.nombre_completo`**,
+    que es el campo que trae el join de `GET /api/turnero`
+    (`.select('*, paciente:paciente_id (id, nombre_completo)')`). Los turnos creados **desde el
+    formulario** funcionan, porque al elegir un paciente de la lista se escribe
+    `paciente_nombre_libre` (`:363`); pero los turnos **`desde_hc`** se insertan desde los endpoints
+    de consultas con **`paciente_id` y SIN `paciente_nombre_libre`**
+    (`api/consultas/[id]/route.ts` y `api/consultas/route.ts`, en el `insert` de `turnos`).
+  - **Por qué es baja:** el `paciente_id` **no se pierde** — sigue en el form y el enlace "Ver
+    historia clínica" funciona. Es cosmético/confuso, no destructivo.
+  - **Fix natural:**
+    `setSearchTerm(initialData.paciente_nombre_libre ?? initialData.paciente?.nombre_completo ?? '')`.
+    ⚠ Hoy eso sería sobre un `initialData?: any` (`turno-form.tsx:75`): queda **type-safe** recién
+    cuando exista el tipo **`TurnoConPaciente`** —que **todavía no existe**— y se tipe ese prop. Ver
+    "Lint preexistente" → tanda **"tipos de dominio"**. Conviene hacerlo **junto** con esa tanda, no
+    antes.
+- **💡 MEJORA DE UX (2026-08-04, NO es un bug) — los turnos médicos no muestran el motivo en el
+  evento del calendario.** El dato **se guarda bien**; simplemente no se pinta: el evento de un
+  turno médico muestra hora + nombre del paciente, y el `motivo` queda solo dentro del modal. Sería
+  una mejora mostrarlo **cuando la altura del evento lo permita**, como ya hacen los **bloqueos** con
+  su descripción. Es **funcionalidad nueva**, no una regresión: entra por diseño (ver `DESIGN.md` →
+  categorías del turnero y `.fc-event-*`), decidiendo umbral de altura y truncado.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -847,6 +977,18 @@ Información Pública**). Hallazgos:
   sí permite DELETE al médico. Reconstruido en `schema.sql` → sección STORAGE. **Pendiente
   todavía:** el bucket `difusion` **no existe**; cuando se agregue, versionar sus políticas con
   el mismo patrón.
+- **⚠ FALTA la política de UPDATE en `bloqueos_agenda` (diagnosticado 2026-08-04).** La tabla tiene
+  `SELECT`, `INSERT` y `DELETE` pero **nunca tuvo `bloqueos_update`** (desde la migración `005`),
+  mientras que su tabla hermana `turnos` **sí** tiene `turnos_update`. Efecto funcional: **editar un
+  bloqueo no persiste nada** y el usuario recibe un **falso éxito**. Se arregla con una **migración
+  nueva** que espeje `turnos_update`. Detalle completo, decisión de producto ya tomada, hallazgos
+  asociados (H1–H5) y plan de verificación en **Bloque A → "Bugs activos con causa en la base
+  (RLS)"**.
+  > ⚠ **Lección transversal, no solo de esta tabla:** una **denegación de RLS en `UPDATE`/`DELETE`
+  > no produce error** — el `USING` filtra filas y la operación devuelve 0 filas en silencio (solo
+  > un `WITH CHECK` violado levanta `42501`). Cualquier endpoint que escriba y **no chequee cuántas
+  > filas tocó** puede estar reportando éxito sin haber escrito nada. Vale tenerlo presente al
+  > auditar el resto de los endpoints de escritura.
 - **RLS de tablas:** el modelo con `get_medico_id()` + `check_permiso()` está bien
   aplicado en las tablas de datos (ver `schema.sql`). Verificar dos huecos:
   - **Difusión** no tiene permiso granular: cualquier asistente vinculado ve/crea posts
