@@ -211,6 +211,7 @@ export function PedidoDocView({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {medicoLogo ? (
+                // eslint-disable-next-line @next/next/no-img-element -- src es un data-URI base64 (logo del emisor, guardado en emisor_snapshot); next/image no optimiza data-URIs
                 <img src={medicoLogo} alt="Logo" className="w-12 h-10 object-contain select-none pointer-events-none" />
               ) : (
                 <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center shrink-0">
@@ -324,6 +325,7 @@ export function PedidoDocView({
             <div className="text-right min-w-[200px] flex flex-col items-center">
               {medicoFirma && (
                 <div className="h-14 w-auto flex items-center justify-center mb-1">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- src es un data-URI base64 (firma del emisor, guardada en emisor_snapshot); next/image no optimiza data-URIs */}
                   <img
                     src={medicoFirma}
                     alt="Firma digital"
