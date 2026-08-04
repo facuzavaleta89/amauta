@@ -472,13 +472,42 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     programática antes/después del linter confirma **cero problemas nuevos**. El diff es de **17
     inserciones y 17 borrados** (una línea por `catch`): **no se tocó ningún cuerpo, ningún mensaje
     al cliente ni ningún status HTTP**, así que el cambio no puede alterar ninguna respuesta de la API.
-- **Deuda que QUEDA: 54 problemas preexistentes** (46 errores + 8 warnings; medido 2026-08-03 tras la
-  tanda L1). Desglose por regla, para dimensionar las tandas que faltan:
-  - **44 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any` en Route
-    Handlers**. Lo que resta es de otra naturaleza: los handlers de FullCalendar en
-    `calendar-view.tsx` (16), `perfil/actions.ts` (7), `turno-form.tsx` (4) y `block-slot-modal.tsx`
-    (3) —que necesitan los tipos de `@fullcalendar/core` (`EventClickArg`, `DateSelectArg`, etc.) o
-    narrowing real porque leen `.message`—, los **4 de Route Handlers que NO son de `catch`** (ver
+- **✅ RESUELTO (tanda L2, 2026-08-03) — 54 → 38 problemas (−16). Los `any` del turnero.** Segunda
+  tanda del plan: **solo tipado, sin una línea de lógica**. Se tiparon los **16** `any` de
+  `calendar-view.tsx`, `turno-form.tsx` y `block-slot-modal.tsx`, en dos grupos:
+  - **(A) 9 `any` de handlers de FullCalendar**, todos en `calendar-view.tsx`: `EventApi` (los dos
+    componentes de `eventContent`), `DateSelectArg`, `EventClickArg`, `EventDropArg`, y
+    `EventSourceFuncArg` + `EventInput` para los 3 parámetros de `fetchEvents` — todos de
+    **`@fullcalendar/core`** —, más **`EventResizeDoneArg`**, que ⚠ **NO está en `core`**: se importa
+    de **`@fullcalendar/interaction`**. ⚠ **No** se tipó `fetchEvents` como `EventSourceFunc`: es un
+    **union type** (estilo callback **o** estilo promesa) y resolverlo a través de `useCallback` es
+    frágil —si TypeScript elige el miembro equivocado, los tres parámetros quedan mal—, así que se
+    tiparon los parámetros **individualmente**.
+  - **(B) 7 `catch (…: any)` que leen `.message`**, en los tres archivos → `catch (error)` con
+    `error instanceof Error ? error.message : 'Error inesperado'`. **Los títulos de los toasts se
+    preservaron byte a byte**, y `revert()` / `failureCallback()` quedaron intactos. En
+    `calendar-view.tsx:214` se calculó **un solo `Error`** reutilizado para el toast y para el
+    `failureCallback`, cuya firma exige `Error` y no acepta `unknown`.
+  - **El narrowing de (B) es seguro, y eso se verificó, no se supuso:** los 7 errores del turnero son
+    **`new Error(...)` construidos en la app** a partir de respuestas `fetch` — el turnero **no usa
+    supabase-js en el cliente**—, así que `instanceof Error` da `true` en todos los caminos y el
+    usuario ve el mismo mensaje que antes. (La advertencia de `PostgrestError` **no aplicaba acá**;
+    su destino correcto es L3 — ver el plan de tandas.)
+  - **Impacto: −16 `no-explicit-any`.** `tsc` y `build` limpios —`tsc` es la verificación de fondo:
+    prueba que los tipos calzan con lo que la librería realmente pasa y valida de paso los accesos
+    de los handlers (`dropInfo.oldEvent.allDay`, `selectInfo.view.calendar.unselect()`, etc.)— y la
+    comparación programática del linter confirma **cero problemas nuevos**.
+  - **Verificado en el navegador** (no alcanzaba con compilar): camino feliz del turnero —crear,
+    mover, redimensionar, click en evento, cambio de vista— y **camino de error forzando la red
+    offline**, donde los 7 toasts muestran su descripción y los eventos revierten. **Sin cambios de
+    comportamiento.**
+- **Deuda que QUEDA: 38 problemas preexistentes** (30 errores + 8 warnings; medido 2026-08-03 tras la
+  tanda L2). Desglose por regla, para dimensionar las tandas que faltan:
+  - **28 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any`** en Route
+    Handlers ni en el turnero, **ni ningún `any` de FullCalendar**. Lo que resta es de otra
+    naturaleza: `perfil/actions.ts` (7, con la salvedad de `PostgrestError` — ver L3), el **grupo (C)
+    de datos de dominio del turnero** (7: `calendar-view.tsx` 4, `turno-form.tsx` 2,
+    `block-slot-modal.tsx` 1 — ver abajo), los **4 de Route Handlers que NO son de `catch`** (ver
     abajo), y sueltos en `consulta-detail.tsx` (2), `pedido-form.tsx` (2),
     `historia-clinica-form.tsx` (2), `perfil-form.tsx`, `notificaciones/list.tsx`,
     `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 cada uno).
@@ -493,7 +522,13 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     config**, no de tocar ese archivo.
   - **6 `@next/next/no-img-element`** — `<img>` crudos en `pedido-pdf.tsx`, `certificado-pdf.tsx`,
     `perfil-form.tsx` y `qr-verificacion.tsx`.
-  - **2 `react-hooks/set-state-in-effect`** — `calendar-view.tsx:37` y `onboarding-client.tsx:44`.
+  - **2 `react-hooks/set-state-in-effect`** — **`calendar-view.tsx:46`** (línea corrida por los
+    imports que sumó L2; era `:37`) y `onboarding-client.tsx:44`. ⚠ **Son dos problemas distintos, no
+    un lote:** el primero está en el hook `useIsMobile` y **no es derivable en render** (`matchMedia`
+    no existe en SSR, derivarlo rompería la hidratación); su fix canónico es `useSyncExternalStore`,
+    o sea un **refactor**, y **cambia comportamiento observable** porque `isMobile` alimenta el efecto
+    que hace `changeView` a vista día en móvil. El segundo es un reset de estado enredado con la
+    lógica del debounce de búsqueda. Tratarlos por separado.
   - Ninguno **bloquea el build**.
 - **⚠ Dentro de los Route Handlers quedan 4 `any` que NO son de `catch`.** Quedaron **deliberadamente
   afuera** de L1: son **diseño de tipos, no limpieza mecánica**, así que L1 **no dejó esos archivos
@@ -504,15 +539,58 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     es candidato a extraerse a `lib/`.
   - `api/cron/recordatorios/route.ts:76` — `(t.paciente as any).nombre_completo` (forma del join).
   - `api/pacientes/[id]/route.ts:12` — `async function getTenantMedicoId(supabase: any, …)`.
+- **⚠ Grupo (C) del turnero — 7 `any` de DATOS DE DOMINIO. Los únicos `any` que quedan ahí.**
+  Quedaron **deliberadamente afuera** de L2, con el mismo criterio que los 4 de Route Handlers: no
+  son anotaciones a corregir, son **tipos que hay que crear**. Líneas **ya recalculadas post-L2**:
+  - `calendar-view.tsx:133` — `useState<any | null>` (`selectedEvent`); guarda el `raw` de
+    `extendedProps`.
+  - `calendar-view.tsx:203`, `:207` — `.filter((t: any) …)` / `.map((t: any) …)` sobre `data.turnos`;
+    el `:207` lee `t.paciente.nombre_completo`.
+  - `calendar-view.tsx:218` — `data.bloqueos.map((b: any) …)`.
+  - `turno-form.tsx:75` y `block-slot-modal.tsx:46` — `initialData?: any // RAW event data`.
+  - `turno-form.tsx:105` — `useState<any[]>([])` (`pacientes` de la búsqueda).
+
+  **Requieren crear `TurnoConPaciente`, que hoy no existe:** `GET /api/turnero` proyecta
+  `'*, paciente:paciente_id (id, nombre_completo)'` (`api/turnero/route.ts:47`) y `types/turno.ts`
+  **no modela** ese join. Habría que seguir el patrón que el repo ya usa (`ConsultaConRelaciones`,
+  `PacienteWithObraSocial`). Además, **`selectedEvent` y los dos `initialData` son el MISMO `any`
+  encadenado** (calendario → modal): se resuelven **juntos** o no se tocan.
+- **Nota: tipar los handlers de FullCalendar NO tipó `event.extendedProps`.** Es
+  `Record<string, any>` **por diseño de la librería**, así que el `const { type, raw } = ...` sigue
+  devolviendo `any` después de L2. **Es esperado y no es deuda nueva** —el linter ni lo marca, porque
+  no hay anotación explícita—: lo resuelve el grupo (C), que es donde vive el tipo real de `raw`.
+- **Prolijidad del turnero (ítems chicos, sin urgencia).** Detectados al diagnosticar L2; ninguno es
+  lint ni se tocó:
+  - **Los 2 `throw new Error(errorData.error)` sin fallback** — `turno-form.tsx:241` y
+    `block-slot-modal.tsx:126`. Si el endpoint respondiera sin campo `error`, el toast mostraría
+    literalmente **"undefined"**. Otros dos sitios de esos mismos archivos **sí** se protegen con
+    `|| 'Error al eliminar'`. Se dejaron **byte a byte** en L2 a propósito: agregarles el fallback es
+    un **cambio de comportamiento**, ajeno al tipado, y merece decidirse aparte.
+  - **`@fullcalendar/core` no está declarado en `package.json`** (solo `daygrid`, `interaction`,
+    `react`, `timegrid`): es una **dependencia transitiva** que el código ya usaba antes de L2
+    (`calendar-view.tsx:8`, el locale `es`) y que ahora también usan los `import type`. Declararla
+    sería lo correcto, pero es un **cambio de dependencias**, no de código.
+  - **Helper duplicado `formatDateToIsoOutput`**, idéntico en `turno-form.tsx:80` y
+    `block-slot-modal.tsx:50`. Candidato a `lib/utils/`.
+  - **Indentación a 4 espacios** en los bloques `onDelete`/`onSubmit` de esos dos archivos, contra
+    los 2 del resto del repo. Cosmético; **no tocar dentro de una tanda de tipos** (ensuciaría el diff).
 - **Plan de las tandas restantes** (nota de planificación, no compromiso de fecha):
-  **L2** — los `any` de FullCalendar (`calendar-view.tsx`, `turno-form.tsx`) + los `catch` de turnero
-  que leen `.message`, `block-slot-modal.tsx` incluido. ⚠ Ojo en esos: los errores de `supabase-js`
-  (`PostgrestError`) **no son instancias de `Error`**, así que un `instanceof Error` a secas mandaría
-  el mensaje al fallback genérico y **el usuario perdería el detalle que hoy ve** — es un cambio de
-  comportamiento, no limpieza. · **L3** — `perfil/actions.ts`, los 6 `no-img-element`, los 2
-  `set-state-in-effect` y la **política de `_` en `eslint.config.mjs`** (destraba el `_pid`). ·
-  **L4** — el nudo de tipos del `zodResolver` en `consulta-detail.tsx`, **aislado** (ver el ítem de
-  abajo).
+  - **L3** — `perfil/actions.ts` (7 `any`), los 6 `no-img-element`, los 2 `set-state-in-effect` y la
+    **política de `_` en `eslint.config.mjs`** (destraba el `_pid`).
+    ⚠ **Acá SÍ aplica la advertencia de `PostgrestError`** (estaba mal anotada sobre L2, donde el
+    diagnóstico demostró que no aplicaba). `perfil/actions.ts` hace **`if (error) throw error`** en
+    **6 lugares** (`:75, :120, :165, :208, :306, :343`), o sea **lanza el objeto crudo de
+    supabase-js**, que **no es instancia de `Error`**; y sus 6 `catch` leen `err.message`. Un
+    `instanceof Error` a secas los mandaría al fallback genérico y **el usuario perdería el mensaje
+    que hoy ve**. Ahí el narrowing **no es mecánico**: hay que contemplar el shape de
+    `PostgrestError` (`message`/`code`/`details`/`hint`) o normalizar en el `throw`.
+  - **L4** — el nudo de tipos del `zodResolver` en `consulta-detail.tsx`, **aislado** (ver el ítem de
+    abajo).
+  - **Tanda "tipos de dominio" (sin número de L — NO es limpieza de lint).** Junta el **grupo (C) del
+    turnero** (7) con los **4 `any` no-catch de Route Handlers** que anotó L1, porque **son la misma
+    cosa**: crear y aplicar tipos de dominio, no corregir anotaciones. Ambos grupos fueron excluidos
+    de sus tandas por idéntico criterio, y comparten método (definir el tipo que falta, aplicarlo,
+    compilar). Conviene hacerlos **juntos** y no repartidos entre tandas de lint.
 - **⚠ PENDIENTE — nudo de tipos en `consulta-detail.tsx`. Severidad baja, requiere `tsc`.**
   (Abierto 2026-07-30; **sigue vigente al 2026-08-03**: el `as any` está en
   `src/components/pacientes/consultas/consulta-detail.tsx:215`.) Se dejó **deliberadamente afuera**
