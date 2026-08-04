@@ -9,7 +9,7 @@ interface RouteContext {
   params: Promise<{ id: string }>
 }
 
-async function getTenantMedicoId(supabase: any, userId: string) {
+async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
   const { data: profile } = await supabase
     .from('profiles')
     .select('role, medico_id')

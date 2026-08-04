@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { Loader2, CalendarPlus, Ban, RefreshCw, Tag, Stethoscope, GraduationCap, User, Clipboard, Bell } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import type { BloqueoAgenda } from '@/types'
 
 import { TurnoFormModal } from './turno-form'
 import { BlockSlotModal } from './block-slot-modal'
@@ -215,7 +216,7 @@ export function CalendarView() {
             extendedProps: { type: 'turno', raw: t },
           }))
 
-        const bloqueosMap = data.bloqueos.map((b: any) => ({
+        const bloqueosMap = data.bloqueos.map((b: BloqueoAgenda) => ({
           id: `block-${b.id}`,
           title: b.motivo || 'Bloqueado',
           start: b.fecha_inicio,

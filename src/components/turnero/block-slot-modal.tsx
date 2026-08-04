@@ -7,6 +7,7 @@ import { Loader2, Ban, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { BloqueoFormData, bloqueoAgendaSchema } from '@/lib/validations/turno.schema'
 import { reformatDateForInput } from '@/lib/utils/fecha-input'
+import type { BloqueoAgenda } from '@/types'
 
 import {
   Dialog,
@@ -43,7 +44,7 @@ interface BlockSlotModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   initialDates: { start: string, end: string } | null
-  initialData?: any // RAW event data
+  initialData?: BloqueoAgenda // RAW event data
   onSaved: () => void
 }
 
