@@ -19,7 +19,7 @@ import { toast } from 'sonner'
 import { Loader2, CalendarPlus, Ban, RefreshCw, Tag, Stethoscope, GraduationCap, User, Clipboard, Bell } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { BloqueoAgenda } from '@/types'
+import type { BloqueoAgenda, TurnoConPaciente } from '@/types'
 
 import { TurnoFormModal } from './turno-form'
 import { BlockSlotModal } from './block-slot-modal'
@@ -123,6 +123,16 @@ function DayGridEventContent({ event, creationMode }: { event: EventApi; creatio
   )
 }
 
+/**
+ * Evento seleccionado en el calendario. Espeja exactamente lo que `fetchEvents` siembra en
+ * `extendedProps` (`{ type, raw }`), porque un MISMO estado alimenta los dos modales y cada
+ * uno lee campos disjuntos: la discriminante `type` es lo que permite entregarle a cada modal
+ * solo su variante, en vez de pasarles el mismo `any` a los dos.
+ */
+type SelectedEvent =
+  | { type: 'turno'; raw: TurnoConPaciente }
+  | { type: 'bloqueo'; raw: BloqueoAgenda }
+
 export function CalendarView() {
   const calendarRef = useRef<FullCalendar>(null)
   const isMobile = useIsMobile()
@@ -131,7 +141,7 @@ export function CalendarView() {
   const [turnoModalOpen, setTurnoModalOpen] = useState(false)
   const [blockModalOpen, setBlockModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: string; end: string } | null>(null)
-  const [selectedEvent, setSelectedEvent] = useState<any | null>(null)
+  const [selectedEvent, setSelectedEvent] = useState<SelectedEvent | null>(null)
   // El valor no se lee en ningún lado; se conserva el setter porque FullCalendar
   // lo llama en viewDidMount/datesSet y ese re-render es el comportamiento actual.
   const [, setCurrentView] = useState('timeGridWeek')
@@ -201,11 +211,11 @@ export function CalendarView() {
         const savedCategories = activeCategories
 
         const turnosMap = data.turnos
-          .filter((t: any) => {
+          .filter((t: TurnoConPaciente) => {
             const cat = t.categoria || 'turno_medico'
             return savedCategories.has(cat)
           })
-          .map((t: any) => ({
+          .map((t: TurnoConPaciente) => ({
             id: t.id,
             title: t.paciente
               ? t.paciente.nombre_completo
@@ -263,11 +273,16 @@ export function CalendarView() {
   }
 
   const handleEventClick = (clickInfo: EventClickArg) => {
-    const { type, raw } = clickInfo.event.extendedProps
-    setSelectedEvent(raw)
+    // Único punto donde el dato vuelve a entrar sin tipo: `extendedProps` es
+    // `Record<string, any>` por diseño de FullCalendar. La aserción no inventa nada —
+    // describe el objeto que nosotros mismos sembramos en `fetchEvents` (`{ type, raw }`).
+    // La aserción va sobre el objeto ENTERO y no sobre `type`/`raw` por separado:
+    // destructurar primero rompe la correlación entre la discriminante y el payload.
+    const evento = clickInfo.event.extendedProps as SelectedEvent
+    setSelectedEvent(evento)
     setSelectedSlot(null)
-    if (type === 'turno') setTurnoModalOpen(true)
-    else if (type === 'bloqueo') setBlockModalOpen(true)
+    if (evento.type === 'turno') setTurnoModalOpen(true)
+    else if (evento.type === 'bloqueo') setBlockModalOpen(true)
   }
 
   // Extrae el UUID real del ID de un bloqueo (que tiene el prefijo "block-")
@@ -559,7 +574,7 @@ export function CalendarView() {
         open={turnoModalOpen}
         onOpenChange={setTurnoModalOpen}
         initialDates={selectedSlot}
-        initialData={selectedEvent}
+        initialData={selectedEvent?.type === 'turno' ? selectedEvent.raw : undefined}
         onSaved={refreshAction}
         onSwitchToBlock={() => {
           setTurnoModalOpen(false)
@@ -571,7 +586,7 @@ export function CalendarView() {
         open={blockModalOpen}
         onOpenChange={setBlockModalOpen}
         initialDates={selectedSlot}
-        initialData={selectedEvent}
+        initialData={selectedEvent?.type === 'bloqueo' ? selectedEvent.raw : undefined}
         onSaved={refreshAction}
       />
     </>

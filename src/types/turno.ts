@@ -3,6 +3,8 @@
 // Tipos del turnero: turnos, bloqueos de agenda y auditoría
 // ============================================================
 
+import type { Paciente } from './paciente'
+
 export type TurnoEstado =
   | 'pendiente'
   | 'confirmado'
@@ -32,6 +34,20 @@ export interface Turno {
   consulta_id: string | null
   created_at: string
   updated_at: string
+}
+
+/**
+ * Turno tal como lo devuelve `GET /api/turnero`, que proyecta el join
+ * `paciente:paciente_id (id, nombre_completo)` sobre la fila completa (`*`).
+ *
+ * ⚠ El embebido trae SOLO esos dos campos: no es un `Paciente` completo.
+ * El shape lo fija la proyección del endpoint, así que otras rutas que embeban
+ * paciente con otros campos (p. ej. el cron de recordatorios) necesitan su propio tipo.
+ */
+export interface TurnoConPaciente extends Turno {
+  /** Join de GET /api/turnero: `paciente:paciente_id (id, nombre_completo)`.
+   *  NULL en categorías sin paciente (curso, personal, administrativo, recordatorio). */
+  paciente: Pick<Paciente, 'id' | 'nombre_completo'> | null
 }
 
 export interface TurnoInsert {
