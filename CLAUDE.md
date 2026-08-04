@@ -173,6 +173,21 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   individualmente**—; y tener presente que **`event.extendedProps` es `Record<string, any>` por
   diseño**, así que tipar el handler **no** tipa el payload de la app que viaja ahí adentro (eso
   necesita un tipo de dominio propio).
+- **`useForm` con un schema que tiene `.transform()` o `z.coerce`: van los TRES genéricos.**
+  Cuando `z.input` ≠ `z.output`, el tipo del resolver no calza con
+  `useForm<TFieldValues>` y aparece la tentación del `as any`. La forma correcta es
+  **`useForm<z.input, unknown, z.output>({ resolver: zodResolver(schema) })`** — el tercer genérico
+  es el tipo **de salida**. Ejemplo vivo: `consultas/consulta-detail.tsx` con
+  `consultaSchema` (`useForm<ConsultaFormInput, unknown, ConsultaFormData>`).
+  ⚠ **`z.coerce.number()` hace que el INPUT sea `unknown`** (acepta cualquier cosa, y en una unión
+  `unknown` absorbe al otro miembro), así que `field.value` de esos campos es `unknown` y **leerlo
+  exige conversión explícita** (`field.value == null ? '' : String(field.value)` — el `== null`
+  primero, o `String(null)` da `"null"`). Ese `unknown` **viene del schema, no del componente**: no
+  se arregla en el formulario.
+  ⚠ Y ojo: el tercer genérico **solo tipa `handleSubmit`**. Si el submit es manual
+  (`trigger()` + `getValues()`, como en ese componente), `getValues()` devuelve el **input crudo**,
+  **no** el output transformado — la normalización queda del lado del servidor, donde se hace el
+  `safeParse`.
 - **Imports:** alias `@/` → `src/`. Agrupar externas → componentes → lib → types.
   Preferí importar tipos desde `@/types` (barrel `index.ts`).
 - Al tocar tipos, mantené la organización por dominio existente (no consolidar en

@@ -33,6 +33,23 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   negocio 12 y nota técnica 16. **Quedan pendientes** los **cinco** ítems de difusión listados
   abajo (opt-out, dominio de Resend, envío por lotes, reintento de fallidos y corte del día en
   UTC), más **WhatsApp**, que no es un pendiente activo sino un canal **fuera de alcance**.
+- **⚠ HUECO FUNCIONAL NUEVO (2026-08-03) — no hay forma de descartar/eliminar un BORRADOR de
+  consulta.** Detectado al verificar la tanda L4; **preexistente**, no lo causó esa tanda (que fue
+  solo tipado). Se puede **crear y guardar** un borrador, pero **no cancelarlo ni borrarlo**: un
+  borrador equivocado, de prueba o incompleto **queda sin salida** en la HC del paciente.
+  ⚠ **Requiere decisiones de producto y de seguridad ANTES de codear** — no es un fix menor:
+  - **¿Borrado físico o lógico?** La regla de negocio 1 protege las consultas **finalizadas**, no los
+    borradores; pero hay que decidir explícitamente si un borrador se borra de verdad o se archiva
+    (criterio análogo al de pacientes, regla 9).
+  - **¿Qué rol puede?** ¿Solo el médico, o también el asistente que lo creó (que puede crear
+    borradores con `crear_consultas`, pero no finalizar)?
+  - **⚠ Ley 25.326 — consultar con el médico.** Un borrador **puede contener datos clínicos del
+    paciente** ya cargados. El tratamiento de esos datos al descartar (¿se eliminan?, ¿quedan en un
+    log?, ¿se conserva rastro de que existió?) es una decisión que **corresponde al responsable de
+    los datos**, no al criterio técnico.
+  - Nota: `DELETE /api/consultas/[id]` **ya existe y solo permite borrar borradores** (rechaza
+    `finalizada`), así que el backend está en gran parte; lo que falta es la decisión y la UI.
+  **Tanda propia, con su diagnóstico.**
 - **Recetas:** bloqueadas por certificación ANMAT. `src/app/api/recetas/route.ts` es
   stub y `src/lib/pdf/receta-template.tsx` es un placeholder vacío (esperado; dejar
   documentado que está en pausa).
@@ -588,18 +605,64 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   salía el detalle es exactamente el síntoma de un narrowing roto**, y es silencioso: sin crash ni
   error en consola. El análisis caso por caso indica comportamiento idéntico al previo, pero **es
   razonamiento, no evidencia de runtime**. Ideal verificarlo en el deploy.
-- **Deuda que QUEDA: 24 problemas preexistentes** (23 errores + 1 warning; medido 2026-08-03 tras la
-  sección L3). Desglose por regla, para dimensionar las tandas que faltan:
-  - **21 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any` en todo el
-    repo**, ni ningún `any` de FullCalendar, y **`perfil/actions.ts` quedó limpio**. Lo que resta es
-    **diseño de tipos, no anotaciones**: el **grupo (C) de datos de dominio del turnero** (7:
-    `calendar-view.tsx` 4, `turno-form.tsx` 2, `block-slot-modal.tsx` 1 — ver abajo), los **4 de
-    Route Handlers que NO son de `catch`** (ver abajo), y **10 sueltos**: `consulta-detail.tsx` (2),
+- **✅ RESUELTO (tanda L4, 2026-08-03) — 24 → 21 problemas (−3). El nudo del `zodResolver`.** Última
+  pieza de lint puro, aislada desde el principio por su final incierto. **Tres cambios entrelazados,
+  todos en `consulta-detail.tsx`; el diagnóstico previo con sondas de tipos midió que el fix era
+  contenido y así resultó** — no se ramificó fuera del archivo.
+  - **El `as any` del resolver → tres genéricos.**
+    `useForm<ConsultaFormInput>({ resolver: zodResolver(consultaSchema) as any })` pasó a
+    **`useForm<ConsultaFormInput, unknown, ConsultaFormData>({ resolver: zodResolver(consultaSchema) })`**.
+    El cast era un **resabio**: compila sin él. Los tres genéricos **documentan en el tipo** que
+    **entra `z.input` y sale `z.output`**, y de paso **revivieron `ConsultaFormData`**, que era un
+    export sin ningún consumidor.
+  - **El `mode` sin usar.** Se eliminó **solo el binding** del destructuring de `ConsultaForm`
+    (distingue alta/edición por `consulta ? … : …`). Se conservaron el `Pick<…>` y el `mode={mode}`
+    del padre `ConsultaDetail`, que **sí** lo usa para decidir la vista de solo lectura.
+  - **`numericProps(field: any)` → tipado real.** Pasó a
+    `field: ControllerRenderProps<ConsultaFormInput, FieldPath<ConsultaFormInput>>`, con la
+    conversión explícita **`value: field.value == null ? '' : String(field.value)`** (el `== null`
+    va **primero** para que un `null` no termine como la cadena `"null"`). **Calzó limpio en los 12
+    sitios de llamada, sin necesidad de `eslint-disable`** — la red de seguridad prevista no hizo falta.
+
+  > ⚠ **Razonamiento de tipos documentado en el código — no revertirlo.** Los tres genéricos no son
+  > adorno: `z.input` y `z.output` **difieren de verdad**, por el `.transform()` (`'' → null`) y
+  > porque **`z.coerce.number()` deja el input de los 12 campos numéricos en `unknown`**. De ahí que
+  > `field.value` sea `unknown` y necesite conversión explícita: **ese `unknown` viene del SCHEMA, no
+  > del componente**, así que no se arregla tocando `consulta-detail.tsx`. Ambos puntos quedaron
+  > comentados en el propio archivo.
+  - **Impacto: −2 `no-explicit-any` y −1 `no-unused-vars`.** `tsc` y `build` limpios —y acá **`tsc`
+    SÍ cubre la tanda de punta a punta**, a diferencia de L3c: es tipado puro y si los genéricos o la
+    conversión quedaran mal, falla en compilación—. Comparación programática del linter: **cero
+    problemas nuevos**. **`consulta-detail.tsx` desapareció por completo del lint.**
+  - **Verificado en la app:** crear consulta, los campos numéricos aceptan input, el **IMC se
+    calcula** en vivo y **guardar borrador** funciona. (Las consultas ya finalizadas no se editan:
+    es la regla de negocio 1, no un efecto de L4.) La única diferencia observable posible era el
+    `String()` en los inputs numéricos, que **React renderiza idéntico**.
+- **🏁 HITO — con L4 se terminó el LINT PURO / MECÁNICO.** Recorrido completo del bloque:
+
+  | Tanda | Qué atacó | Conteo |
+  |---|---|---|
+  | *(partida)* | deuda heredada tras la tanda 1A | **73** |
+  | **L1** | los 17 `catch (error: any)` de Route Handlers | 73 → **54** |
+  | **L2** | tipos de FullCalendar + los 7 `catch` con `.message` del turnero | 54 → **38** |
+  | **L3** (a+b+c) | `no-img-element`, config de ESLint, los 6 `catch` de `perfil/actions.ts` | 38 → **24** |
+  | **L4** | el nudo del `zodResolver` en `consulta-detail.tsx` | 24 → **21** |
+
+  ⚠ **Los 21 restantes NO son deuda de lint mecánica.** No queda ni un `catch` con `any` en el repo,
+  ni un `any` de FullCalendar, ni un `no-img-element`, ni un `no-unused-vars`. Lo que sobra es
+  **trabajo de otra naturaleza** —crear tipos de dominio, refactorizar efectos— y **ya está asignado
+  a tandas con nombre propio** (ver el plan). **No abordarlos como "limpieza de lint"**: ese fue
+  exactamente el criterio con el que se los fue apartando tanda tras tanda.
+- **Deuda que QUEDA: 21 problemas preexistentes** (21 errores, **0 warnings** — primera vez en la
+  serie sin ningún warning; medido 2026-08-03 tras L4). Desglose por regla:
+  - **19 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any` en todo el
+    repo**, ni ningún `any` de FullCalendar, y **`perfil/actions.ts` y `consulta-detail.tsx` quedaron
+    limpios**. Lo que resta es **diseño de tipos, no anotaciones**: el **grupo (C) de datos de dominio
+    del turnero** (7: `calendar-view.tsx` 4, `turno-form.tsx` 2, `block-slot-modal.tsx` 1 — ver
+    abajo), los **4 de Route Handlers que NO son de `catch`** (ver abajo), y **8 sueltos**:
     `pedido-form.tsx` (2), `historia-clinica-form.tsx` (2), `perfil-form.tsx`,
     `notificaciones/list.tsx`, `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 cada uno).
-  - **1 `@typescript-eslint/no-unused-vars`** — `consulta-detail.tsx:198` (`mode`), que **pertenece a
-    L4**: se resuelve junto con el nudo del `zodResolver` del mismo archivo. El `_pid` de
-    `consultas/[id]/route.ts:111` se cerró en L3b con `ignoreRestSiblings`.
+  - **0 `@typescript-eslint/no-unused-vars`** — el `mode` se cerró en L4 y el `_pid` en L3b.
   - **0 `@next/next/no-img-element`** — cerrados en L3a.
   - **2 `react-hooks/set-state-in-effect`** — **`calendar-view.tsx:46`** (línea corrida por los
     imports que sumó L2; era `:37`) y `onboarding-client.tsx:44`. ⚠ **Son dos problemas distintos, no
@@ -667,9 +730,16 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     (`:41` y `:214`, `rateLimit(_request, …)`). El prefijo comunica lo contrario de lo que pasa;
     convendría renombrarlos si se adopta la convención.
   - **Dejarla para cuando el dueño del proyecto la tome a conciencia**, no colada en una tanda de lint.
-- **Plan de las tandas restantes** (nota de planificación, no compromiso de fecha):
-  - **L4** — el nudo de tipos del `zodResolver` en `consulta-detail.tsx`, **aislado** (ver el ítem de
-    abajo). **Se lleva también el `mode` de `:198`**, el único `no-unused-vars` que queda.
+- **Plan de las tandas restantes** (nota de planificación, no compromiso de fecha). ⚠ **Ninguna es
+  limpieza de lint**: la serie L1→L4 agotó eso (ver el hito).
+  - **Tanda "tipos de dominio"** — **11 de los 19 `any`**: el **grupo (C) del turnero** (7) + los **4
+    de Route Handlers no-catch**. Requieren **crear tipos** (`TurnoConPaciente`), no corregir
+    anotaciones. Es la más grande de las que quedan.
+  - **Los 8 `any` sueltos — SIN tanda asignada.** `pedido-form.tsx` (2),
+    `historia-clinica-form.tsx` (2), `perfil-form.tsx`, `notificaciones/list.tsx`,
+    `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 c/u). **Habría que diagnosticarlos antes de
+    agruparlos**: no se sabe todavía si comparten naturaleza (como pasó con los catches) o si son
+    casos independientes. **No asumir que son un lote.**
   - **Tanda "efectos y estado derivado"** — los 2 `react-hooks/set-state-in-effect`. **No son un
     lote:** son de naturaleza distinta, cambian comportamiento observable y se verifican en
     **superficies distintas**. Se pueden hacer por separado.
@@ -686,6 +756,14 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     cosa**: crear y aplicar tipos de dominio, no corregir anotaciones. Ambos grupos fueron excluidos
     de sus tandas por idéntico criterio, y comparten método (definir el tipo que falta, aplicarlo,
     compilar). Conviene hacerlos **juntos** y no repartidos entre tandas de lint.
+  - **💡 CANDIDATA FUTURA (idea, NO pendiente activo) — que `z.input` del schema de consulta deje de
+    ser `unknown`.** `numericOptional` en `consulta.schema.ts` usa **`z.coerce.number()`**, cuyo input
+    es `unknown` y **absorbe la unión**, así que `ConsultaFormInput` deja los 12 campos numéricos en
+    `unknown`. Es **lo único** que haría de `field.value` un tipo útil y volvería innecesaria la
+    conversión explícita de `numericProps` (ver L4). ⚠ **Pero NO es lint:** ese schema lo usan las
+    **dos Route Handlers** (`api/consultas/route.ts:97` y `api/consultas/[id]/route.ts:102`,
+    `safeParse`), así que tocarlo **cambia la validación server-side de todas las consultas**.
+    Anotado como idea por si alguna vez vuelve a molestar; **hoy no hay nada roto**.
   - **Tanda "mensajes de error propios" (producto + seguridad, NO lint).** `perfil/actions.ts`
     devuelve al usuario el **mensaje crudo de Postgres** (p. ej. *"duplicate key value violates unique
     constraint …"*), con nombres de tablas y constraints: es **UX pobre** y una **fuga leve de
