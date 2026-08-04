@@ -6,6 +6,15 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import esLocale from '@fullcalendar/core/locales/es'
+import type {
+  EventApi,
+  EventSourceFuncArg,
+  EventInput,
+  DateSelectArg,
+  EventClickArg,
+  EventDropArg,
+} from '@fullcalendar/core'
+import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { toast } from 'sonner'
 import { Loader2, CalendarPlus, Ban, RefreshCw, Tag, Stethoscope, GraduationCap, User, Clipboard, Bell } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -44,7 +53,7 @@ function useIsMobile(breakpoint = 768) {
 }
 
 // ── Renderizado custom — vista semana/día ────────────────────
-function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 'turno' | 'bloqueo' }) {
+function TurnoEventContent({ event, creationMode }: { event: EventApi; creationMode: 'turno' | 'bloqueo' }) {
   const { type, raw } = event.extendedProps
   const isBloqueo = type === 'bloqueo' || (!type && creationMode === 'bloqueo')
 
@@ -87,7 +96,7 @@ function TurnoEventContent({ event, creationMode }: { event: any; creationMode: 
 }
 
 // ── Renderizado custom — vista mes ───────────────────────────
-function DayGridEventContent({ event, creationMode }: { event: any; creationMode: 'turno' | 'bloqueo' }) {
+function DayGridEventContent({ event, creationMode }: { event: EventApi; creationMode: 'turno' | 'bloqueo' }) {
   const { type, raw } = event.extendedProps
   const isBloqueo = type === 'bloqueo' || (!type && creationMode === 'bloqueo')
   const startTime = event.start
@@ -176,7 +185,11 @@ export function CalendarView() {
   }, [isMobile])
 
   const fetchEvents = useCallback(
-    async (info: any, successCallback: any, failureCallback: any) => {
+    async (
+      info: EventSourceFuncArg,
+      successCallback: (events: EventInput[]) => void,
+      failureCallback: (error: Error) => void
+    ) => {
       setLoading(true)
       try {
         const res = await fetch(`/api/turnero?start=${info.startStr}&end=${info.endStr}`)
@@ -211,9 +224,12 @@ export function CalendarView() {
         }))
 
         successCallback([...turnosMap, ...bloqueosMap])
-      } catch (error: any) {
-        toast.error('Error al cargar agenda', { description: error.message })
-        failureCallback(error)
+      } catch (error) {
+        // Un solo Error para las dos salidas: el toast y el failureCallback de
+        // FullCalendar, cuya firma exige Error (no unknown).
+        const err = error instanceof Error ? error : new Error('Error inesperado')
+        toast.error('Error al cargar agenda', { description: err.message })
+        failureCallback(err)
       } finally {
         setLoading(false)
       }
@@ -226,7 +242,7 @@ export function CalendarView() {
     calendarRef.current?.getApi().refetchEvents()
   }, [activeCategories])
 
-  const handleDateSelect = (selectInfo: any) => {
+  const handleDateSelect = (selectInfo: DateSelectArg) => {
     setSelectedEvent(null)
     if (selectInfo.allDay) {
       // Vista mes: la selección es de día completo (sin hora). Proponemos el día
@@ -245,7 +261,7 @@ export function CalendarView() {
     selectInfo.view.calendar.unselect()
   }
 
-  const handleEventClick = (clickInfo: any) => {
+  const handleEventClick = (clickInfo: EventClickArg) => {
     const { type, raw } = clickInfo.event.extendedProps
     setSelectedEvent(raw)
     setSelectedSlot(null)
@@ -256,7 +272,7 @@ export function CalendarView() {
   // Extrae el UUID real del ID de un bloqueo (que tiene el prefijo "block-")
   const bloqueoId = (fcId: string) => fcId.replace(/^block-/, '')
 
-  const handleEventDrop = async (dropInfo: any) => {
+  const handleEventDrop = async (dropInfo: EventDropArg) => {
     const event = dropInfo.event
     const isBloqueo = event.extendedProps.type === 'bloqueo'
 
@@ -299,13 +315,14 @@ export function CalendarView() {
         toast.success(newEstado ? 'Turno confirmado y reprogramado' : 'Turno reprogramado')
         calendarRef.current?.getApi().refetchEvents()
       }
-    } catch (error: any) {
-      toast.error('Error al reprogramar', { description: error.message })
+    } catch (error) {
+      const description = error instanceof Error ? error.message : 'Error inesperado'
+      toast.error('Error al reprogramar', { description })
       dropInfo.revert()
     }
   }
 
-  const handleEventResize = async (resizeInfo: any) => {
+  const handleEventResize = async (resizeInfo: EventResizeDoneArg) => {
     const event = resizeInfo.event
     const isBloqueo = event.extendedProps.type === 'bloqueo'
 
@@ -338,8 +355,9 @@ export function CalendarView() {
         }
         toast.success('Duración actualizada')
       }
-    } catch (error: any) {
-      toast.error('Error al actualizar duración', { description: error.message })
+    } catch (error) {
+      const description = error instanceof Error ? error.message : 'Error inesperado'
+      toast.error('Error al actualizar duración', { description })
       resizeInfo.revert()
     }
   }
