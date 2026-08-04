@@ -156,6 +156,15 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   adorno. El narrowing se justifica solo cuando se **lee una propiedad** (`.message`, `.code`), y ahí
   ⚠ tener presente que los errores de `supabase-js` (`PostgrestError`) **no son instancias de
   `Error`**: un `instanceof Error` a secas los manda al mensaje genérico.
+- **Handlers de FullCalendar: tipar con los tipos de la librería, nunca `any`.** `EventApi`,
+  `DateSelectArg`, `EventClickArg`, `EventDropArg`, `EventSourceFuncArg`, `EventInput` salen de
+  **`@fullcalendar/core`**; ⚠ **`EventResizeDoneArg` NO está en `core`** — vive en
+  **`@fullcalendar/interaction`** (perder tiempo buscándolo en `core` es el error fácil). Dos
+  trampas más: **no** tipar la función de `events` como `EventSourceFunc` —es un **union type**
+  (callback o promesa) y resolverlo a través de `useCallback` es frágil: tipá los **parámetros
+  individualmente**—; y tener presente que **`event.extendedProps` es `Record<string, any>` por
+  diseño**, así que tipar el handler **no** tipa el payload de la app que viaja ahí adentro (eso
+  necesita un tipo de dominio propio).
 - **Imports:** alias `@/` → `src/`. Agrupar externas → componentes → lib → types.
   Preferí importar tipos desde `@/types` (barrel `index.ts`).
 - Al tocar tipos, mantené la organización por dominio existente (no consolidar en
