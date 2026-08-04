@@ -286,6 +286,27 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   inalcanzable desde la campanita, que solo lista mensajes **no leídos** (recientes por definición).
   Si algún día se agrega búsqueda de mensajes o el volumen crece, revisarlo junto con paginar la
   bandeja.
+- **⚠ PENDIENTE NUEVO (2026-08-03) — el LOGO del emisor no se renderiza en los previews de pedido ni
+  de certificado. La firma sí. PREEXISTENTE.** Detectado al verificar visualmente la tanda L3a; **no
+  lo causó L3a**, que solo agregó comentarios de ESLint (diff de 6 inserciones, 0 borrados). El logo
+  se sube bien y **se ve en `/perfil`** después de guardarlo.
+  - **Descartado: no es el `<img>`.** La **firma se muestra en el mismo preview y en el mismo
+    componente**, así que el elemento y su estilo funcionan.
+  - **La ruta de datos es SIMÉTRICA entre logo y firma** —verificado en el código—, lo que hace poco
+    probable un bug de render: `lib/pdf/documentos.ts:91` **selecciona los dos**
+    (`'… firma_url, logo_url'`) y `:106-107` **guarda los dos** en el snapshot; las páginas de detalle
+    los leen igual (`pedidos/[id]/page.tsx:75-76` y `certificados/[id]/page.tsx:74`:
+    `medicoFirma={emisor?.firma_url ?? null}` / `medicoLogo={emisor?.logo_url ?? null}`).
+  - **⚠ PRIMERA HIPÓTESIS A DESCARTAR, y quizá NO sea un bug: la regla de negocio 11.** El
+    `emisor_snapshot` se **congela al emitir**. Un documento emitido **antes** de que se subiera el
+    logo tiene legítimamente `logo_url: null` en su snapshot, y **debe** mostrarse sin logo — eso es
+    el congelado funcionando, no una falla. Que el logo **se vea en `/perfil`** solo prueba que
+    `profiles.logo_url` lo tiene **hoy**, no que el snapshot de **ese** documento lo tuviera al
+    emitirse. Y encaja con que la firma sí aparezca: se habría subido **antes** de emitir.
+  - **Primer paso (barato y decisivo):** consultar el `emisor_snapshot` del documento concreto que se
+    está mirando. Si `logo_url` es **null** → no hay bug, y para verlo hay que **emitir un documento
+    nuevo** con el logo ya cargado. Si `logo_url` **tiene valor** y aun así no se pinta → ahí sí es un
+    bug de render y hay que revisar la condición en `pedido-pdf.tsx` / `certificado-pdf.tsx`.
 - **⏸ DIFERIDO (2026-08-02) — el Realtime de `mensajes_internos` no entrega eventos en vivo. Causa
   acotada a INFRAESTRUCTURA de Supabase, fuera de nuestro código.** Detectado el 2026-07-31 al
   verificar a mano la 1B-parte-1 (**preexistente**, no lo causó esa tanda): con **dos sesiones**
@@ -501,27 +522,85 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     mover, redimensionar, click en evento, cambio de vista— y **camino de error forzando la red
     offline**, donde los 7 toasts muestran su descripción y los eventos revierten. **Sin cambios de
     comportamiento.**
-- **Deuda que QUEDA: 38 problemas preexistentes** (30 errores + 8 warnings; medido 2026-08-03 tras la
-  tanda L2). Desglose por regla, para dimensionar las tandas que faltan:
-  - **28 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any`** en Route
-    Handlers ni en el turnero, **ni ningún `any` de FullCalendar**. Lo que resta es de otra
-    naturaleza: `perfil/actions.ts` (7, con la salvedad de `PostgrestError` — ver L3), el **grupo (C)
-    de datos de dominio del turnero** (7: `calendar-view.tsx` 4, `turno-form.tsx` 2,
-    `block-slot-modal.tsx` 1 — ver abajo), los **4 de Route Handlers que NO son de `catch`** (ver
-    abajo), y sueltos en `consulta-detail.tsx` (2), `pedido-form.tsx` (2),
-    `historia-clinica-form.tsx` (2), `perfil-form.tsx`, `notificaciones/list.tsx`,
-    `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 cada uno).
-  - **2 `@typescript-eslint/no-unused-vars`** — `api/consultas/[id]/route.ts:111` (`_pid`) y
-    `consulta-detail.tsx:198` (`mode`). ⚠ **Corrección:** la versión anterior de este ítem decía que
-    *"los 3 de `consultas/[id]/route.ts` son `catch (error)` sin usar"*. **Solo 2 lo eran** (`:57` y
-    `:237`, ya resueltos en L1). El tercero, **`:111`, NO es un `catch`**: es un descarte de
-    destructuring —`const { paciente_id: _pid, ...updates } = result.data`— que saca `paciente_id`
-    del payload para que no entre en el `UPDATE`. El guion bajo **no lo salva** porque
-    `eslint.config.mjs` **no configura `no-unused-vars`** (usa los defaults, sin
-    `varsIgnorePattern: '^_'`), así que su arreglo **depende de una decisión de política en la
-    config**, no de tocar ese archivo.
-  - **6 `@next/next/no-img-element`** — `<img>` crudos en `pedido-pdf.tsx`, `certificado-pdf.tsx`,
-    `perfil-form.tsx` y `qr-verificacion.tsx`.
+- **✅ RESUELTO (sección L3, 2026-08-03) — 38 → 24 problemas (−14). Tres sub-tandas separadas por
+  riesgo.** El diagnóstico mostró que L3 **no era una tanda**: eran cuatro grupos que habían quedado
+  juntos por descarte, con riesgos y verificaciones distintas. Se ejecutaron **tres**, en orden de
+  menor a mayor riesgo, y el cuarto salió a una tanda propia (ver el plan).
+  - **L3a — los 6 `@next/next/no-img-element` (−6, eran warnings).** Se silenciaron con
+    `eslint-disable-next-line` **justificado uno por uno**, siguiendo el precedente de
+    `estudios-list.tsx:250`. **Ninguno se migró a `next/image`** porque los 6 `src` son
+    **data-URI/base64** —logo y firma del emisor desde `emisor_snapshot`, preview de
+    `readAsDataURL` en `/perfil`, y el QR de `QRCode.toDataURL()`— y `next/image` **no puede
+    optimizar un data-URI**: solo agregaría `width`/`height` obligatorios a cambio de nada. Archivos:
+    `certificado-pdf.tsx`, `pedido-pdf.tsx`, `perfil-form.tsx`, `qr-verificacion.tsx`. **Diff de 6
+    inserciones y 0 borrados: solo comentarios, cero cambio de runtime.**
+    ⚠ **Dos formas de comentario, y no es cosmético:** `//` en los 3 que son la única expresión dentro
+    del consequent de un ternario (ahí los paréntesis contienen una **expresión JS**, y un `{/* */}`
+    metería un segundo elemento adyacente → error de sintaxis) y `{/* */}` en los 3 que son hijos de
+    un `<div>`. Verificar el contexto JSX **antes** de escribir el disable.
+    ⚠ **Aclaración de nombres:** `pedido-pdf.tsx` y `certificado-pdf.tsx` viven en `src/components/`
+    y son **preview HTML en el navegador**, NO plantillas de `@react-pdf/renderer` (esas están en
+    `src/lib/pdf/` y usan `<Image>`, cubiertas por el override de `jsx-a11y/alt-text`).
+  - **L3b — dos cambios chicos e independientes (−1 `any`, −1 `no-unused-vars`).**
+    1. **El `as any` de `perfil/actions.ts:43` era un cast REDUNDANTE**, no el choque clásico de
+       `Array.includes` con una unión ancha: `TIPOS_VALIDOS` es `as const` (elemento
+       `'MP'|'MN'|'ME'`) y `m.tipo` es `MatriculaTipo`, **la misma unión**, porque el parámetro está
+       tipado `matriculas?: Matricula[]`. Por eso se **borró** el cast en vez de reemplazarlo por
+       `(TIPOS_VALIDOS as readonly string[])`, que habría **agregado** una aserción donde no hace
+       falta. **La validación en runtime se conserva**: es un Server Action y sus argumentos vienen
+       del cliente sin validar, así que ese `if` es defensa real aunque a nivel de tipos parezca
+       redundante.
+    2. **`ignoreRestSiblings: true`** para `@typescript-eslint/no-unused-vars` en
+       `eslint.config.mjs`, que elimina el warning de `_pid`
+       (`const { paciente_id: _pid, ...updates } = result.data`, `consultas/[id]/route.ts:111`).
+       Se verificó antes que `eslint-config-next` declara la regla como **`'warn'` SIN opciones**
+       (`dist/typescript.js:36`) y que la regla **mergea opciones parciales sobre sus defaults**, así
+       que pasar solo ese flag **replica la severidad y no pisa** `args`/`caughtErrors`/`vars`. **El
+       único delta del linter es que `_pid` deja de reportarse.** Se dejó afuera
+       `varsIgnorePattern`/`argsIgnorePattern` a propósito (ver la decisión de política, más abajo).
+  - **L3c — los 6 `catch (err: any)` de `perfil/actions.ts` (−6 `any`).** Pasaron a `catch (err)`
+    (`unknown`) leyendo el mensaje con un helper module-local **`mensajeDeError(e: unknown)`** que
+    hace **duck-typing sobre `.message`**. Se preservaron los 6 fallbacks y los 6 `console.error`
+    exactos; el archivo quedó **sin ningún `any`**.
+
+    > ⚠ **POR QUÉ duck-typing y NO `instanceof Error` — no revertir esto.** Cada `try` termina en
+    > `if (error) throw error`, con el `error` del destructuring de supabase-js **sin
+    > `.throwOnError()`**. En ese camino la librería hace **`error = JSON.parse(body)`**
+    > (`postgrest-js/src/PostgrestBuilder.ts:203`): un **objeto plano**. El `new PostgrestError(...)`
+    > —que sí extiende `Error`— **solo se construye con `.throwOnError()`** (`:225`). O sea: **el
+    > tipo declarado dice `Error` pero el runtime no lo es**, así que un `err instanceof Error`
+    > **compila sin una queja y falla en silencio en producción**, mandando todo error de base al
+    > mensaje genérico. **`tsc` NO puede detectarlo.** El comentario del helper documenta esto en el
+    > código, justamente para que un futuro "cleanup" no lo simplifique.
+  - **Impacto y verificación.** `tsc`, `build` y `lint` limpios en las tres, con **cero problemas
+    nuevos** confirmado por comparación programática del linter en cada una. **L3a** verificada
+    visualmente (las imágenes siguen mostrándose). **L3b** solo `tsc`+`lint` — no toca runtime.
+    **L3c** con el camino feliz de `/perfil` probado a mano: editar perfil, subir firma y logo, y
+    listar / cambiar permisos / desvincular asistentes. **Queda una verificación pendiente** — ver
+    el ítem que sigue.
+- **⚠ VERIFICACIÓN PENDIENTE de L3c — confirmar en runtime que un error de BASE muestra el mensaje
+  detallado.** No se pudo forzar en local por no tener identificada una constraint fácil de chocar.
+  ⚠ **Cortar la red NO sirve para esto:** un `fetch` fallido lanza un `TypeError`, que **sí** es
+  instancia de `Error` y entra por la primera rama del helper. Hay que provocar un error **de la
+  base** —violación de constraint o denegación de RLS, o sea que PostgREST responda no-ok con cuerpo
+  JSON— y confirmar que en pantalla aparece **el mensaje concreto** y no el genérico
+  (`'Error al actualizar permisos del asistente.'`, etc.). **Ver el fallback genérico donde antes
+  salía el detalle es exactamente el síntoma de un narrowing roto**, y es silencioso: sin crash ni
+  error en consola. El análisis caso por caso indica comportamiento idéntico al previo, pero **es
+  razonamiento, no evidencia de runtime**. Ideal verificarlo en el deploy.
+- **Deuda que QUEDA: 24 problemas preexistentes** (23 errores + 1 warning; medido 2026-08-03 tras la
+  sección L3). Desglose por regla, para dimensionar las tandas que faltan:
+  - **21 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any` en todo el
+    repo**, ni ningún `any` de FullCalendar, y **`perfil/actions.ts` quedó limpio**. Lo que resta es
+    **diseño de tipos, no anotaciones**: el **grupo (C) de datos de dominio del turnero** (7:
+    `calendar-view.tsx` 4, `turno-form.tsx` 2, `block-slot-modal.tsx` 1 — ver abajo), los **4 de
+    Route Handlers que NO son de `catch`** (ver abajo), y **10 sueltos**: `consulta-detail.tsx` (2),
+    `pedido-form.tsx` (2), `historia-clinica-form.tsx` (2), `perfil-form.tsx`,
+    `notificaciones/list.tsx`, `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 cada uno).
+  - **1 `@typescript-eslint/no-unused-vars`** — `consulta-detail.tsx:198` (`mode`), que **pertenece a
+    L4**: se resuelve junto con el nudo del `zodResolver` del mismo archivo. El `_pid` de
+    `consultas/[id]/route.ts:111` se cerró en L3b con `ignoreRestSiblings`.
+  - **0 `@next/next/no-img-element`** — cerrados en L3a.
   - **2 `react-hooks/set-state-in-effect`** — **`calendar-view.tsx:46`** (línea corrida por los
     imports que sumó L2; era `:37`) y `onboarding-client.tsx:44`. ⚠ **Son dos problemas distintos, no
     un lote:** el primero está en el hook `useIsMobile` y **no es derivable en render** (`matchMedia`
@@ -574,23 +653,46 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     `block-slot-modal.tsx:50`. Candidato a `lib/utils/`.
   - **Indentación a 4 espacios** en los bloques `onDelete`/`onSubmit` de esos dos archivos, contra
     los 2 del resto del repo. Cosmético; **no tocar dentro de una tanda de tipos** (ensuciaría el diff).
+- **⚠ DECISIÓN DE POLÍTICA PENDIENTE — adoptar (o no) la convención de prefijo `_`.** Hoy el repo
+  usa `_` en **8 lugares** (`_req` ×5, `_request` ×3) **sin ningún efecto**, porque
+  `eslint.config.mjs` no define `varsIgnorePattern`/`argsIgnorePattern`. Se dejó afuera de L3b a
+  propósito: **no es limpieza, es una decisión de equipo**. Datos para tomarla:
+  - **Hoy no silenciaría nada:** los `_req`/`_request` son parámetros que **preceden a uno usado**, y
+    el default `args: 'after-used'` ya no los marca. Su valor sería **preventivo**, para que la
+    convención empiece a significar algo.
+  - **El costo:** a partir de ahí, **cualquier** variable que empiece con `_` deja de reportarse para
+    siempre. Si alguien "arregla" un unused legítimo renombrándolo en vez de borrarlo, el linter se
+    queda mudo.
+  - ⚠ **Nota de coherencia:** `consultas/[id]/route.ts:34` y `:207` declaran `_request` **y lo usan**
+    (`:41` y `:214`, `rateLimit(_request, …)`). El prefijo comunica lo contrario de lo que pasa;
+    convendría renombrarlos si se adopta la convención.
+  - **Dejarla para cuando el dueño del proyecto la tome a conciencia**, no colada en una tanda de lint.
 - **Plan de las tandas restantes** (nota de planificación, no compromiso de fecha):
-  - **L3** — `perfil/actions.ts` (7 `any`), los 6 `no-img-element`, los 2 `set-state-in-effect` y la
-    **política de `_` en `eslint.config.mjs`** (destraba el `_pid`).
-    ⚠ **Acá SÍ aplica la advertencia de `PostgrestError`** (estaba mal anotada sobre L2, donde el
-    diagnóstico demostró que no aplicaba). `perfil/actions.ts` hace **`if (error) throw error`** en
-    **6 lugares** (`:75, :120, :165, :208, :306, :343`), o sea **lanza el objeto crudo de
-    supabase-js**, que **no es instancia de `Error`**; y sus 6 `catch` leen `err.message`. Un
-    `instanceof Error` a secas los mandaría al fallback genérico y **el usuario perdería el mensaje
-    que hoy ve**. Ahí el narrowing **no es mecánico**: hay que contemplar el shape de
-    `PostgrestError` (`message`/`code`/`details`/`hint`) o normalizar en el `throw`.
   - **L4** — el nudo de tipos del `zodResolver` en `consulta-detail.tsx`, **aislado** (ver el ítem de
-    abajo).
+    abajo). **Se lleva también el `mode` de `:198`**, el único `no-unused-vars` que queda.
+  - **Tanda "efectos y estado derivado"** — los 2 `react-hooks/set-state-in-effect`. **No son un
+    lote:** son de naturaleza distinta, cambian comportamiento observable y se verifican en
+    **superficies distintas**. Se pueden hacer por separado.
+    - `calendar-view.tsx:46` (`useIsMobile`) → fix canónico **`useSyncExternalStore`** (no es
+      derivable en render: `matchMedia` no existe en SSR). ⚠ **Cambia comportamiento en móvil**:
+      `isMobile` alimenta el efecto que hace `changeView` a vista día. Verificación: **móvil real o
+      emulado, con recarga**.
+    - `onboarding-client.tsx:44` (debounce de búsqueda) → **derivar en render**, pero ⚠ **conservando
+      el guard del timer**: el `return` temprano hace dos cosas —limpia estado **y** evita agendar el
+      `setTimeout`—, así que mover solo el reseteo dispararía una búsqueda por tecla. Verificación:
+      **flujo de onboarding**, que es la puerta de entrada de los asistentes.
   - **Tanda "tipos de dominio" (sin número de L — NO es limpieza de lint).** Junta el **grupo (C) del
     turnero** (7) con los **4 `any` no-catch de Route Handlers** que anotó L1, porque **son la misma
     cosa**: crear y aplicar tipos de dominio, no corregir anotaciones. Ambos grupos fueron excluidos
     de sus tandas por idéntico criterio, y comparten método (definir el tipo que falta, aplicarlo,
     compilar). Conviene hacerlos **juntos** y no repartidos entre tandas de lint.
+  - **Tanda "mensajes de error propios" (producto + seguridad, NO lint).** `perfil/actions.ts`
+    devuelve al usuario el **mensaje crudo de Postgres** (p. ej. *"duplicate key value violates unique
+    constraint …"*), con nombres de tablas y constraints: es **UX pobre** y una **fuga leve de
+    detalles del esquema**. L3c **preservó ese comportamiento a propósito** (el requisito era no
+    cambiar lo que ve el usuario). Cuando se haga, **`mensajeDeError` es el punto natural donde
+    interceptar** y mapear a textos propios. ⚠ Ojo: hacerlo **invalida la verificación pendiente de
+    L3c** (ya no habría mensaje crudo que comparar), así que **verificar L3c primero**.
 - **⚠ PENDIENTE — nudo de tipos en `consulta-detail.tsx`. Severidad baja, requiere `tsc`.**
   (Abierto 2026-07-30; **sigue vigente al 2026-08-03**: el `as any` está en
   `src/components/pacientes/consultas/consulta-detail.tsx:215`.) Se dejó **deliberadamente afuera**

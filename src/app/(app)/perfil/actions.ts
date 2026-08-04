@@ -8,6 +8,25 @@ import { PERMISOS_DEFAULT } from '@/types/roles'
 
 const TIPOS_VALIDOS = ['MP', 'MN', 'ME'] as const
 
+/**
+ * Mensaje de un error desconocido: cubre un `Error` real y el objeto PLANO de PostgREST.
+ *
+ * ⚠ NO usar `err instanceof Error` en este archivo. Cada `try` termina en `if (error) throw error`,
+ * y ese `error` viene del destructuring de supabase-js SIN `.throwOnError()`: en ese camino la
+ * librería devuelve `JSON.parse(body)` —un objeto plano—, no una instancia de `PostgrestError`.
+ * El tipo DECLARADO sí extiende `Error`, así que un `instanceof` compilaría sin una queja y
+ * fallaría en silencio en runtime, mandando todo error de base al mensaje genérico.
+ * Por eso el chequeo es por forma (duck-typing sobre `.message`), no por prototipo.
+ */
+function mensajeDeError(e: unknown): string | null {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'object' && e !== null && 'message' in e) {
+    const m = (e as { message: unknown }).message
+    if (typeof m === 'string') return m
+  }
+  return null
+}
+
 // ─────────────────────────────────────────────────────────────
 // Actualizar datos básicos (Nombre, Matrículas y Título)
 // ─────────────────────────────────────────────────────────────
@@ -40,7 +59,7 @@ export async function actualizarPerfil(
         return { error: 'Se permiten como máximo 5 matrículas.' }
       }
       for (const m of matriculas) {
-        if (!TIPOS_VALIDOS.includes(m.tipo as any)) {
+        if (!TIPOS_VALIDOS.includes(m.tipo)) {
           return { error: `Tipo de matrícula inválido: ${m.tipo}. Use MP, MN o ME.` }
         }
         const num = m.numero.trim()
@@ -76,9 +95,9 @@ export async function actualizarPerfil(
 
     revalidatePath('/perfil')
     return { error: null }
-  } catch (err: any) {
+  } catch (err) {
     console.error('[actualizarPerfil]', err)
-    return { error: err.message || 'Error al actualizar el perfil.' }
+    return { error: mensajeDeError(err) || 'Error al actualizar el perfil.' }
   }
 }
 
@@ -121,9 +140,9 @@ export async function guardarFirma(
 
     revalidatePath('/perfil')
     return { error: null }
-  } catch (err: any) {
+  } catch (err) {
     console.error('[guardarFirma]', err)
-    return { error: err.message || 'Error al guardar la firma.' }
+    return { error: mensajeDeError(err) || 'Error al guardar la firma.' }
   }
 }
 
@@ -166,9 +185,9 @@ export async function guardarLogo(
 
     revalidatePath('/perfil')
     return { error: null }
-  } catch (err: any) {
+  } catch (err) {
     console.error('[guardarLogo]', err)
-    return { error: err.message || 'Error al guardar el logo.' }
+    return { error: mensajeDeError(err) || 'Error al guardar el logo.' }
   }
 }
 
@@ -236,9 +255,9 @@ export async function obtenerAsistentes(): Promise<{
     )
 
     return { data: enriched, error: null }
-  } catch (err: any) {
+  } catch (err) {
     console.error('[obtenerAsistentes]', err)
-    return { data: null, error: err.message || 'Error al obtener asistentes.' }
+    return { data: null, error: mensajeDeError(err) || 'Error al obtener asistentes.' }
   }
 }
 
@@ -307,9 +326,9 @@ export async function actualizarPermisosAsistente(
 
     revalidatePath('/perfil')
     return { error: null }
-  } catch (err: any) {
+  } catch (err) {
     console.error('[actualizarPermisosAsistente]', err)
-    return { error: err.message || 'Error al actualizar permisos del asistente.' }
+    return { error: mensajeDeError(err) || 'Error al actualizar permisos del asistente.' }
   }
 }
 
@@ -344,8 +363,8 @@ export async function desvincularAsistente(
 
     revalidatePath('/perfil')
     return { error: null }
-  } catch (err: any) {
+  } catch (err) {
     console.error('[desvincularAsistente]', err)
-    return { error: err.message || 'Error al desvincular asistente.' }
+    return { error: mensajeDeError(err) || 'Error al desvincular asistente.' }
   }
 }

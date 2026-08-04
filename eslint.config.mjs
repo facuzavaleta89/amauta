@@ -16,6 +16,19 @@ const eslintConfig = defineConfig([
       "jsx-a11y/alt-text": "off",
     },
   },
+  // Descartar una propiedad al desestructurar —`const { paciente_id: _pid, ...updates } = data`—
+  // es un patrón legítimo: la variable existe solo para EXCLUIR ese campo del rest, no para usarse.
+  // `ignoreRestSiblings` está pensado exactamente para eso.
+  // Alcance acotado a propósito: eslint-config-next declara la regla como 'warn' SIN opciones
+  // (dist/typescript.js), así que replicamos ese nivel y solo agregamos esta opción; el resto
+  // (`args: 'after-used'`, `caughtErrors: 'all'`, `vars: 'all'`) queda en los defaults de la regla.
+  // NO se agregan varsIgnorePattern/argsIgnorePattern: adoptar la convención de prefijo `_` es una
+  // decisión de política de nombres y se trata aparte.
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["warn", { ignoreRestSiblings: true }],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

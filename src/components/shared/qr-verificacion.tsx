@@ -41,6 +41,7 @@ export async function QRVerificacion({ codigo, estado }: QRVerificacionProps) {
     <div className="flex items-center gap-4 bg-muted/40 border border-border/60 rounded-xl px-5 py-4">
       <div className="shrink-0">
         {qrDataUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- src es un data-URI generado en el server con QRCode.toDataURL(); next/image no optimiza data-URIs
           <img
             src={qrDataUrl}
             alt={`QR de verificación: ${codigo}`}

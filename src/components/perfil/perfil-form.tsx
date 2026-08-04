@@ -176,6 +176,7 @@ function ImageUploader({
         <div className="flex items-center justify-center border border-border/80 rounded-xl bg-muted/10 h-48 relative overflow-hidden">
           {current ? (
             <div className="flex flex-col items-center justify-center p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element -- src es un data-URI base64 del archivo subido (readAsDataURL); next/image no optimiza data-URIs */}
               <img src={current} alt={label} className="h-28 w-auto object-contain select-none" />
               <span className="text-[10px] text-muted-foreground mt-2 font-mono">Almacenado como base64</span>
             </div>

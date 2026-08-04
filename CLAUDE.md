@@ -154,8 +154,16 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   compila con el `target: ES2017` actual. Si **sí** la usa, `catch (error)` a secas: queda tipada
   `unknown`, y **`console.error(...)` la acepta sin narrowing** — no agregar `instanceof Error` de
   adorno. El narrowing se justifica solo cuando se **lee una propiedad** (`.message`, `.code`), y ahí
-  ⚠ tener presente que los errores de `supabase-js` (`PostgrestError`) **no son instancias de
-  `Error`**: un `instanceof Error` a secas los manda al mensaje genérico.
+  ⚠ **cuidado con supabase-js: `instanceof Error` puede fallar en silencio.** El patrón
+  `const { error } = await supabase…; if (error) throw error` —usado en Server Actions como
+  `(app)/perfil/actions.ts`— relanza **el objeto plano de `JSON.parse`**, no una instancia de `Error`:
+  supabase-js solo construye `PostgrestError` (que sí extiende `Error`) cuando se llama
+  **`.throwOnError()`**, y estos llamados no lo hacen. Como el **tipo declarado** sí es `Error`,
+  **`tsc` compila un `instanceof Error` sin una queja y el fallo aparece recién en producción**, con
+  todos los errores de base cayendo al mensaje genérico. En ese caso el narrowing va **por forma**
+  (duck-typing sobre `.message`), no por prototipo: ver `mensajeDeError` en `perfil/actions.ts`.
+  Si el error lo construye la app (`throw new Error(...)` tras un `fetch`, como en el turnero),
+  `instanceof Error` **sí** es correcto.
 - **Handlers de FullCalendar: tipar con los tipos de la librería, nunca `any`.** `EventApi`,
   `DateSelectArg`, `EventClickArg`, `EventDropArg`, `EventSourceFuncArg`, `EventInput` salen de
   **`@fullcalendar/core`**; ⚠ **`EventResizeDoneArg` NO está en `core`** — vive en
