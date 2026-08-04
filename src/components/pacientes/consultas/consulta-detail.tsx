@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useForm, useWatch, useFieldArray } from 'react-hook-form'
+import type { ControllerRenderProps, FieldPath } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
 import {
@@ -20,7 +21,7 @@ import {
   Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from '@/components/ui/form'
 
-import { consultaSchema, type ConsultaFormInput } from '@/lib/validations/consulta.schema'
+import { consultaSchema, type ConsultaFormInput, type ConsultaFormData } from '@/lib/validations/consulta.schema'
 import { FinalizarDialog } from './finalizar-dialog'
 import { ConsultaPDFButton } from './pdf-download-button'
 import type { Consulta, CampoExtraSeccion } from '@/types/consulta'
@@ -195,7 +196,7 @@ function ConsultaReadOnly({ consulta }: { consulta: Consulta }) {
 // ── Formulario (nueva / editar borrador) ──────────────────────
 
 function ConsultaForm({
-  mode, consulta, pacienteId, onSaved, onCancel,
+  consulta, pacienteId, onSaved, onCancel,
 }: Pick<ConsultaDetailProps, 'mode' | 'consulta' | 'pacienteId' | 'onSaved' | 'onCancel'>) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showFinalizar, setShowFinalizar] = useState(false)
@@ -211,8 +212,13 @@ function ConsultaForm({
     return new Date().toISOString().split('T')[0]
   }, [])
 
-  const form = useForm<ConsultaFormInput>({
-    resolver: zodResolver(consultaSchema) as any,
+  // Los tres genéricos documentan el nudo del schema: ENTRA `ConsultaFormInput`
+  // (z.input) y SALE `ConsultaFormData` (z.output). Difieren por el `.transform()`
+  // ('' → null) y porque `z.coerce.number()` deja el input de los 12 numéricos en
+  // `unknown`. Sin el tercer genérico, el tipo del resolver no calza y hacía falta
+  // un `as any`.
+  const form = useForm<ConsultaFormInput, unknown, ConsultaFormData>({
+    resolver: zodResolver(consultaSchema),
     defaultValues: {
       paciente_id:           pacienteId,
       fecha_hora:            consulta?.fecha_hora
@@ -329,10 +335,14 @@ function ConsultaForm({
     }
   }
 
-  // Helper para campos numéricos
-  const numericProps = (field: any) => ({
+  // Helper para campos numéricos.
+  // ⚠ `field.value` es `unknown`: el input de estos campos sale de `z.coerce.number()`
+  // en el schema, que acepta cualquier cosa. Por eso el valor se convierte
+  // explícitamente antes de pasarlo a <Input value={…}>, con el `== null` PRIMERO
+  // para que un null/undefined no termine como la cadena "null".
+  const numericProps = (field: ControllerRenderProps<ConsultaFormInput, FieldPath<ConsultaFormInput>>) => ({
     ...field,
-    value: field.value ?? '',
+    value: field.value == null ? '' : String(field.value),
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => field.onChange(e.target.value),
   })
 
