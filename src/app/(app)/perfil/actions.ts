@@ -40,7 +40,7 @@ export async function actualizarPerfil(
         return { error: 'Se permiten como máximo 5 matrículas.' }
       }
       for (const m of matriculas) {
-        if (!TIPOS_VALIDOS.includes(m.tipo as any)) {
+        if (!TIPOS_VALIDOS.includes(m.tipo)) {
           return { error: `Tipo de matrícula inválido: ${m.tipo}. Use MP, MN o ME.` }
         }
         const num = m.numero.trim()
