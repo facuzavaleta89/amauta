@@ -96,8 +96,9 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
           toast.success('Bloqueo eliminado')
           onSaved()
           onOpenChange(false)
-      } catch (e: any) {
-          toast.error('Error al eliminar', { description: e.message })
+      } catch (e) {
+          const description = e instanceof Error ? e.message : 'Error inesperado'
+          toast.error('Error al eliminar', { description })
       } finally {
           setIsLoading(false)
       }
@@ -129,8 +130,9 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
       form.reset()
       onSaved()
       onOpenChange(false)
-    } catch (error: any) {
-      toast.error('Error al guardar bloqueo', { description: error.message })
+    } catch (error) {
+      const description = error instanceof Error ? error.message : 'Error inesperado'
+      toast.error('Error al guardar bloqueo', { description })
     } finally {
       setIsLoading(false)
     }
