@@ -33,6 +33,27 @@ export interface PacienteWithObraSocial extends Paciente {
   obras_sociales: ObraSocial | null
 }
 
+/**
+ * Paciente tal como lo devuelve el autocompletado `GET /api/pacientes?q=`, que proyecta
+ * `id, nombre_completo, dni, fecha_nacimiento, obra_social_id, numero_afiliado, telefono,
+ * email, obras_sociales ( nombre )` sobre pacientes activos del tenant.
+ *
+ * ⚠ Es una proyección PARCIAL: no trae `sexo`, `provincia`, `ciudad`, `obra_social_otro`,
+ * `creado_por`, `archivado_at` ni los timestamps. Y del join solo viene `nombre` (no el `id`
+ * de la obra social), así que NO es un `PacienteWithObraSocial`.
+ *
+ * Consumidores: el buscador de `turnero/turno-form.tsx` y el de `pedidos/pedido-form.tsx`.
+ * `GET /api/pacientes/[id]` proyecta `*, obras_sociales ( nombre )` — un superset de esta
+ * forma —, así que también es asignable acá.
+ */
+export interface PacienteBusqueda extends Pick<Paciente,
+  'id' | 'nombre_completo' | 'dni' | 'fecha_nacimiento' |
+  'obra_social_id' | 'numero_afiliado' | 'telefono' | 'email'
+> {
+  /** Join de `obras_sociales ( nombre )`. NULL si el paciente no tiene obra social. */
+  obras_sociales: Pick<ObraSocial, 'nombre'> | null
+}
+
 export interface PacienteInsert {
   dni: string
   nombre_completo: string

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { timingSafeEqual } from 'crypto'
+import type { TurnoParaRecordatorio } from '@/types'
 
 /**
  * Compara dos strings en tiempo constante (evita timing attacks sobre el secreto).
@@ -59,6 +60,7 @@ export async function GET(request: NextRequest) {
       .eq('recordatorio_enviado', false)
       .gte('fecha_inicio', now.toISOString())
       .lte('fecha_inicio', tomorrow.toISOString())
+      .overrideTypes<TurnoParaRecordatorio[], { merge: false }>()
 
     if (error) throw error
 
@@ -73,7 +75,7 @@ export async function GET(request: NextRequest) {
       // NO loguear datos personales del paciente en consola (Ley 25.326)
       console.log(`[CRON] Procesando recordatorio para turno ${t.id}`)
 
-      const pacienteNombre = t.paciente ? (t.paciente as any).nombre_completo : (t.paciente_nombre_libre || 'el paciente')
+      const pacienteNombre = t.paciente ? t.paciente.nombre_completo : (t.paciente_nombre_libre || 'el paciente')
 
       // 2. Marcar como enviado
       const { error: updateError } = await supabase

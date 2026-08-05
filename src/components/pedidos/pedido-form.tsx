@@ -18,14 +18,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 
 import { pedidoSchema, type PedidoFormValues } from '@/lib/validations/pedido.schema'
+import type { PacienteBusqueda } from '@/types'
 
-interface PacienteSugerido {
-  id: string
-  nombre_completo: string
-  dni: string
-  obra_social_id: number | null
-  numero_afiliado: string | null
-}
+/**
+ * Subconjunto de `PacienteBusqueda` que se guarda al elegir un paciente: solo lo que la
+ * tarjeta de resumen muestra. Se deriva del tipo compartido en vez de redeclararse, para
+ * que no pueda volver a desalinearse de lo que el endpoint devuelve.
+ */
+type PacienteElegido = Pick<PacienteBusqueda,
+  'id' | 'nombre_completo' | 'dni' | 'obra_social_id' | 'numero_afiliado'
+>
 
 interface PedidoFormProps {
   preselectedPacienteId?: string | null
@@ -35,10 +37,10 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sugerencias, setSugerencias] = useState<PacienteSugerido[]>([])
+  const [sugerencias, setSugerencias] = useState<PacienteBusqueda[]>([])
   const [isBuscando, setIsBuscando] = useState(false)
   const [showSugerencias, setShowSugerencias] = useState(false)
-  const [pacienteSeleccionado, setPacienteSeleccionado] = useState<PacienteSugerido | null>(null)
+  const [pacienteSeleccionado, setPacienteSeleccionado] = useState<PacienteElegido | null>(null)
 
   const {
     register,
@@ -87,15 +89,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselectedPacienteId])
 
-  const seleccionarPaciente = (p: {
-    id: string
-    nombre_completo: string
-    dni: string
-    fecha_nacimiento: string
-    obra_social_id?: number | null
-    numero_afiliado?: string | null
-    obras_sociales?: { nombre: string } | null
-  }) => {
+  const seleccionarPaciente = (p: PacienteBusqueda) => {
     setPacienteSeleccionado({
       id: p.id,
       nombre_completo: p.nombre_completo,
@@ -107,7 +101,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
     setValue('paciente_nombre', p.nombre_completo)
     setValue('paciente_dni', p.dni)
     setValue('paciente_dob', p.fecha_nacimiento)
-    setValue('obra_social_nombre', (p as any).obras_sociales?.nombre ?? null)
+    setValue('obra_social_nombre', p.obras_sociales?.nombre ?? null)
     setValue('numero_afiliado', p.numero_afiliado ?? null)
     setSearchQuery(p.nombre_completo)
     setShowSugerencias(false)
@@ -180,7 +174,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
                   <button
                     key={p.id}
                     type="button"
-                    onClick={() => seleccionarPaciente(p as any)}
+                    onClick={() => seleccionarPaciente(p)}
                     className="w-full px-4 py-3 text-left hover:bg-accent transition-colors flex items-center justify-between group"
                   >
                     <div>

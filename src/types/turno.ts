@@ -50,6 +50,25 @@ export interface TurnoConPaciente extends Turno {
   paciente: Pick<Paciente, 'id' | 'nombre_completo'> | null
 }
 
+/**
+ * Turno tal como lo lee el **cron de recordatorios** (`GET /api/cron/recordatorios`), que
+ * proyecta `paciente:paciente_id(nombre_completo, email, telefono)` sobre la fila completa (`*`).
+ *
+ * ⚠ **Es una proyección DISTINTA a la de `TurnoConPaciente`, y por eso son dos tipos y no uno:**
+ * el turnero trae `id + nombre_completo` (para navegar a la ficha) y el cron trae
+ * `nombre_completo + los datos de contacto` (para enviar el recordatorio). **Ninguno es
+ * subconjunto del otro**: acá NO llega el `id` del paciente, y allá NO llegan `email`/`telefono`.
+ * Reusar el otro tipo prometería campos que la query no trae.
+ *
+ * Nota: `email` y `telefono` todavía no se consumen —el envío está como TODO en el cron, a la
+ * espera de Resend/Nodemailer—, pero se declaran porque el `select` **sí los trae**.
+ */
+export interface TurnoParaRecordatorio extends Turno {
+  /** Join del cron: `paciente:paciente_id(nombre_completo, email, telefono)`.
+   *  NULL en categorías sin paciente (curso, personal, administrativo, recordatorio). */
+  paciente: Pick<Paciente, 'nombre_completo' | 'email' | 'telefono'> | null
+}
+
 export interface TurnoInsert {
   paciente_id?: string | null
   paciente_nombre_libre?: string | null

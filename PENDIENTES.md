@@ -244,6 +244,104 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     5. **Que la migración no rompa lo que ya andaba:** **crear** y **borrar** bloqueos siguen
        funcionando.
 
+### Modelo de datos — reglas de unicidad (DECIDIDO, sin aplicar)
+
+> Tanda de **migración**, no de código. Son **decisiones de modelo ya tomadas** (2026-08-05) que hoy
+> **no están reflejadas en la base**. ⚠ **Ninguna se aplica sin auditar antes los datos existentes**
+> (ver "Requisitos comunes" al final) y **las reglas conviene confirmarlas con el médico como
+> co-decisor** — las de acá son las **decisiones de partida**, no un hecho consumado.
+
+- **⚠ DECIDIDO (2026-08-05) — el DNI de paciente debe ser único POR MÉDICO, no global.**
+  - **Estado actual verificado:** `pacientes.dni` es **`TEXT NOT NULL UNIQUE`** (`schema.sql:162`),
+    o sea **único en toda la base**. Consecuencia: **dos médicos distintos NO pueden tener al mismo
+    paciente** — el segundo choca contra la constraint del primero, aunque sean consultorios sin
+    ninguna relación. Rompe el aislamiento por tenant a nivel de modelo.
+  - **Decisión:** pasar a **único por médico**. ⚠ **La columna de tenant de `pacientes` es
+    `creado_por`, NO `medico_id`** (verificado en `schema.sql:172`; es la excepción del proyecto —
+    el resto de las tablas usa `medico_id`, ver `CLAUDE.md` → Modelo de datos). O sea:
+    **`UNIQUE (creado_por, dni)`**. Así el mismo paciente puede existir en la base de dos médicos
+    como **dos relaciones independientes**.
+  - ⚠ **Es un CAMBIO de constraint, no un agregado.** Hay que **dropear la UNIQUE global existente**
+    y **crear la compuesta**, en la misma migración. Es más delicado que agregar una: entre el drop y
+    el create la tabla queda sin protección, y si el create falla por duplicados **se queda sin
+    ninguna de las dos**. Envolver en transacción y **auditar duplicados antes** (ver requisitos).
+  - ⚠ **AUDITAR LA APP ANTES DE APLICAR — este cambio puede romper supuestos vigentes.** Puede haber
+    lógica que hoy asuma que **un DNI identifica a un único paciente globalmente**: búsquedas por DNI,
+    deduplicación al dar de alta, resolución de paciente en formularios, etc. Al pasar a
+    por-médico, una búsqueda por DNI **puede devolver más de una fila** a nivel base (aunque la RLS
+    filtre por tenant). **Hay que revisarlo caso por caso**, no asumir que la RLS lo cubre todo.
+  - **Casos borde a decidir en la tanda:**
+    - **Pacientes sin DNI:** hoy la columna es `NOT NULL`, así que no aplica. Si alguna vez se
+      permitiera `NULL` (p. ej. recién nacidos, indocumentados), recordar que en Postgres **una
+      UNIQUE permite múltiples `NULL`** — habría que decidir si eso es aceptable o hace falta un
+      índice parcial.
+    - **Archivado:** ¿un paciente **archivado** (`archivado_at IS NOT NULL`, regla de negocio 9)
+      sigue ocupando su DNI dentro del tenant? Si se decide que no, la constraint tendría que ser un
+      **índice único parcial** `WHERE archivado_at IS NULL` — pero ⚠ eso permitiría **duplicar el DNI
+      archivando y recreando**, lo que choca con la conservación de la HC. **Decisión de producto,
+      no técnica.**
+
+- **⚠ DECIDIDO (2026-08-05) — los profesionales no pueden compartir matrícula ni DNI.**
+  - **Estado actual verificado:** `profiles` **no tiene NINGUNA constraint UNIQUE** más allá de la PK
+    (`schema.sql:112-147`). Ni matrícula ni DNI.
+  - **(a) UNIQUE de matrícula, por `tipo` + `numero`.** Dos profesionales no pueden compartir la
+    misma matrícula (MP/MN/ME + número).
+    ⚠ **Complejidad técnica real: las matrículas viven en una columna JSONB**
+    (`profiles.matriculas`, `[{tipo, numero}]`, migración 030), **no en columnas planas**, y además
+    son **varias por profesional** (hasta 5, validado en `perfil/actions.ts`). Un `ADD CONSTRAINT
+    UNIQUE` **no aplica**: haría falta un **índice de expresión** sobre elementos del JSONB —que en
+    Postgres **no puede garantizar unicidad entre elementos de arrays de filas distintas** con un
+    índice B-tree común— o bien **repensar la estructura** (tabla `matriculas` normalizada con FK a
+    `profiles`, que sería lo canónico). **Evaluar las dos opciones en la tanda; no asumir que es un
+    one-liner.**
+    > Nota: existe además la columna **`matricula` (TEXT) deprecada** (nota técnica 3). Decidir si se
+    > la borra en la misma migración o si queda para después — pero **no** ponerle la UNIQUE a ella.
+  - **(b) UNIQUE de DNI de profesional.** Dos perfiles profesionales no pueden compartir DNI (es lo
+    que identifica a la persona).
+    ⚠ **PRECONDICIÓN QUE CAMBIA EL TAMAÑO DE ESTO: la columna NO EXISTE.** Verificado — `profiles`
+    **no tiene `dni`** en el `CREATE TABLE`, **ninguna migración se lo agrega**, el tipo TS `Profile`
+    no lo declara y **la app nunca lo captura** (ni el form de perfil ni el de registro lo piden).
+    Así que no es "agregar una UNIQUE": es, en orden,
+    1. **crear la columna** (`ALTER TABLE profiles ADD COLUMN dni TEXT`),
+    2. decidir **nullabilidad** — los perfiles ya existentes no lo tienen, así que o entra `NULL` o
+       hay que backfillear; ⚠ con `NULL` la UNIQUE **no protege nada hasta que se cargue**, porque
+       Postgres permite múltiples `NULL`,
+    3. **capturarlo en la UI** (perfil y/o registro) y validarlo,
+    4. **recién ahí** la UNIQUE tiene efecto.
+    **Es una funcionalidad nueva, no una constraint.** Conviene decidir si entra en esta tanda o sale
+    a una propia.
+
+- **✅ REGLA TRANSVERSAL YA RESUELTA POR DISEÑO — un paciente y un profesional PUEDEN compartir DNI.**
+  Un asistente (o el propio médico) puede ser **también paciente** del consultorio, y eso debe seguir
+  siendo posible. **Se cumple solo**, porque `pacientes` y `profiles` son **tablas separadas con
+  constraints separadas**: nada las cruza.
+  ⚠ **Anotado explícitamente para que nadie lo "arregle":** **no agregar un UNIQUE cruzado entre las
+  dos tablas** ni un chequeo de "este DNI ya existe como profesional" al dar de alta un paciente.
+  Sería romper un caso de uso válido creyendo que se previene un duplicado.
+
+- **✅ DECISIÓN DE NEGOCIO CERRADA — un médico NO puede ser también asistente de otro médico.**
+  El modelo actual asigna **un rol único por perfil** (`profiles.role ∈ {medico, asistente}` con
+  `medico_id` para el vínculo) y **se decidió mantenerlo así**. **No rediseñar a roles múltiples**
+  (ni tabla de roles N:M, ni array de roles, ni perfiles duplicados por persona). Queda registrado
+  como decisión tomada para que no se reabra en un futuro rediseño: el costo de roles múltiples
+  —RLS, `get_medico_id()`, `check_permiso()`, navegación y todos los guards— no se justifica por un
+  caso que el consultorio no tiene.
+
+- **Requisitos comunes de la tanda (aplican a TODAS las constraints de arriba):**
+  1. ⚠ **Auditar duplicados en la base REAL antes de aplicar nada.** Si ya existe un DNI de paciente
+     repetido entre médicos, dos matrículas iguales o —cuando exista la columna— dos DNI de
+     profesional repetidos, **la migración falla al crear la constraint**. La auditoría es de **solo
+     lectura** y va **primero**; según lo que aparezca, puede hacer falta un paso de limpieza de
+     datos **acordado con el médico**, no resuelto por criterio técnico.
+  2. **Seguir el flujo de migraciones del proyecto:** migración **versionada** en
+     `supabase/migrations/` + **archivo suelto `MIGRACION-NN-descripcion.sql`** en la raíz,
+     **ejecución manual en el SQL Editor** por el dueño del proyecto, y **verificación contra la base
+     real** — no contra `schema.sql`, que es un snapshot y ya tuvo drift (migración `029`).
+  3. **Actualizar `schema.sql`** al terminar, y revisar si algún tipo de `src/types/` queda
+     desalineado (sección "Desajustes tipo TypeScript ↔ esquema DB").
+  4. **Confirmar las reglas con el médico** como co-decisor antes de aplicar: definen qué se puede
+     cargar y qué no en el sistema real.
+
 ### Bugs menores detectados
 - **✅ RESUELTO (2026-07-26) — Filename de certificados sin tipo → `certificado_null_...`.** El
   nombre del PDF interpolaba `certificado.tipo`, que llega **siempre `null`** desde que la
@@ -499,16 +597,99 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     historia clínica" funciona. Es cosmético/confuso, no destructivo.
   - **Fix natural:**
     `setSearchTerm(initialData.paciente_nombre_libre ?? initialData.paciente?.nombre_completo ?? '')`.
-    ⚠ Hoy eso sería sobre un `initialData?: any` (`turno-form.tsx:75`): queda **type-safe** recién
-    cuando exista el tipo **`TurnoConPaciente`** —que **todavía no existe**— y se tipe ese prop. Ver
-    "Lint preexistente" → tanda **"tipos de dominio"**. Conviene hacerlo **junto** con esa tanda, no
-    antes.
+    ✅ **La precondición de tipos YA ESTÁ CUMPLIDA (2026-08-05):** el tipo **`TurnoConPaciente`**
+    existe desde **T4** y el prop quedó tipado como tal en **T5**
+    (`turno-form.tsx:76`, ya no es `any`), así que `initialData.paciente?.nombre_completo`
+    **compila type-safe**. El fix se puede encarar cuando se quiera; ya no depende de ninguna tanda
+    de tipos.
 - **💡 MEJORA DE UX (2026-08-04, NO es un bug) — los turnos médicos no muestran el motivo en el
   evento del calendario.** El dato **se guarda bien**; simplemente no se pinta: el evento de un
   turno médico muestra hora + nombre del paciente, y el `motivo` queda solo dentro del modal. Sería
   una mejora mostrarlo **cuando la altura del evento lo permita**, como ya hacen los **bloqueos** con
   su descripción. Es **funcionalidad nueva**, no una regresión: entra por diseño (ver `DESIGN.md` →
   categorías del turnero y `.fc-event-*`), decidiendo umbral de altura y truncado.
+- **⚠ PENDIENTE NUEVO (2026-08-05) — la obra social NO se muestra cuando está cargada como texto
+  libre (`obra_social_otro`). Severidad MEDIA. PREEXISTENTE y SISTÉMICO.** No rompe nada crítico,
+  pero **oculta un dato clínico-administrativo relevante** en varios formularios y documentos.
+  - **Síntoma:** al buscar y seleccionar un paciente en el formulario de **pedidos** o de
+    **certificados**, el **número de afiliado sí aparece** pero la **obra social queda vacía** — solo
+    para los pacientes cuya obra social está en `obra_social_otro`. Con una obra social del catálogo
+    (`obra_social_id`) se muestra bien.
+  - **Caso verificado contra la base:** el paciente de prueba **Paula Zavaleta**
+    (`be0db45c-8fbd-44da-8e9a-fa3b8d44937f`) tiene `obra_social_id: null`,
+    `obra_social_otro: 'IOSEP'`, `numero_afiliado: '6545'`. Afecta a **todo** paciente cargado con
+    obra social "otra", no es un caso aislado.
+  - **Causa raíz — DOS eslabones, los dos hay que tocar:**
+    1. **El dato ni siquiera llega al front.** `GET /api/pacientes?q=`
+       (`src/app/api/pacientes/route.ts:48`) proyecta
+       `id, nombre_completo, dni, fecha_nacimiento, obra_social_id, numero_afiliado, telefono, email,
+       obras_sociales ( nombre )` — el join por `obra_social_id`, **pero NO incluye
+       `obra_social_otro`**.
+    2. **Los componentes no contemplan el fallback:** leen solo `p.obras_sociales?.nombre`, sin caer
+       a `obra_social_otro`.
+  - **PREEXISTENTE — ninguna tanda de tipos lo introdujo.** La tanda **T5** (que tipó el buscador con
+    `PacienteBusqueda`) solo lo **hizo visible** al verificarla en el navegador: el comportamiento es
+    **idéntico** al de antes, y el `.select` del endpoint no lo tocó ninguna tanda.
+  - **✅ El patrón correcto YA EXISTE en el repo — no hay que inventarlo, hay que replicarlo.**
+    Varias superficies ya hacen exactamente el fallback que falta:
+    | Ya correcto | Dónde |
+    |---|---|
+    | `os?.nombre ?? (p.obra_social_otro?.trim() \|\| null)` | `api/difusion/destinatarios/route.ts:55` — **el ejemplo canónico**: su `.select` (`:40`) sí trae `obra_social_otro` |
+    | `p.obras_sociales?.nombre ?? p.obra_social_otro ?? …` | `pacientes/patient-table.tsx:45` y `:134` |
+    | ídem | `(app)/pacientes/[id]/page.tsx:63-64` |
+    | ídem | `(app)/pacientes/[id]/historia/page.tsx:70` (su select incluye `obra_social_otro`) |
+    | ídem | `api/pacientes/[id]/historia/pdf/route.ts:78` (ídem) |
+  - **Superficies AFECTADAS (inventario verificado, 2026-08-05):**
+    | Afectado | Detalle |
+    |---|---|
+    | `pedidos/pedido-form.tsx:104` | `setValue('obra_social_nombre', p.obras_sociales?.nombre ?? null)` |
+    | `certificados/certificado-form.tsx:101` | idéntico — mismo patrón copiado |
+    | **`dashboard/recent-patients.tsx:17` + `:48`** | ⚠ **caso INDEPENDIENTE que conviene arreglar junto**: es un Server Component con **su propio `.select`**, que tampoco trae `obra_social_otro`, y muestra `'—'`. **No pasa por el endpoint**, así que el fix del punto 1 no lo alcanza: hay que tocar su select y su render por separado. |
+  - **NO afectado (verificado):** el **turnero no muestra obra social** en ninguno de sus componentes
+    (`grep` sobre `src/components/turnero/` → 0 resultados), así que **turnos queda fuera del fix**.
+    Los PDF de pedido/certificado (`pedido-pdf.tsx:265`, `certificado-pdf.tsx:271`) leen
+    `obra_social_nombre` **ya resuelto y persistido en el documento**, así que se arreglan solos en
+    cuanto el formulario lo mande bien (⚠ los documentos **ya emitidos** conservan el valor vacío:
+    el snapshot es inmutable por regla de negocio 5 — no hay backfill).
+  - **✅ DECISIONES DE PRODUCTO TOMADAS:**
+    1. **`obra_social_otro` es intencional y se queda.** El texto libre para obras sociales fuera de
+       la lista **no se elimina**: es la vía de escape legítima cuando el catálogo no la tiene.
+    2. **Todo formulario que muestre obra social debe mostrarla también si vino como
+       `obra_social_otro`**, no solo la del catálogo. Aplica a pedidos, certificados y cualquier
+       formulario futuro.
+    3. **IOSEP debería estar en el catálogo** (es común en la zona del consultorio) y hoy **falta** —
+       por eso quedó cargada como texto libre. **Cargarla es una acción SEPARADA** (ver Capa 2, en
+       "Datos / catálogo"), y **no reemplaza al fix de código**.
+  - **── CAPA 1 — el fix de código (la tanda propiamente dicha) ──**
+    1. **Endpoint:** sumar **`obra_social_otro`** al `.select(...)` del handler GET de búsqueda
+       (`src/app/api/pacientes/route.ts:48`), para que el dato llegue al front.
+       ✅ **`GET /api/pacientes/[id]` NO necesita cambio — verificado:** usa
+       `select('*, obras_sociales ( nombre )')` (`api/pacientes/[id]/route.ts:50`), y el `*` **ya
+       trae `obra_social_otro`**.
+    2. **Componentes:** aplicar el fallback `obras_sociales?.nombre ?? obra_social_otro` en
+       `pedido-form.tsx:104` y `certificado-form.tsx:101`, replicando el patrón de
+       `difusion/destinatarios`. Sumar `recent-patients.tsx` (select **y** render), que va por su
+       cuenta.
+    3. ⚠ **DEPENDENCIA DE TIPOS — no olvidar, o el fallback no compila type-safe.** El tipo
+       **`PacienteBusqueda`** (`src/types/paciente.ts`, creado en T5) **hoy NO incluye
+       `obra_social_otro`**, a propósito: se definió como espejo exacto de lo que el endpoint
+       proyecta. Al agregar el campo al `.select`, hay que **sumar `obra_social_otro: string | null`
+       al tipo** en el mismo cambio. Son **dos ediciones que van juntas**: si se toca solo el select,
+       el front no puede leer el campo sin un cast; si se toca solo el tipo, el tipo miente.
+    4. ⚠ **Verificación en NAVEGADOR de cada formulario tocado** (pedidos y certificados, más el
+       dashboard si entra), con **dos pacientes**: uno con `obra_social_otro` (p. ej. Paula/IOSEP) y
+       otro con `obra_social_id` del catálogo, **confirmando que ambos muestran la obra social**. No
+       alcanza con `tsc`: el bug es de datos que no llegan, no de tipos.
+  - **── CAPA 2 — el dato del catálogo ──** Es **independiente** y no es código: ver
+    "Datos / catálogo" → *"Faltan obras sociales de la zona en el catálogo (IOSEP)"*.
+    ⚠ **Las dos capas son necesarias:** cargar IOSEP al catálogo **no arregla** a los pacientes ya
+    guardados como "otra" (siguen dependiendo de la Capa 1), y la Capa 1 **no evita** que se sigan
+    cargando obras sociales comunes como texto libre.
+  - **Hallazgo relacionado, para aprovechar el viaje:** `certificado-form.tsx` tiene una **copia
+    duplicada** del tipo local de paciente (su propio `PacienteSugerido`, `:25-33`), que quedó fuera
+    de T5 por alcance. Como este fix **ya toca ese archivo**, es la ocasión natural de unificarlo con
+    **`PacienteBusqueda`** y borrar la interface — dos pájaros de un tiro. Ver "Lint preexistente" →
+    cierre de T5.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -725,16 +906,27 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     **L3c** con el camino feliz de `/perfil` probado a mano: editar perfil, subir firma y logo, y
     listar / cambiar permisos / desvincular asistentes. **Queda una verificación pendiente** — ver
     el ítem que sigue.
-- **⚠ VERIFICACIÓN PENDIENTE de L3c — confirmar en runtime que un error de BASE muestra el mensaje
-  detallado.** No se pudo forzar en local por no tener identificada una constraint fácil de chocar.
-  ⚠ **Cortar la red NO sirve para esto:** un `fetch` fallido lanza un `TypeError`, que **sí** es
-  instancia de `Error` y entra por la primera rama del helper. Hay que provocar un error **de la
-  base** —violación de constraint o denegación de RLS, o sea que PostgREST responda no-ok con cuerpo
-  JSON— y confirmar que en pantalla aparece **el mensaje concreto** y no el genérico
-  (`'Error al actualizar permisos del asistente.'`, etc.). **Ver el fallback genérico donde antes
-  salía el detalle es exactamente el síntoma de un narrowing roto**, y es silencioso: sin crash ni
-  error en consola. El análisis caso por caso indica comportamiento idéntico al previo, pero **es
-  razonamiento, no evidencia de runtime**. Ideal verificarlo en el deploy.
+- **✅ VERIFICACIÓN DE L3c — CONFIRMADA (2026-08-05).** Quedaba comprobar en runtime que un error **de
+  la base** llega al usuario con el **mensaje detallado** y no con el fallback genérico: el
+  `mensajeDeError` de `perfil/actions.ts` hace **duck-typing sobre `.message`** porque supabase-js sin
+  `.throwOnError()` devuelve un **objeto plano**, no una instancia de `Error`, y un `instanceof Error`
+  ahí **compilaría igual y fallaría en silencio**. Era razonamiento, no evidencia.
+  - **Cómo se forzó:** con un cambio local temporal de **una línea** en `actualizarPerfil` — agregar
+    una **columna inexistente** al `.update()`, que hace que PostgREST responda **400 (PGRST204)** con
+    cuerpo JSON. Elegido sobre una violación de constraint real porque **no puede escribir nada**
+    (PostgREST rechaza el PATCH entero antes de que Postgres vea una sentencia) y ejercita **la misma
+    rama** de `postgrest-js` (`PostgrestBuilder.ts:203`, `error = JSON.parse(body)`) que cualquier
+    error de base.
+  - **Resultado:** el toast mostró el **mensaje crudo de PostgREST**, no el genérico. **El
+    duck-typing funciona**; el narrowing no está roto.
+  - ⚠ **Descubrimiento del diagnóstico previo, que explica por qué no se había podido forzar antes:**
+    desde la UI de `/perfil` **no hay forma** de provocar un error de base. `profiles` **no tiene
+    ninguna UNIQUE** más allá de la PK, su único CHECK (`role`) está sobre una columna que ninguna de
+    las 6 funciones escribe, las validaciones de la app son un **superconjunto** de los `NOT NULL`
+    alcanzables, y una **denegación de RLS en UPDATE no produce error** (filtra filas). No era falta
+    de búsqueda: no existía el camino.
+  - **Consecuencia para el plan:** esto **destraba** la tanda *"mensajes de error propios"*, que
+    estaba explícitamente bloqueada detrás de esta verificación (*"verificar L3c primero"*).
 - **✅ RESUELTO (tanda L4, 2026-08-03) — 24 → 21 problemas (−3). El nudo del `zodResolver`.** Última
   pieza de lint puro, aislada desde el principio por su final incierto. **Tres cambios entrelazados,
   todos en `consulta-detail.tsx`; el diagnóstico previo con sondas de tipos midió que el fix era
@@ -783,54 +975,97 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   **trabajo de otra naturaleza** —crear tipos de dominio, refactorizar efectos— y **ya está asignado
   a tandas con nombre propio** (ver el plan). **No abordarlos como "limpieza de lint"**: ese fue
   exactamente el criterio con el que se los fue apartando tanda tras tanda.
-- **Deuda que QUEDA: 21 problemas preexistentes** (21 errores, **0 warnings** — primera vez en la
-  serie sin ningún warning; medido 2026-08-03 tras L4). Desglose por regla:
-  - **19 `@typescript-eslint/no-explicit-any`** — ya **no queda ningún `catch` con `any` en todo el
-    repo**, ni ningún `any` de FullCalendar, y **`perfil/actions.ts` y `consulta-detail.tsx` quedaron
-    limpios**. Lo que resta es **diseño de tipos, no anotaciones**: el **grupo (C) de datos de dominio
-    del turnero** (7: `calendar-view.tsx` 4, `turno-form.tsx` 2, `block-slot-modal.tsx` 1 — ver
-    abajo), los **4 de Route Handlers que NO son de `catch`** (ver abajo), y **8 sueltos**:
-    `pedido-form.tsx` (2), `historia-clinica-form.tsx` (2), `perfil-form.tsx`,
-    `notificaciones/list.tsx`, `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 cada uno).
+  > **Epílogo (2026-08-05):** de esos 21, **13 eran el bloque "tipos de dominio"** y quedaron
+  > cerrados por las tandas **T1–T6** (ver el ítem que sigue). Restan **8**.
+- **✅ RESUELTO (bloque TIPOS DE DOMINIO, tandas T1–T6, 2026-08-05) — 21 → 8 problemas (−13).**
+  Lo que el hito de L4 había apartado como *"trabajo de otra naturaleza"*: **no se arreglaba con
+  anotaciones, había que crear o aplicar tipos que modelaran las proyecciones reales de la API.**
+  Se ejecutó en **seis tandas**, cortadas por afinidad de tipo y de verificación —no por archivo—,
+  de menor a mayor riesgo:
+
+  | Tanda | Qué hizo | Verificación | Conteo |
+  |---|---|---|---|
+  | **T1** | `getTenantMedicoId(supabase: any)` de `pacientes/[id]/route.ts` → **`Awaited<ReturnType<typeof createClient>>`**, el patrón que ya usaban **8+ handlers**; era el único outlier | `tsc` | 21 → **20** |
+  | **T2** | los 2 `(profile as any)[permisoRequerido]` de `consultas/route.ts` y `consultas/[id]/route.ts` → tipo local **`PermisosProyectados`** + `permisoRequerido: PermisoProyectado` + **`.single<ProfileTenantRow>()`** | `tsc` | 20 → **18** |
+  | **T3** | **`BloqueoAgenda`** (tipo que **ya existía** desde siempre) aplicado en `calendar-view.tsx` y `block-slot-modal.tsx` — no hubo que crear nada | `tsc` + humo | 18 → **16** |
+  | **T4** | creado **`TurnoConPaciente`**; el estado `selectedEvent` del calendario pasó a **unión discriminada** `{ type: 'turno'; raw: TurnoConPaciente } \| { type: 'bloqueo'; raw: BloqueoAgenda }` | **navegador** | 16 → **13** |
+  | **T5** | creado **`PacienteBusqueda`**, aplicado en `turno-form.tsx` y `pedido-form.tsx` (eliminando el tipo local incompleto `PacienteSugerido`, que era la causa de 2 casts) + tipado el `initialData` de `turno-form` como `TurnoConPaciente` | **navegador** | 13 → **9** |
+  | **T6** | creado **`TurnoParaRecordatorio`** para el cron, aplicado con **`.overrideTypes<TurnoParaRecordatorio[], { merge: false }>()`** | `tsc` | 9 → **8** |
+
+  **`tsc`, `build` y `lint` limpios en las seis**, con **cero problemas nuevos** confirmado por
+  comparación programática **por (archivo, regla)** —no por línea— en cada una.
+
+  **Los 3 tipos nuevos y el endpoint que modela cada uno:**
+
+  | Tipo | Archivo | Modela |
+  |---|---|---|
+  | `TurnoConPaciente` | `types/turno.ts` | `GET /api/turnero` → `*, paciente:paciente_id (id, nombre_completo)` |
+  | `TurnoParaRecordatorio` | `types/turno.ts` | cron de recordatorios → `*, paciente:paciente_id(nombre_completo, email, telefono)` |
+  | `PacienteBusqueda` | `types/paciente.ts` | `GET /api/pacientes?q=` → 8 campos + `obras_sociales ( nombre )` |
+
+  > ⚠ **(a) `TurnoConPaciente` y `TurnoParaRecordatorio` son DOS tipos a propósito — no unificarlos.**
+  > Son **proyecciones distintas de la misma relación**: el turnero embebe `id + nombre_completo`
+  > (para navegar a la ficha) y el cron embebe `nombre_completo + email + telefono` (para enviar el
+  > recordatorio). **Ninguno es subconjunto del otro** — en el cron **no llega el `id`** y en el
+  > turnero **no llegan los datos de contacto**—, así que reusar uno en lugar del otro **prometería
+  > campos que la query no trae**. Es el caso testigo de la regla general: **el shape del embebido lo
+  > fija cada endpoint, no la tabla.**
+
+  > ⚠ **(b) T2 usa `PermisosProyectados`, NO `PermisoKey` — y esto se verificó, no se supuso.** El
+  > `select` del helper proyecta **11 de los 12** permisos: **falta `acceso_mensajeria`**. Con
+  > `PermisoKey` (las 12 claves) se podría pedir un permiso **que la query no trajo**, el chequeo
+  > leería `undefined` y **denegaría el acceso en silencio** — un bug con apariencia de permiso mal
+  > configurado. Por eso el tipo es `Omit<PermisosAsistente, 'acceso_mensajeria'>` y el parámetro es
+  > `keyof` de eso. **Comprobado empíricamente:** al pasar `'acceso_mensajeria'` a propósito, `tsc`
+  > lo rechaza enumerando las 11 claves válidas. **Si algún día hace falta ese permiso acá, se agrega
+  > al `select` (cambio de runtime); no se ensancha el tipo.**
+
+  **De paso, cerró dos cosas que venían anotadas:** el `initialData?: any` de `turno-form.tsx`
+  (pendiente que T4 no pudo tocar por alcance, cerrado en T5) y el tipo local **incompleto**
+  `PacienteSugerido` de `pedido-form.tsx`, cuya desalineación con el endpoint era **la causa** de sus
+  2 casts — no un descuido de estilo.
+- **Deuda que QUEDA: 8 problemas preexistentes** (8 errores, **0 warnings**; medido 2026-08-05 tras
+  T6). Desglose por regla:
+  - **6 `@typescript-eslint/no-explicit-any`** — **ya no queda ningún `any` de tipos de dominio**, ni
+    de `catch`, ni de FullCalendar. Son **6 sueltos**: `perfil/page.tsx:34`,
+    `verificar/[codigo]/page.tsx:41`, `notificaciones/list.tsx:19`,
+    `historia-clinica-form.tsx:29` y `:43`, `perfil-form.tsx:50`.
   - **0 `@typescript-eslint/no-unused-vars`** — el `mode` se cerró en L4 y el `_pid` en L3b.
   - **0 `@next/next/no-img-element`** — cerrados en L3a.
-  - **2 `react-hooks/set-state-in-effect`** — **`calendar-view.tsx:46`** (línea corrida por los
-    imports que sumó L2; era `:37`) y `onboarding-client.tsx:44`. ⚠ **Son dos problemas distintos, no
-    un lote:** el primero está en el hook `useIsMobile` y **no es derivable en render** (`matchMedia`
-    no existe en SSR, derivarlo rompería la hidratación); su fix canónico es `useSyncExternalStore`,
-    o sea un **refactor**, y **cambia comportamiento observable** porque `isMobile` alimenta el efecto
-    que hace `changeView` a vista día en móvil. El segundo es un reset de estado enredado con la
-    lógica del debounce de búsqueda. Tratarlos por separado.
+  - **2 `react-hooks/set-state-in-effect`** — `calendar-view.tsx:47` (línea corrida por los imports de
+    T3/T4) y `onboarding-client.tsx:44`. ⚠ **Son dos problemas distintos, no un lote:** el primero
+    está en el hook `useIsMobile` y **no es derivable en render** (`matchMedia` no existe en SSR,
+    derivarlo rompería la hidratación); su fix canónico es `useSyncExternalStore`, o sea un
+    **refactor**, y **cambia comportamiento observable** porque `isMobile` alimenta el efecto que hace
+    `changeView` a vista día en móvil. El segundo es un reset de estado enredado con la lógica del
+    debounce de búsqueda. Tratarlos por separado.
   - Ninguno **bloquea el build**.
-- **⚠ Dentro de los Route Handlers quedan 4 `any` que NO son de `catch`.** Quedaron **deliberadamente
-  afuera** de L1: son **diseño de tipos, no limpieza mecánica**, así que L1 **no dejó esos archivos
-  en cero** y eso es esperado, no un fix a medias.
-  - `api/consultas/[id]/route.ts:22` y `api/consultas/route.ts:25` — `(profile as any)[permisoRequerido]`,
-    el **mismo helper duplicado** en los dos archivos. Se resolvería tipando la clave como
-    `PermisoKey` (ya existe en `src/types/roles.ts`) en vez de castear el objeto; de paso, el helper
-    es candidato a extraerse a `lib/`.
-  - `api/cron/recordatorios/route.ts:76` — `(t.paciente as any).nombre_completo` (forma del join).
-  - `api/pacientes/[id]/route.ts:12` — `async function getTenantMedicoId(supabase: any, …)`.
-- **⚠ Grupo (C) del turnero — 7 `any` de DATOS DE DOMINIO. Los únicos `any` que quedan ahí.**
-  Quedaron **deliberadamente afuera** de L2, con el mismo criterio que los 4 de Route Handlers: no
-  son anotaciones a corregir, son **tipos que hay que crear**. Líneas **ya recalculadas post-L2**:
-  - `calendar-view.tsx:133` — `useState<any | null>` (`selectedEvent`); guarda el `raw` de
-    `extendedProps`.
-  - `calendar-view.tsx:203`, `:207` — `.filter((t: any) …)` / `.map((t: any) …)` sobre `data.turnos`;
-    el `:207` lee `t.paciente.nombre_completo`.
-  - `calendar-view.tsx:218` — `data.bloqueos.map((b: any) …)`.
-  - `turno-form.tsx:75` y `block-slot-modal.tsx:46` — `initialData?: any // RAW event data`.
-  - `turno-form.tsx:105` — `useState<any[]>([])` (`pacientes` de la búsqueda).
-
-  **Requieren crear `TurnoConPaciente`, que hoy no existe:** `GET /api/turnero` proyecta
-  `'*, paciente:paciente_id (id, nombre_completo)'` (`api/turnero/route.ts:47`) y `types/turno.ts`
-  **no modela** ese join. Habría que seguir el patrón que el repo ya usa (`ConsultaConRelaciones`,
-  `PacienteWithObraSocial`). Además, **`selectedEvent` y los dos `initialData` son el MISMO `any`
-  encadenado** (calendario → modal): se resuelven **juntos** o no se tocan.
+- **✅ RESUELTO (T1, T2 y T6) — los 4 `any` de Route Handlers que NO eran de `catch`.** Quedaron
+  deliberadamente afuera de L1 por ser diseño de tipos, y se cerraron en el bloque de tipos de
+  dominio: los 2 `(profile as any)[permisoRequerido]` de `consultas` (**T2**), el
+  `(t.paciente as any).nombre_completo` del cron (**T6**) y el `getTenantMedicoId(supabase: any)` de
+  `pacientes/[id]` (**T1**).
+  ⚠ **Lo que NO se hizo y sigue pendiente:** extraer a `lib/` el helper de tenant, **duplicado inline
+  en ~14 endpoints** (`getTenantMedicoId` / `getTenantContext`). Es otra tanda: tocaría los 14 a la
+  vez, cada uno con su verificación. Ver también el ítem H5 del bug de RLS de bloqueos, que sumó dos
+  ocurrencias más al conteo.
+- **✅ RESUELTO (T3, T4 y T5) — el "grupo (C)" del turnero (7 `any` de datos de dominio).** Al
+  diagnosticarlo se vio que **no era un grupo homogéneo**, y ése fue el motivo del corte en tres
+  tandas: 2 se resolvían con **`BloqueoAgenda`, que ya existía** (T3), 3 dependían de crear
+  `TurnoConPaciente` (T4), 1 era el buscador de pacientes —**otro endpoint y otro shape**, nada que
+  ver con el turno— (T5), y 1 era el estado del calendario.
+  ⚠ **Hallazgo que reordenó el plan:** `selectedEvent` **no tapaba un tipo sino una UNIÓN** — un mismo
+  estado alimenta los **dos** modales, que leen campos **disjuntos**—, así que tiparlo como
+  `TurnoConPaciente` a secas **no compilaba**. De ahí la unión discriminada de T4, que **espeja lo que
+  `extendedProps` ya llevaba** (`{ type, raw }`).
 - **Nota: tipar los handlers de FullCalendar NO tipó `event.extendedProps`.** Es
   `Record<string, any>` **por diseño de la librería**, así que el `const { type, raw } = ...` sigue
   devolviendo `any` después de L2. **Es esperado y no es deuda nueva** —el linter ni lo marca, porque
-  no hay anotación explícita—: lo resuelve el grupo (C), que es donde vive el tipo real de `raw`.
+  no hay anotación explícita—: lo **contuvo** el grupo (C) en **T4**, poniéndole tipo al **destino**
+  (la unión `SelectedEvent`) con **una sola aserción explícita y comentada** en el punto donde el dato
+  vuelve a entrar desde FullCalendar. ⚠ El `any` de `extendedProps` **sigue ahí y va a seguir**: es de
+  la librería. Que el turnero no tenga `any` **declarados** no significa que ese punto sea type-safe
+  por arte de magia — lo sostiene esa aserción.
 - **Prolijidad del turnero (ítems chicos, sin urgencia).** Detectados al diagnosticar L2; ninguno es
   lint ni se tocó:
   - **Los 2 `throw new Error(errorData.error)` sin fallback** — `turno-form.tsx:241` y
@@ -861,19 +1096,30 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     convendría renombrarlos si se adopta la convención.
   - **Dejarla para cuando el dueño del proyecto la tome a conciencia**, no colada en una tanda de lint.
 - **Plan de las tandas restantes** (nota de planificación, no compromiso de fecha). ⚠ **Ninguna es
-  limpieza de lint**: la serie L1→L4 agotó eso (ver el hito).
-  - **Tanda "tipos de dominio"** — **11 de los 19 `any`**: el **grupo (C) del turnero** (7) + los **4
-    de Route Handlers no-catch**. Requieren **crear tipos** (`TurnoConPaciente`), no corregir
-    anotaciones. Es la más grande de las que quedan.
-  - **Los 8 `any` sueltos — SIN tanda asignada.** `pedido-form.tsx` (2),
-    `historia-clinica-form.tsx` (2), `perfil-form.tsx`, `notificaciones/list.tsx`,
-    `verificar/[codigo]/page.tsx` y `perfil/page.tsx` (1 c/u). **Habría que diagnosticarlos antes de
-    agruparlos**: no se sabe todavía si comparten naturaleza (como pasó con los catches) o si son
-    casos independientes. **No asumir que son un lote.**
+  limpieza de lint**: la serie **L1→L4** agotó el lint mecánico y el bloque **T1→T6** agotó los tipos
+  de dominio. Lo que queda es de otra naturaleza.
+  - ~~**Tanda "tipos de dominio"**~~ **✅ HECHA (T1–T6, 2026-08-05).** Estaba anotada **dos veces** en
+    este mismo plan (duplicación previa); ambas entradas quedan cerradas por el ítem ✅ de arriba.
+  - **Los 6 `any` sueltos — SIGUEN SIN TANDA ASIGNADA.** `perfil/page.tsx:34`,
+    `verificar/[codigo]/page.tsx:41`, `notificaciones/list.tsx:19`, `historia-clinica-form.tsx:29`
+    y `:43`, `perfil-form.tsx:50`. (Eran 8: los 2 de `pedido-form.tsx` **resultaron ser de T5** —
+    compartían raíz con el buscador de pacientes.)
+    ⚠ **Diagnosticarlos ANTES de agruparlos, y ahora con más razón:** el precedente de `pedido-form`
+    confirma que "suelto" es una etiqueta provisoria, no un diagnóstico. Dos pistas ya detectadas:
+    - **`historia-clinica-form.tsx:43` es un CALCO de lo que L4 ya resolvió:** el **segundo genérico**
+      de `useForm` en `any` (`useForm<HistoriaFormInput, any, HistoriaFormData>`), donde L4 estableció
+      **`unknown`**. Fix de **una palabra**, con doctrina ya escrita en `CLAUDE.md`. El `:29` del mismo
+      archivo es otro `initialData?: any`, mismo patrón que cerraron T4/T5 pero en el dominio de
+      `HistoriaClinica` (**el tipo ya existe**, en `types/pedido.ts`).
+    - **`perfil/page.tsx:34` (`let asistentes: any[]`) es ARRASTRE de código muerto:** la action
+      `obtenerAsistentes` (`(app)/perfil/actions.ts:197-206`) **ya declara exactamente ese shape** en
+      su firma de retorno, pero **tiene cero consumidores** porque la página **duplica la consulta
+      inline**. **Se cierra solo si se resuelve esa duplicación** — es un ítem de código muerto, no de
+      tipos.
   - **Tanda "efectos y estado derivado"** — los 2 `react-hooks/set-state-in-effect`. **No son un
     lote:** son de naturaleza distinta, cambian comportamiento observable y se verifican en
     **superficies distintas**. Se pueden hacer por separado.
-    - `calendar-view.tsx:46` (`useIsMobile`) → fix canónico **`useSyncExternalStore`** (no es
+    - `calendar-view.tsx:47` (`useIsMobile`) → fix canónico **`useSyncExternalStore`** (no es
       derivable en render: `matchMedia` no existe en SSR). ⚠ **Cambia comportamiento en móvil**:
       `isMobile` alimenta el efecto que hace `changeView` a vista día. Verificación: **móvil real o
       emulado, con recarga**.
@@ -881,11 +1127,16 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
       el guard del timer**: el `return` temprano hace dos cosas —limpia estado **y** evita agendar el
       `setTimeout`—, así que mover solo el reseteo dispararía una búsqueda por tecla. Verificación:
       **flujo de onboarding**, que es la puerta de entrada de los asistentes.
-  - **Tanda "tipos de dominio" (sin número de L — NO es limpieza de lint).** Junta el **grupo (C) del
-    turnero** (7) con los **4 `any` no-catch de Route Handlers** que anotó L1, porque **son la misma
-    cosa**: crear y aplicar tipos de dominio, no corregir anotaciones. Ambos grupos fueron excluidos
-    de sus tandas por idéntico criterio, y comparten método (definir el tipo que falta, aplicarlo,
-    compilar). Conviene hacerlos **juntos** y no repartidos entre tandas de lint.
+  - **Tandas ya decididas que viven FUERA de esta sección** (se listan acá solo como índice, para que
+    el plan no dé la impresión de que el lint es todo lo que queda):
+    - **Fix RLS de bloqueos de agenda** — falta `bloqueos_update`; editar un bloqueo no persiste nada
+      y da falso éxito. **Decisión tomada: espejar `turnos_update`.** Con H1–H5. Requiere **migración**
+      y verificación con **dos sesiones**. → Bloque A → *"Bugs activos con causa en la base (RLS)"*.
+    - **Fix de la obra social cargada como `obra_social_otro`** — en **dos capas** (código: `select` +
+      fallback en los formularios y el dashboard; datos: cargar IOSEP al catálogo). → Bloque A →
+      *"Bugs menores detectados"* y *"Datos / catálogo"*.
+    - **Extraer el helper de tenant a `lib/`** — duplicado inline en ~14 endpoints. Anotado arriba,
+      en el ítem ✅ de los Route Handlers.
   - **💡 CANDIDATA FUTURA (idea, NO pendiente activo) — que `z.input` del schema de consulta deje de
     ser `unknown`.** `numericOptional` en `consulta.schema.ts` usa **`z.coerce.number()`**, cuyo input
     es `unknown` y **absorbe la unión**, así que `ConsultaFormInput` deja los 12 campos numéricos en
@@ -899,8 +1150,15 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     constraint …"*), con nombres de tablas y constraints: es **UX pobre** y una **fuga leve de
     detalles del esquema**. L3c **preservó ese comportamiento a propósito** (el requisito era no
     cambiar lo que ve el usuario). Cuando se haga, **`mensajeDeError` es el punto natural donde
-    interceptar** y mapear a textos propios. ⚠ Ojo: hacerlo **invalida la verificación pendiente de
-    L3c** (ya no habría mensaje crudo que comparar), así que **verificar L3c primero**.
+    interceptar** y mapear a textos propios.
+    ✅ **DESBLOQUEADA (2026-08-05):** estaba detrás de *"verificar L3c primero"* —porque el fix
+    **elimina** el mensaje crudo que la verificación necesitaba comparar— y **esa verificación ya está
+    hecha y confirmada** (ver el ítem ✅ de L3c más arriba). Se puede encarar cuando se quiera.
+    ⚠ **Dato útil que dejó el diagnóstico de L3c:** desde `/perfil` **no hay forma de provocar un
+    error de base a mano** (sin UNIQUE en `profiles`, el único CHECK sobre una columna que no se
+    escribe, validaciones de app que son superconjunto de los `NOT NULL`, y RLS que en UPDATE filtra
+    en vez de abortar). Si esta tanda necesita probar sus mensajes nuevos, va a tener que **forzar el
+    error igual que se forzó la verificación**: una columna inexistente en el `.update()`, temporal.
 - **⚠ PENDIENTE — nudo de tipos en `consulta-detail.tsx`. Severidad baja, requiere `tsc`.**
   (Abierto 2026-07-30; **sigue vigente al 2026-08-03**: el `as any` está en
   `src/components/pacientes/consultas/consulta-detail.tsx:215`.) Se dejó **deliberadamente afuera**
@@ -933,6 +1191,24 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 - **"Particular / Sin obra social"** existe como **registro real** en la seed de
   `obras_sociales` (migración 001), a la vez que el formulario ofrece una opción
   "Particular" hardcodeada. Verificar que no haya duplicación/ambigüedad al seleccionar.
+- **⚠ PENDIENTE NUEVO (2026-08-05) — faltan obras sociales de la zona en el catálogo (IOSEP).
+  CAPA 2 del bug de obra social; NO es código.** Detectado al diagnosticar el bug de la obra social
+  que no se muestra (ver Bloque A → "Bugs menores detectados").
+  - **El caso concreto:** **IOSEP** no está en `obras_sociales` y **es común en la zona del
+    consultorio**. Por eso el paciente de prueba (Paula Zavaleta) quedó con
+    `obra_social_otro: 'IOSEP'` en vez de una referencia al catálogo — el texto libre funcionó como
+    lo que es, una vía de escape.
+  - **Acción:** cargar **IOSEP** al catálogo y, de paso, **revisar qué otras obras sociales comunes
+    de la zona faltan**, para que en adelante se elijan de la lista (`obra_social_id`) en vez de
+    escribirse a mano. Es una tarea de **datos/seed**, independiente del fix de código.
+  - ⚠ **Esto NO arregla el bug por sí solo, y son cosas distintas:**
+    - **No toca a los pacientes ya cargados** como "otra": esos siguen mostrándose vacíos hasta que
+      se haga la **Capa 1** (el fallback en el código). Las dos capas son necesarias.
+    - **Reasignar pacientes existentes** de `obra_social_otro` a `obra_social_id` (p. ej. pasar a
+      Paula a la IOSEP del catálogo) sería una **migración de datos aparte y OPCIONAL** — no hace
+      falta para que el bug quede resuelto, porque con la Capa 1 el texto libre se muestra bien.
+  - **Nota:** `obra_social_otro` **no se elimina** — es intencional y seguirá existiendo para las
+    obras sociales que no estén en la lista (decisión de producto registrada en el ítem del bug).
 
 ---
 
