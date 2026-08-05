@@ -499,16 +499,99 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     historia clínica" funciona. Es cosmético/confuso, no destructivo.
   - **Fix natural:**
     `setSearchTerm(initialData.paciente_nombre_libre ?? initialData.paciente?.nombre_completo ?? '')`.
-    ⚠ Hoy eso sería sobre un `initialData?: any` (`turno-form.tsx:75`): queda **type-safe** recién
-    cuando exista el tipo **`TurnoConPaciente`** —que **todavía no existe**— y se tipe ese prop. Ver
-    "Lint preexistente" → tanda **"tipos de dominio"**. Conviene hacerlo **junto** con esa tanda, no
-    antes.
+    ✅ **La precondición de tipos YA ESTÁ CUMPLIDA (2026-08-05):** el tipo **`TurnoConPaciente`**
+    existe desde **T4** y el prop quedó tipado como tal en **T5**
+    (`turno-form.tsx:76`, ya no es `any`), así que `initialData.paciente?.nombre_completo`
+    **compila type-safe**. El fix se puede encarar cuando se quiera; ya no depende de ninguna tanda
+    de tipos.
 - **💡 MEJORA DE UX (2026-08-04, NO es un bug) — los turnos médicos no muestran el motivo en el
   evento del calendario.** El dato **se guarda bien**; simplemente no se pinta: el evento de un
   turno médico muestra hora + nombre del paciente, y el `motivo` queda solo dentro del modal. Sería
   una mejora mostrarlo **cuando la altura del evento lo permita**, como ya hacen los **bloqueos** con
   su descripción. Es **funcionalidad nueva**, no una regresión: entra por diseño (ver `DESIGN.md` →
   categorías del turnero y `.fc-event-*`), decidiendo umbral de altura y truncado.
+- **⚠ PENDIENTE NUEVO (2026-08-05) — la obra social NO se muestra cuando está cargada como texto
+  libre (`obra_social_otro`). Severidad MEDIA. PREEXISTENTE y SISTÉMICO.** No rompe nada crítico,
+  pero **oculta un dato clínico-administrativo relevante** en varios formularios y documentos.
+  - **Síntoma:** al buscar y seleccionar un paciente en el formulario de **pedidos** o de
+    **certificados**, el **número de afiliado sí aparece** pero la **obra social queda vacía** — solo
+    para los pacientes cuya obra social está en `obra_social_otro`. Con una obra social del catálogo
+    (`obra_social_id`) se muestra bien.
+  - **Caso verificado contra la base:** el paciente de prueba **Paula Zavaleta**
+    (`be0db45c-8fbd-44da-8e9a-fa3b8d44937f`) tiene `obra_social_id: null`,
+    `obra_social_otro: 'IOSEP'`, `numero_afiliado: '6545'`. Afecta a **todo** paciente cargado con
+    obra social "otra", no es un caso aislado.
+  - **Causa raíz — DOS eslabones, los dos hay que tocar:**
+    1. **El dato ni siquiera llega al front.** `GET /api/pacientes?q=`
+       (`src/app/api/pacientes/route.ts:48`) proyecta
+       `id, nombre_completo, dni, fecha_nacimiento, obra_social_id, numero_afiliado, telefono, email,
+       obras_sociales ( nombre )` — el join por `obra_social_id`, **pero NO incluye
+       `obra_social_otro`**.
+    2. **Los componentes no contemplan el fallback:** leen solo `p.obras_sociales?.nombre`, sin caer
+       a `obra_social_otro`.
+  - **PREEXISTENTE — ninguna tanda de tipos lo introdujo.** La tanda **T5** (que tipó el buscador con
+    `PacienteBusqueda`) solo lo **hizo visible** al verificarla en el navegador: el comportamiento es
+    **idéntico** al de antes, y el `.select` del endpoint no lo tocó ninguna tanda.
+  - **✅ El patrón correcto YA EXISTE en el repo — no hay que inventarlo, hay que replicarlo.**
+    Varias superficies ya hacen exactamente el fallback que falta:
+    | Ya correcto | Dónde |
+    |---|---|
+    | `os?.nombre ?? (p.obra_social_otro?.trim() \|\| null)` | `api/difusion/destinatarios/route.ts:55` — **el ejemplo canónico**: su `.select` (`:40`) sí trae `obra_social_otro` |
+    | `p.obras_sociales?.nombre ?? p.obra_social_otro ?? …` | `pacientes/patient-table.tsx:45` y `:134` |
+    | ídem | `(app)/pacientes/[id]/page.tsx:63-64` |
+    | ídem | `(app)/pacientes/[id]/historia/page.tsx:70` (su select incluye `obra_social_otro`) |
+    | ídem | `api/pacientes/[id]/historia/pdf/route.ts:78` (ídem) |
+  - **Superficies AFECTADAS (inventario verificado, 2026-08-05):**
+    | Afectado | Detalle |
+    |---|---|
+    | `pedidos/pedido-form.tsx:104` | `setValue('obra_social_nombre', p.obras_sociales?.nombre ?? null)` |
+    | `certificados/certificado-form.tsx:101` | idéntico — mismo patrón copiado |
+    | **`dashboard/recent-patients.tsx:17` + `:48`** | ⚠ **caso INDEPENDIENTE que conviene arreglar junto**: es un Server Component con **su propio `.select`**, que tampoco trae `obra_social_otro`, y muestra `'—'`. **No pasa por el endpoint**, así que el fix del punto 1 no lo alcanza: hay que tocar su select y su render por separado. |
+  - **NO afectado (verificado):** el **turnero no muestra obra social** en ninguno de sus componentes
+    (`grep` sobre `src/components/turnero/` → 0 resultados), así que **turnos queda fuera del fix**.
+    Los PDF de pedido/certificado (`pedido-pdf.tsx:265`, `certificado-pdf.tsx:271`) leen
+    `obra_social_nombre` **ya resuelto y persistido en el documento**, así que se arreglan solos en
+    cuanto el formulario lo mande bien (⚠ los documentos **ya emitidos** conservan el valor vacío:
+    el snapshot es inmutable por regla de negocio 5 — no hay backfill).
+  - **✅ DECISIONES DE PRODUCTO TOMADAS:**
+    1. **`obra_social_otro` es intencional y se queda.** El texto libre para obras sociales fuera de
+       la lista **no se elimina**: es la vía de escape legítima cuando el catálogo no la tiene.
+    2. **Todo formulario que muestre obra social debe mostrarla también si vino como
+       `obra_social_otro`**, no solo la del catálogo. Aplica a pedidos, certificados y cualquier
+       formulario futuro.
+    3. **IOSEP debería estar en el catálogo** (es común en la zona del consultorio) y hoy **falta** —
+       por eso quedó cargada como texto libre. **Cargarla es una acción SEPARADA** (ver Capa 2, en
+       "Datos / catálogo"), y **no reemplaza al fix de código**.
+  - **── CAPA 1 — el fix de código (la tanda propiamente dicha) ──**
+    1. **Endpoint:** sumar **`obra_social_otro`** al `.select(...)` del handler GET de búsqueda
+       (`src/app/api/pacientes/route.ts:48`), para que el dato llegue al front.
+       ✅ **`GET /api/pacientes/[id]` NO necesita cambio — verificado:** usa
+       `select('*, obras_sociales ( nombre )')` (`api/pacientes/[id]/route.ts:50`), y el `*` **ya
+       trae `obra_social_otro`**.
+    2. **Componentes:** aplicar el fallback `obras_sociales?.nombre ?? obra_social_otro` en
+       `pedido-form.tsx:104` y `certificado-form.tsx:101`, replicando el patrón de
+       `difusion/destinatarios`. Sumar `recent-patients.tsx` (select **y** render), que va por su
+       cuenta.
+    3. ⚠ **DEPENDENCIA DE TIPOS — no olvidar, o el fallback no compila type-safe.** El tipo
+       **`PacienteBusqueda`** (`src/types/paciente.ts`, creado en T5) **hoy NO incluye
+       `obra_social_otro`**, a propósito: se definió como espejo exacto de lo que el endpoint
+       proyecta. Al agregar el campo al `.select`, hay que **sumar `obra_social_otro: string | null`
+       al tipo** en el mismo cambio. Son **dos ediciones que van juntas**: si se toca solo el select,
+       el front no puede leer el campo sin un cast; si se toca solo el tipo, el tipo miente.
+    4. ⚠ **Verificación en NAVEGADOR de cada formulario tocado** (pedidos y certificados, más el
+       dashboard si entra), con **dos pacientes**: uno con `obra_social_otro` (p. ej. Paula/IOSEP) y
+       otro con `obra_social_id` del catálogo, **confirmando que ambos muestran la obra social**. No
+       alcanza con `tsc`: el bug es de datos que no llegan, no de tipos.
+  - **── CAPA 2 — el dato del catálogo ──** Es **independiente** y no es código: ver
+    "Datos / catálogo" → *"Faltan obras sociales de la zona en el catálogo (IOSEP)"*.
+    ⚠ **Las dos capas son necesarias:** cargar IOSEP al catálogo **no arregla** a los pacientes ya
+    guardados como "otra" (siguen dependiendo de la Capa 1), y la Capa 1 **no evita** que se sigan
+    cargando obras sociales comunes como texto libre.
+  - **Hallazgo relacionado, para aprovechar el viaje:** `certificado-form.tsx` tiene una **copia
+    duplicada** del tipo local de paciente (su propio `PacienteSugerido`, `:25-33`), que quedó fuera
+    de T5 por alcance. Como este fix **ya toca ese archivo**, es la ocasión natural de unificarlo con
+    **`PacienteBusqueda`** y borrar la interface — dos pájaros de un tiro. Ver "Lint preexistente" →
+    cierre de T5.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -933,6 +1016,24 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 - **"Particular / Sin obra social"** existe como **registro real** en la seed de
   `obras_sociales` (migración 001), a la vez que el formulario ofrece una opción
   "Particular" hardcodeada. Verificar que no haya duplicación/ambigüedad al seleccionar.
+- **⚠ PENDIENTE NUEVO (2026-08-05) — faltan obras sociales de la zona en el catálogo (IOSEP).
+  CAPA 2 del bug de obra social; NO es código.** Detectado al diagnosticar el bug de la obra social
+  que no se muestra (ver Bloque A → "Bugs menores detectados").
+  - **El caso concreto:** **IOSEP** no está en `obras_sociales` y **es común en la zona del
+    consultorio**. Por eso el paciente de prueba (Paula Zavaleta) quedó con
+    `obra_social_otro: 'IOSEP'` en vez de una referencia al catálogo — el texto libre funcionó como
+    lo que es, una vía de escape.
+  - **Acción:** cargar **IOSEP** al catálogo y, de paso, **revisar qué otras obras sociales comunes
+    de la zona faltan**, para que en adelante se elijan de la lista (`obra_social_id`) en vez de
+    escribirse a mano. Es una tarea de **datos/seed**, independiente del fix de código.
+  - ⚠ **Esto NO arregla el bug por sí solo, y son cosas distintas:**
+    - **No toca a los pacientes ya cargados** como "otra": esos siguen mostrándose vacíos hasta que
+      se haga la **Capa 1** (el fallback en el código). Las dos capas son necesarias.
+    - **Reasignar pacientes existentes** de `obra_social_otro` a `obra_social_id` (p. ej. pasar a
+      Paula a la IOSEP del catálogo) sería una **migración de datos aparte y OPCIONAL** — no hace
+      falta para que el bug quede resuelto, porque con la Capa 1 el texto libre se muestra bien.
+  - **Nota:** `obra_social_otro` **no se elimina** — es intencional y seguirá existiendo para las
+    obras sociales que no estén en la lista (decisión de producto registrada en el ítem del bug).
 
 ---
 
