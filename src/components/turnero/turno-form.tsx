@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
 import { reformatDateForInput } from '@/lib/utils/fecha-input'
+import type { PacienteBusqueda, TurnoConPaciente } from '@/types'
 
 import {
   Dialog,
@@ -72,7 +73,7 @@ interface TurnoFormModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   initialDates: { start: string, end: string } | null
-  initialData?: any // RAW event data
+  initialData?: TurnoConPaciente // RAW event data
   onSaved: () => void
   onSwitchToBlock: () => void
 }
@@ -102,7 +103,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
   })
 
   const [searchTerm, setSearchTerm] = useState('')
-  const [pacientes, setPacientes] = useState<any[]>([])
+  const [pacientes, setPacientes] = useState<PacienteBusqueda[]>([])
   const [searching, setSearching] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
