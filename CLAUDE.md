@@ -143,6 +143,21 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   local y Context puntual (`permisos-context`, `MensajesContext`).
 - **Cliente Supabase:** `server.ts` en RSC/Actions · `client.ts` en browser ·
   `admin.ts` (service role, **bypass RLS**) solo server y solo cuando es imprescindible.
+- **Tipar el RESULTADO de una query de supabase-js: `overrideTypes` / `.single<T>()`, nunca `any`.**
+  El proyecto **no tiene tipos generados de `Database`** (ni `server.ts` ni `admin.ts` pasan el
+  genérico), así que **el `data` de toda query llega como `any`** y `tsc` no valida ninguna forma de
+  fila: cada tipo que se aplica acá es una **aserción de la forma real**, no algo que el compilador
+  pueda verificar contra la base. Formas vigentes:
+  - **Varias filas:** `.overrideTypes<MiTipo[], { merge: false }>()` al final de la cadena.
+    ⚠ **`.returns<T>()` está DEPRECADA** en la versión instalada de `postgrest-js` — su propio JSDoc
+    remite a `overrideTypes`. No estrenar código sobre ella.
+  - **Una fila:** `.single<MiTipo>()` (el genérico de `single`, sin cast).
+  - **Parámetros que reciben el cliente:** `Awaited<ReturnType<typeof createClient>>`, **no** el
+    `SupabaseClient` de `@supabase/supabase-js` — el factory lo construye con `@supabase/ssr`, y
+    anotarlo con el tipo de otro paquete lo ata a una dependencia que no es la que lo produce.
+  - ⚠ **Verificar que el tipado se APLICÓ**, no solo que compila: sobre un cliente sin genérico es
+    fácil que quede en `any` en silencio y `tsc` pase igual. La sonda barata es leer a propósito un
+    campo que la query **no** proyecta y confirmar que el compilador lo rechaza.
 - **Fechas para el usuario en el servidor:** en Server Components y Route Handlers, formatear
   **siempre** con `formatFechaAR` (`src/lib/utils/format-date.ts`), **nunca** con `format()` de
   date-fns ni `toLocaleString()` a secas — esos renderizan en la zona del **runtime**, que en
@@ -535,10 +550,10 @@ organización** (no consolidar en un archivo, no crear uno por entidad).
 | Archivo | Tipos que viven ahí |
 |---|---|
 | `roles.ts` | `UserRole`, `Profile` (+`Insert`/`Update`), `PermisosAsistente`, `PermisoKey`, `PERMISOS_DEFAULT`, `PERMISO_LABELS`, `PERMISOS_GRUPOS`, `Matricula`, `MatriculaTipo`, `TITULOS_DISPONIBLES`, `TituloPreset`, `SolicitudAsistente` (+`Insert`/`Update`), `SolicitudEstado` |
-| `paciente.ts` | `Paciente` (+`Insert`/`Update`), `PacienteWithObraSocial`, `ObraSocial` |
+| `paciente.ts` | `Paciente` (+`Insert`/`Update`), `PacienteWithObraSocial`, `ObraSocial`, **`PacienteBusqueda`** (proyección de `GET /api/pacientes?q=`: 8 campos + `obras_sociales ( nombre )`) |
 | `consulta.ts` | `Consulta` (+`Insert`/`Update`), `ConsultaEstado`, `ConsultaConRelaciones`, `CampoExtra`, `CampoExtraSeccion` |
 | `pedido.ts` | ⚠ **seis entidades:** `Pedido`, `Certificado` (+`CertificadoTipo`), `Receta`, `Evolucion`, `HistoriaClinica` y `Estudio` (cada una con sus `Insert`/`Update`), más **`EmisorSnapshot`** (regla de negocio 11) |
-| `turno.ts` | `Turno` (+`Insert`/`Update`), `TurnoEstado`, `BloqueoAgenda` (+`Insert`), `TurnoAuditLog` |
+| `turno.ts` | `Turno` (+`Insert`/`Update`), `TurnoEstado`, `BloqueoAgenda` (+`Insert`), `TurnoAuditLog`, más **dos proyecciones con join**: **`TurnoConPaciente`** (`GET /api/turnero` → `paciente:paciente_id (id, nombre_completo)`) y **`TurnoParaRecordatorio`** (cron → `paciente:paciente_id(nombre_completo, email, telefono)`) |
 | `mensaje.ts` | `MensajeInterno`, `MensajeInsertar`, `MensajeFormValues`, `MensajeNoLeido`, `MensajeLectura` |
 | `notificacion.ts` | `Notificacion`, `NotificacionTipo`, `NotificacionTipoValor`, `ItemPendiente`, `ITEM_TYPE_SOLICITUD` |
 | `difusion.ts` | `DifusionPost` (+`Insert`/`Update`), `DifusionEstado`, `DifusionCanal`, `DifusionEnvio` (+`Insert`) |
@@ -550,6 +565,18 @@ organización** (no consolidar en un archivo, no crear uno por entidad).
 permisos en `roles.ts`—, y `MensajeLectura` refleja la **proyección del join** (`user_id`,
 `leido_at`), no la tabla `mensajes_lecturas` completa. Para el mapeo **tabla ↔ tipo**, la referencia
 es `schema.sql`.
+
+> ⚠ **El shape de un join embebido lo fija CADA ENDPOINT, no la tabla — dos proyecciones de la misma
+> relación NO son intercambiables.** Varios de estos tipos modelan una **respuesta concreta de la
+> API**, no una fila: `TurnoConPaciente`, `TurnoParaRecordatorio`, `PacienteBusqueda`,
+> `ConsultaConRelaciones`, `PacienteWithObraSocial` y `MensajeLectura`.
+> **El caso testigo son los dos tipos de turno:** el turnero embebe `id + nombre_completo` (para
+> navegar a la ficha) y el cron embebe `nombre_completo + email + telefono` (para mandar el
+> recordatorio). **Ninguno es subconjunto del otro**, así que reusar uno en lugar del otro
+> **prometería campos que la query no trae** — y como el cliente de Supabase **no tiene tipos
+> generados** (ver convenciones), `tsc` **no puede detectar esa mentira**: se descubre en runtime.
+> Antes de reusar uno de estos tipos en un endpoint nuevo, **comparar el `.select()`**; si difiere,
+> va un tipo propio, con el endpoint de origen documentado en el JSDoc.
 
 ---
 
