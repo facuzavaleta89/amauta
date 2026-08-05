@@ -2,24 +2,45 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import type { PermisosAsistente, UserRole } from '@/types'
 
 interface RouteContext {
   params: Promise<{ id: string }>
 }
 
+/**
+ * Los permisos que el `select` de `getTenantContext` REALMENTE proyecta: 11 de los 12.
+ *
+ * ⚠ `acceso_mensajeria` se omite a propósito, porque no está en la proyección. Tipar la fila
+ * con `PermisosAsistente` completo mentiría, y dejar `permisoRequerido: PermisoKey` habilitaría
+ * pedir una clave que la query no trajo: el chequeo leería `undefined` y **denegaría en
+ * silencio**. Si alguna vez hace falta ese permiso acá, hay que sumarlo al `select` (cambio de
+ * runtime), no ensanchar el tipo.
+ */
+type PermisosProyectados = Omit<PermisosAsistente, 'acceso_mensajeria'>
+
+/** Permisos que este helper puede exigir: solo los proyectados. */
+type PermisoProyectado = keyof PermisosProyectados
+
+/** Fila devuelta por el `select` de abajo: rol, tenant y los 11 permisos proyectados. */
+type ProfileTenantRow = PermisosProyectados & {
+  role: UserRole
+  medico_id: string | null
+}
+
 async function getTenantContext(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
-  permisoRequerido: string
+  permisoRequerido: PermisoProyectado
 ) {
   const { data: profile } = await supabase
     .from('profiles')
     .select('role, medico_id, ver_pacientes, editar_pacientes, ver_historia_clinica, crear_consultas, finalizar_consultas, ver_turnos, gestionar_turnos, ver_pedidos, crear_pedidos, ver_certificados, crear_certificados')
     .eq('id', userId)
-    .single()
+    .single<ProfileTenantRow>()
 
   if (!profile) return null
-  if (profile.role === 'asistente' && !(profile as any)[permisoRequerido]) return null
+  if (profile.role === 'asistente' && !profile[permisoRequerido]) return null
 
   const tenantMedicoId =
     profile.role === 'medico'    ? userId :
