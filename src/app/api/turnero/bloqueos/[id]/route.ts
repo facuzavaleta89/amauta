@@ -116,13 +116,21 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       .select()
 
     if (updateError) {
-       // Si falla aquí, es 100% RLS en Supabase
-       if (updateError.code === '42501') {
-          return NextResponse.json({ error: 'Error de Permisos (Supabase RLS): Tu rol no permite modificar bloqueos en la base de datos.' }, { status: 403 })
-       }
-       throw updateError
+      throw updateError
     }
-    
+
+    // Guarda de "0 filas": existencia y tenant ya se validaron arriba (fetch previo),
+    // así que si la RLS filtró la fila el UPDATE no falla — afecta 0 filas en silencio.
+    // Sin esto, un fallo de permisos sale como 200 con el cuerpo vacío.
+    // (Nota: .select() también pasa por bloqueos_select; hoy es tenant-only, así que
+    //  si algún día se endurece esa política habría que revisar esta guarda.)
+    if (!updated || updated.length === 0) {
+      return NextResponse.json(
+        { error: 'No se pudo actualizar el bloqueo: la base de datos rechazó la modificación.' },
+        { status: 403 }
+      )
+    }
+
     return NextResponse.json({ data: updated[0] })
   } catch (error) {
     console.error('Error updating bloqueo:', error)
@@ -185,16 +193,22 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     }
 
     // 3. Ejecutar borrado por ID
-    const { error: deleteError } = await supabase
+    const { data: deleted, error: deleteError } = await supabase
       .from('bloqueos_agenda')
       .delete()
       .eq('id', id)
+      .select('id')
 
     if (deleteError) {
-      if (deleteError.code === '42501') {
-         return NextResponse.json({ error: 'Error de Permisos (Supabase RLS): La base de datos denegó el borrado de este bloqueo.' }, { status: 403 })
-      }
       throw deleteError
+    }
+
+    // Misma guarda que en el PATCH: la RLS filtra en silencio, no lanza.
+    if (!deleted || deleted.length === 0) {
+      return NextResponse.json(
+        { error: 'No se pudo eliminar el bloqueo: la base de datos rechazó el borrado.' },
+        { status: 403 }
+      )
     }
 
     return NextResponse.json({ success: true })
