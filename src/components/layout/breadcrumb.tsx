@@ -15,7 +15,6 @@ const routeLabels: Record<string, string> = {
   recetas: 'Recetas',
   nuevo: 'Nuevo',
   nueva: 'Nueva',
-  'historia-clinica': 'Historia Clínica',
   historia: 'Historia Clínica',
   estudios: 'Estudios',
   evolucion: 'Evolución',
