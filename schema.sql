@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→032).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→033).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -37,7 +37,13 @@
 -- 032 (REPLICA IDENTITY FULL en `mensajes_internos`: no cambia columnas ni datos,
 -- solo la identidad de fila que viaja en la replicación lógica. Compañera de la 023;
 -- ⚠ NO resolvió el problema de Realtime que la motivaba — ver sección REALTIME al
--- final y PENDIENTES.md → Bloque A).
+-- final y PENDIENTES.md → Bloque A),
+-- 033 (RLS de la agenda: CREA `bloqueos_update`, la política que NUNCA existió —
+-- editar/mover/redimensionar un bloqueo afectaba 0 filas en silencio y la UI mostraba
+-- falso éxito—, espejando `turnos_update`; y REEMPLAZA `bloqueos_delete` y
+-- `turnos_delete`, que eran solo-médico, por el mismo criterio de la agenda:
+-- gestionar_turnos. Decisión de producto: la agenda es una unidad de permiso, y las
+-- políticas de DELETE ahora coinciden con lo que los endpoints ya permitían).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -936,16 +942,31 @@ CREATE POLICY "turnos_insert" ON public.turnos
   FOR INSERT WITH CHECK (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 CREATE POLICY "turnos_update" ON public.turnos
   FOR UPDATE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+-- ⚠ turnos_delete YA NO es solo-médico (migración 033): la agenda es una unidad de
+-- permiso, así que el asistente con gestionar_turnos también borra. Antes era
+-- `medico_id = auth.uid() AND get_user_role(auth.uid()) = 'medico'`, y como el endpoint
+-- DELETE sí dejaba pasar al asistente, el borrado le fallaba en silencio (0 filas + 200).
 CREATE POLICY "turnos_delete" ON public.turnos
-  FOR DELETE USING (medico_id = auth.uid() AND public.get_user_role(auth.uid()) = 'medico');
+  FOR DELETE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 
 -- ── bloqueos_agenda ─────────────────────────────────────────────────────────
+-- Las tres de escritura comparten el mismo criterio (tenant + gestionar_turnos) desde
+-- la migración 033. ⚠ bloqueos_select NO exige `ver_turnos`, a diferencia de
+-- turnos_select — asimetría preexistente, anotada en PENDIENTES.md → Bloque A.
 CREATE POLICY "bloqueos_select" ON public.bloqueos_agenda
   FOR SELECT USING (medico_id = get_medico_id());
 CREATE POLICY "bloqueos_insert" ON public.bloqueos_agenda
   FOR INSERT WITH CHECK (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+-- bloqueos_update: CREADA por la 033. Nunca existió desde la 005 — ese era el bug raíz
+-- (editar un bloqueo no persistía nada y la UI daba falso éxito). Espeja turnos_update.
+-- WITH CHECK omitido a propósito, como en turnos_update: en Postgres el USING oficia de
+-- check para la fila nueva, así que nadie puede mover un bloqueo a otro tenant.
+CREATE POLICY "bloqueos_update" ON public.bloqueos_agenda
+  FOR UPDATE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+-- bloqueos_delete: REEMPLAZADA por la 033 (antes solo-médico, con un subquery inline a
+-- profiles en vez de get_user_role(); mismo falso positivo que turnos_delete).
 CREATE POLICY "bloqueos_delete" ON public.bloqueos_agenda
-  FOR DELETE USING (medico_id = auth.uid() AND public.get_user_role(auth.uid()) = 'medico');
+  FOR DELETE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 
 -- ── turnos_audit_log ────────────────────────────────────────────────────────
 -- SELECT permitido al tenant; el INSERT lo hace el trigger (SECURITY DEFINER),
