@@ -129,6 +129,15 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 > El RLS valida con `check_permiso()`, que retorna TRUE para `role='medico'`
 > (los médicos siempre tienen acceso total). Fuente: migración `015_permisos_granulares.sql`.
 
+> ⚠ **Agenda — `gestionar_turnos` incluye BORRAR (desde la migración `033`, 2026-08-06).**
+> El asistente con ese permiso puede **crear, editar y eliminar** turnos y bloqueos. Antes el
+> **borrado** era **solo-médico en la base** (`turnos_delete` / `bloqueos_delete`) aunque los
+> endpoints ya dejaban pasar al asistente: esa discrepancia le devolvía un falso éxito. La 033
+> alineó las dos políticas al criterio de la agenda (tenant + `gestionar_turnos`) y creó
+> `bloqueos_update`, que **nunca había existido**. Es el único dominio donde el borrado no está
+> reservado al médico (contrastar con pacientes → regla 9, estudios → regla 10, documentos →
+> regla 5).
+
 ---
 
 ## Convenciones de código

@@ -141,19 +141,22 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   ⚠ **Se verifica con DOS sesiones abiertas (médico + asistente), no con que compile.** El Realtime
   no se prueba con `tsc`/`build`: hay que ver el badge subir sin recargar.
 
-### Bugs activos con causa en la base (RLS)
+### Agenda y RLS — bug raíz resuelto y seguimientos
 
-> Los dos ítems de esta sección comparten familia: **la política RLS que falta o no coincide con lo
-> que el endpoint permite**, y el fallo llega al usuario como un **falso éxito** (toast verde, nada
-> guardado). Conviene resolverlos en la **misma tanda**, con **una sola migración**.
+> La familia de bugs de esta sección era **la política RLS que falta o no coincide con lo que el
+> endpoint permite**, y el fallo llegaba al usuario como un **falso éxito** (toast verde, nada
+> guardado). **Cerrada el 2026-08-06** con la migración `033` + las guardas de "0 filas" en los
+> endpoints. Lo que queda abajo del ítem resuelto son **seguimientos** que la tanda dejó anotados.
 
-- **⚠ BUG ACTIVO (diagnosticado 2026-08-04) — editar un bloqueo de agenda NO persiste NINGÚN cambio,
-  y el modal dice que sí. Severidad ALTA. PREEXISTENTE desde el origen del turnero.**
+- **✅ RESUELTO (migración 033 + guardas de "0 filas", 2026-08-06) — editar un bloqueo de agenda NO
+  persistía NINGÚN cambio, y el modal decía que sí. Severidad ALTA. Era PREEXISTENTE desde el origen
+  del turnero.** Diagnosticado el 2026-08-04, aplicado y **verificado en producción con dos sesiones**
+  (médico + asistente con `gestionar_turnos`).
   - **Síntoma:** se abre un bloqueo existente, se le cambia (o agrega) el **motivo**, se guarda → el
     modal muestra el toast **"Bloqueo actualizado"** y se cierra. Al reabrirlo, el motivo es el
     viejo. **No es solo el motivo: no persiste ningún campo** — las fechas tampoco. El camino de
     **creación (POST) funciona bien**; el que falla es exclusivamente el de **edición (PATCH)**.
-  - **Causa raíz — falta la política de UPDATE en la base.** `bloqueos_agenda` tiene
+  - **Causa raíz — faltaba la política de UPDATE en la base.** `bloqueos_agenda` tenía
     `bloqueos_select`, `bloqueos_insert` y `bloqueos_delete`, pero **nunca tuvo
     `bloqueos_update`** (verificado en `005_turnos.sql:106-117`; las migraciones `013` y `015` solo
     redefinen la de INSERT, ninguna crea una de UPDATE). Con RLS activa
@@ -171,10 +174,12 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     completo, sin `pick` de campos). **Lo único que falta es la política.**
   - **Dos capas de enmascaramiento** — son las que convirtieron un fallo de permisos en un falso
     positivo silencioso, y explican por qué pasó desapercibido desde el día uno:
-    1. **El endpoint no chequea "0 filas"**: `updated` queda `[]`, `updated[0]` es `undefined`, y
-       responde `{ data: undefined }` con status **200**.
-    2. **El modal solo mira `response.ok`** (`block-slot-modal.tsx:125`), nunca el cuerpo: un 200
-       que no actualizó nada es indistinguible de uno que sí.
+    1. **El endpoint no chequeaba "0 filas"**: `updated` quedaba `[]`, `updated[0]` era `undefined`,
+       y respondía `{ data: undefined }` con status **200**. ✅ **Cerrado por la guarda** (parte 2
+       del fix).
+    2. **El modal solo mira `response.ok`**, nunca el cuerpo: un 200 que no actualizó nada es
+       indistinguible de uno que sí. **Se dejó así a propósito** — con la guarda, un fallo ya no
+       llega como 200, así que mirar `response.ok` volvió a ser suficiente.
   - **PREEXISTENTE — ninguna tanda de tipos lo introdujo.** Verificado por historial, no por
     deducción: `git log -S` sobre el payload del modal y sobre el `.update(updates)` del endpoint
     devuelve **un único commit cada uno** (`03eb969`, "turnero funcionando, falta pulir"), o sea que
@@ -182,67 +187,93 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     solo en `catch`/anotaciones de tipo y **T4** ni siquiera lo tocó. Argumento estructural
     independiente: **una política RLS no se crea ni se quita desde TypeScript**, que además se borra
     al compilar.
-  - **✅ DECISIÓN DE PRODUCTO TOMADA — la política espeja `turnos_update`:**
+  - **── QUÉ RESOLVIÓ CADA PARTE ──**
+  - **(1) SQL — migración `033_bloqueos_update_y_deletes_agenda_rls.sql`** (aplicada a mano en el SQL
+    Editor, con su copia suelta `MIGRACION-09-bloqueos-update-y-deletes-agenda.sql`). Tres políticas,
+    todas con el mismo `USING` y **sin `WITH CHECK`** (en Postgres el `USING` oficia de check para la
+    fila nueva, así que nadie puede mover una fila a otro tenant):
     ```sql
     USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'))
     ```
-    O sea: **el asistente con `gestionar_turnos` PUEDE editar bloqueos**. Es lo coherente con lo que
-    el endpoint PATCH ya permite hoy (mismo chequeo que el POST) y con `turnos`, la tabla hermana.
-    ⚠ **Conviene confirmarlo con el médico como co-decisor** antes de aplicar —define quién puede
-    modificar la agenda—, pero **la decisión de partida es espejar `turnos`**, no inventar un
-    criterio nuevo.
-    > Contexto para esa charla: la otra política de la tabla, `bloqueos_delete`, es **solo-médico**
-    > (`medico_id = auth.uid() AND get_user_role(...) = 'medico'`), así que hoy **UPDATE y DELETE
-    > quedarían con criterios distintos**. Ver el ítem H1 acá abajo, que es la otra mitad de esa
-    > misma decisión.
-  - **Alcance del fix (para la tanda futura):**
-    - **Obligatorio — una migración nueva** (`033_*.sql`, o el número que corresponda) con el
-      `CREATE POLICY "bloqueos_update" ... FOR UPDATE` de arriba. Sigue el **flujo del proyecto**:
-      migración versionada en `supabase/migrations/` **+ archivo suelto
-      `MIGRACION-NN-descripcion.sql`** en la raíz, **ejecución manual en el SQL Editor por el
-      usuario**, y **verificación contra la base real** — no contra `schema.sql`, que es un
-      **snapshot** y ya tuvo drift (migración `029`).
-    - **Recomendado — guarda de "0 filas" en el endpoint PATCH** (y en el DELETE, ver H1), para que
-      un fallo de RLS devuelva **error** en vez de un 200 vacío. **Es lo que convierte fallos
-      silenciosos en diagnosticables**, y sin eso cualquier futuro problema de RLS sobre esta tabla
-      se va a repetir igual de mudo.
-    - **No hace falta tocar el modal.** `block-slot-modal.tsx` está correcto de punta a punta.
-  - **Hallazgos asociados (misma familia, resolver en la misma tanda):**
-    - **H1 (ACTIVO) — el DELETE de bloqueos tiene el MISMO falso positivo, y para el asistente es un
-      bug real.** La política `bloqueos_delete` es **solo-médico**, pero el endpoint `DELETE` deja
-      pasar al **asistente con `gestionar_turnos`** (mismo chequeo que el PATCH) y después hace
-      `.delete().eq('id', id)` **sin mirar cuántas filas borró**, devolviendo `{ success: true }`
-      incondicionalmente. Resultado: **el asistente ve "Bloqueo eliminado" y el bloqueo sigue ahí.**
-      ⚠ **Hay que decidir si esa asimetría médico/asistente es intencional: hoy la app y la base
-      discrepan.** Va junto con la decisión de la política de UPDATE.
-    - **H2 — arrastrar o redimensionar un bloqueo en el calendario tampoco persiste.** Mismo PATCH,
-      mismo origen (`calendar-view.tsx`, `handleEventDrop` y `handleEventResize` mandan un PATCH a
-      `/api/turnero/bloqueos/{id}` cuando el evento es un bloqueo). Es **más engañoso** que el caso
-      del motivo: el bloqueo se mueve visualmente, **no se dispara `revert()`** porque la respuesta
-      es 200, y el cambio se pierde en el próximo refetch o F5. **La migración lo arregla solo**,
-      pero **hay que incluirlo en la verificación**.
-    - **H3 — el chequeo de `updateError.code === '42501'` es código muerto**, en el PATCH y en el
-      DELETE. Ambos lo miran con el comentario *"Si falla aquí, es 100% RLS en Supabase"*, pero un
-      `UPDATE`/`DELETE` filtrado por RLS **nunca levanta 42501**: el `USING` filtra filas en
-      silencio y solo un `WITH CHECK` violado aborta. La rama es **inalcanzable por la vía que
-      pretende cubrir** y **da la falsa sensación de que el caso RLS está contemplado** — muy
-      probablemente parte de por qué el bug sobrevivió tanto.
-    - **H5 — `getTenantMedicoId` está duplicado inline también acá.** Los dos handlers de
-      `bloqueos/[id]/route.ts` repiten el bloque de perfil + tenant (~18 líneas cada uno) en vez de
-      usar el helper: **dos ocurrencias más** de la deuda ya anotada como *"extraer el helper a
-      `lib/`"* (ver "Lint preexistente" → los 4 `any` no-catch de Route Handlers). Sigue siendo
-      **otra tanda**: tocarla implica ~14 endpoints.
-  - **⚠ Verificación que requerirá el fix — navegador y CON DOS SESIONES.** `tsc`/`build`/`lint` no
-    cubren nada de esto: no cambia una línea de TypeScript.
-    1. **Médico:** editar el **motivo** de un bloqueo → reabrir → el motivo nuevo está.
-    2. **Médico:** editar las **fechas** desde el modal → persisten (confirma que el alcance era
-       mayor que el motivo).
-    3. **Médico:** **arrastrar y redimensionar** un bloqueo → **F5** → la posición se mantiene (H2).
-    4. **Asistente con `gestionar_turnos`:** confirmar que **puede editar** un bloqueo (según la
-       decisión tomada) **y que, si algo falla, ve un error en vez de un falso éxito**. Probar
-       también **eliminar**, por H1.
-    5. **Que la migración no rompa lo que ya andaba:** **crear** y **borrar** bloqueos siguen
-       funcionando.
+    - **`bloqueos_update` — CREADA.** Es la que nunca había existido: **cierra el bug raíz**. Espeja
+      `turnos_update`, o sea que **el asistente con `gestionar_turnos` puede editar bloqueos**.
+    - **`bloqueos_delete` — REEMPLAZADA.** Antes era solo-médico (y escrita con un **subquery inline
+      a `profiles`** en vez de `get_user_role()`, un drift menor que se normalizó de paso). **Cierra
+      H1.**
+    - **`turnos_delete` — REEMPLAZADA.** Mismo cambio y misma razón: **bug gemelo** en la tabla
+      hermana, encontrado al preparar el fix. El endpoint ya dejaba pasar al asistente y la política
+      era solo-médico, así que el borrado le fallaba en silencio.
+    > **Decisión de producto (Opción A de las tres evaluadas): la agenda es una unidad de permiso.**
+    > Quien puede crear y editar turnos y bloqueos, también puede borrarlos. Se eligió alinear **la
+    > base con los endpoints** (que ya autorizaban al asistente) en vez de restringir los endpoints.
+    > ⚠ Es el **único dominio** donde el borrado no queda reservado al médico — contrastar con
+    > pacientes (regla 9), estudios (regla 10) y documentos (regla 5). Registrado también en
+    > `CLAUDE.md` → Auth y roles.
+  - **(2) Código — guardas de "0 filas"** (lo que convierte un fallo de RLS en algo **diagnosticable**
+    en vez de mudo). Sin esto, cualquier problema futuro de RLS sobre estas tablas se repetiría igual
+    de silencioso:
+    - `src/app/api/turnero/bloqueos/[id]/route.ts` → guarda en **PATCH y DELETE**, ambas con **403**
+      ("la base de datos rechazó…"). Al DELETE se le agregó **`.select('id')`**, sin el cual no había
+      forma de contar filas.
+    - `src/app/api/turnero/[id]/route.ts` → guarda en el **DELETE** de turnos, con **404**
+      `'Turno no encontrado o sin permisos'`. ⚠ **La asimetría 404 vs 403 es intencional:** este
+      handler **no hace fetch previo** del turno (la pertenencia va solo por el
+      `.eq('medico_id', …)`), así que las 0 filas colapsan **tres causas indistinguibles** —no
+      existe / otro tenant / RLS lo filtró— y el código honesto es un 404 genérico, el mismo que ya
+      usaba el **PATCH de ese archivo** en su propia guarda. **El PATCH no se tocó.**
+    - **`H3` cerrado de paso:** se eliminó la rama muerta de `updateError.code === '42501'` en los
+      tres handlers. Un `UPDATE`/`DELETE` filtrado por RLS **nunca levanta 42501** —solo un
+      `WITH CHECK` violado aborta—, así que esa rama era inalcanzable por la vía que decía cubrir y
+      **daba la falsa sensación de que el caso RLS estaba contemplado**: probablemente parte de por
+      qué el bug sobrevivió tanto.
+    - **El modal no se tocó.** `block-slot-modal.tsx` estaba correcto de punta a punta; ya propaga
+      `err.error` cuando la respuesta no es `ok`, así que los mensajes nuevos se muestran solos y el
+      drag/resize vuelve a disparar `revert()`.
+  - **(3) `H2` se arregló solo con la migración** (arrastrar/redimensionar usa el mismo PATCH), pero
+    **entró en la verificación**, que es donde se comprobó.
+  - **Verificación hecha (2026-08-06) — navegador, DOS SESIONES.** `tsc`/`build`/`lint` no cubrían
+    nada de esto. Se confirmó: médico edita motivo y fechas y persisten; arrastrar y redimensionar
+    sobreviven al F5; **el asistente con `gestionar_turnos` edita y borra de verdad**; crear y borrar
+    siguen funcionando. Orden aplicado: **primero el código, después el SQL** — así la guarda mostró
+    el 403 honesto sobre la base sin política, que fue la prueba directa de que el diagnóstico era
+    correcto y de que la guarda funciona.
+  - **H5 sigue ABIERTO — no lo tocó esta tanda.** `getTenantMedicoId` está duplicado inline en los
+    dos handlers de `bloqueos/[id]/route.ts` (~18 líneas cada uno). Son **dos ocurrencias más** de la
+    deuda ya anotada como *"extraer el helper a `lib/`"* (ver "Lint preexistente" → los 4 `any`
+    no-catch de Route Handlers); tocarla implica ~14 endpoints, así que sigue siendo **otra tanda**.
+
+- **`turnos_audit_log` no registra los DELETE.** El trigger `turno_audit_trigger` es
+  `AFTER INSERT OR UPDATE ON public.turnos` (`schema.sql` → TRIGGERS): **el borrado no deja rastro**.
+  Antes importaba poco —en la práctica solo el médico llegaba a borrar, porque al asistente la
+  política se lo filtraba en silencio—, pero **desde la migración 033 el asistente con
+  `gestionar_turnos` borra turnos de verdad y no queda registro de quién lo hizo**. La función
+  `log_turno_cambio` ya contempla el literal `'cancelado'` entre sus acciones, así que sumar el DELETE
+  sería acotado, pero es **cambio de esquema** (migración nueva) y conviene decidirlo con el médico:
+  también hay que definir qué se guarda en `detalle` cuando la fila deja de existir.
+- **`bloqueos_agenda` no tiene `updated_at` ni trigger `set_updated_at`.** La tabla solo define
+  `created_at` (`005_turnos.sql`), mientras que `turnos` sí tiene ambos (`turnos_updated_at`). Desde
+  la 033 los bloqueos **son editables de verdad**, así que ahora sí importa: no queda registro de
+  **cuándo** se editó uno. Tampoco hay un equivalente de `turnos_audit_log` para bloqueos. Requiere
+  migración (columna + trigger); el tipo `BloqueoAgenda` de `types/turno.ts` habría que actualizarlo
+  en el mismo cambio.
+- **`bloqueos_select` no exige `ver_turnos`** (es **tenant-only**: `medico_id = get_medico_id()`), a
+  diferencia de `turnos_select`, que sí lo chequea. Un asistente **sin** `ver_turnos` no ve la agenda
+  en la app pero **puede leer los bloqueos por PostgREST directo** — mismo tipo de hueco que la `026`
+  cerró en `estudios`. Severidad baja: el contenido es `motivo`, texto libre del consultorio, no dato
+  clínico. ⚠ **Si se endurece esa política, hay que revisar la guarda de "0 filas" del PATCH de
+  bloqueos**: el `.select()` que la alimenta pasa por `bloqueos_select`, así que una fila escrita pero
+  no legible daría un **403 falso** sobre una escritura que sí ocurrió. El comentario en el código ya
+  lo advierte.
+- **Las políticas de `bloqueos_agenda` aplican a `{public}`, no a `{authenticated}`.** La `029`
+  normalizó otras tablas a `TO authenticated` y a esta no la tocó (la `033` tampoco lo cambió: se
+  limitó al criterio de permisos). Sin impacto práctico hoy —el rol `anon` no pasa el
+  `get_medico_id()`—, pero es **defensa en profundidad** y consistencia con el resto del esquema.
+- **El chequeo de solapamiento de bloqueos no filtra por `estado`.** Tanto
+  `POST /api/turnero/bloqueos` como el `PATCH` buscan turnos que se solapen **sin excluir los
+  cancelados**, así que un turno cancelado en esa franja bloquea la creación o edición del bloqueo con
+  un **409**. Los dos endpoints son **consistentes entre sí**, o sea que **no es una regresión** de la
+  tanda de RLS. Conviene confirmar con el médico si un turno cancelado debe seguir "ocupando" la
+  franja antes de cambiarlo.
 
 ### Modelo de datos — reglas de unicidad (DECIDIDO, sin aplicar)
 
@@ -1129,9 +1160,10 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
       **flujo de onboarding**, que es la puerta de entrada de los asistentes.
   - **Tandas ya decididas que viven FUERA de esta sección** (se listan acá solo como índice, para que
     el plan no dé la impresión de que el lint es todo lo que queda):
-    - **Fix RLS de bloqueos de agenda** — falta `bloqueos_update`; editar un bloqueo no persiste nada
-      y da falso éxito. **Decisión tomada: espejar `turnos_update`.** Con H1–H5. Requiere **migración**
-      y verificación con **dos sesiones**. → Bloque A → *"Bugs activos con causa en la base (RLS)"*.
+    - ~~**Fix RLS de bloqueos de agenda**~~ **✅ HECHA (migración 033 + guardas de "0 filas",
+      2026-08-06).** Se creó `bloqueos_update` y se abrieron `bloqueos_delete` y `turnos_delete` al
+      asistente con `gestionar_turnos`; H1, H2 y H3 cerrados, **H5 sigue abierto** (va con la tanda
+      del helper de tenant). → Bloque A → *"Agenda y RLS — bug raíz resuelto y seguimientos"*.
     - **Fix de la obra social cargada como `obra_social_otro`** — en **dos capas** (código: `select` +
       fallback en los formularios y el dashboard; datos: cargar IOSEP al catálogo). → Bloque A →
       *"Bugs menores detectados"* y *"Datos / catálogo"*.
@@ -1253,13 +1285,15 @@ Información Pública**). Hallazgos:
   sí permite DELETE al médico. Reconstruido en `schema.sql` → sección STORAGE. **Pendiente
   todavía:** el bucket `difusion` **no existe**; cuando se agregue, versionar sus políticas con
   el mismo patrón.
-- **⚠ FALTA la política de UPDATE en `bloqueos_agenda` (diagnosticado 2026-08-04).** La tabla tiene
-  `SELECT`, `INSERT` y `DELETE` pero **nunca tuvo `bloqueos_update`** (desde la migración `005`),
-  mientras que su tabla hermana `turnos` **sí** tiene `turnos_update`. Efecto funcional: **editar un
-  bloqueo no persiste nada** y el usuario recibe un **falso éxito**. Se arregla con una **migración
-  nueva** que espeje `turnos_update`. Detalle completo, decisión de producto ya tomada, hallazgos
-  asociados (H1–H5) y plan de verificación en **Bloque A → "Bugs activos con causa en la base
-  (RLS)"**.
+- **✅ RESUELTO (migración 033, 2026-08-06) — faltaba la política de UPDATE en `bloqueos_agenda`.**
+  La tabla tenía `SELECT`, `INSERT` y `DELETE` pero **nunca tuvo `bloqueos_update`** (desde la `005`),
+  mientras que su hermana `turnos` **sí** tenía `turnos_update`: editar un bloqueo no persistía nada y
+  el usuario recibía un **falso éxito**. La 033 la creó espejando `turnos_update`, y de paso
+  **reemplazó `bloqueos_delete` y `turnos_delete`** —que eran solo-médico mientras los endpoints ya
+  dejaban pasar al asistente, el mismo falso positivo— por el criterio de la agenda
+  (`get_medico_id()` + `check_permiso('gestionar_turnos')`). Se sumaron **guardas de "0 filas"** en
+  los endpoints. Detalle completo, decisión de producto, estado de H1–H5 y seguimientos abiertos en
+  **Bloque A → "Agenda y RLS — bug raíz resuelto y seguimientos"**.
   > ⚠ **Lección transversal, no solo de esta tabla:** una **denegación de RLS en `UPDATE`/`DELETE`
   > no produce error** — el `USING` filtra filas y la operación devuelve 0 filas en silencio (solo
   > un `WITH CHECK` violado levanta `42501`). Cualquier endpoint que escriba y **no chequee cuántas
