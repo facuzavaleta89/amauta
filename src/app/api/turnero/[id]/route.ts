@@ -155,17 +155,27 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: 'Tenant inválido' }, { status: 403 })
     }
 
-    const { error: deleteError } = await supabase
+    const { data: deleted, error: deleteError } = await supabase
       .from('turnos')
       .delete()
       .eq('id', id)
       .eq('medico_id', tenantMedicoId)
+      .select('id')
 
     if (deleteError) {
-      if (deleteError.code === '42501') {
-         return NextResponse.json({ error: 'No tenés permisos para eliminar este turno.' }, { status: 403 })
-      }
       throw deleteError
+    }
+
+    // Guarda de "0 filas". A diferencia de bloqueos, este handler NO hace fetch previo
+    // del turno: la pertenencia va solo por el .eq('medico_id', ...). Por eso las 0 filas
+    // colapsan tres causas indistinguibles (no existe / otro tenant / RLS lo filtró), y el
+    // código honesto es 404 genérico — igual que el PATCH de este mismo archivo (que ya
+    // devuelve 404 'Turno no encontrado o sin permisos' en su propia guarda).
+    if (!deleted || deleted.length === 0) {
+      return NextResponse.json(
+        { error: 'Turno no encontrado o sin permisos' },
+        { status: 404 }
+      )
     }
 
     return NextResponse.json({ success: true })
