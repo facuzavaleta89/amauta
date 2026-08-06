@@ -46,6 +46,38 @@ export interface Notificacion {
 export const ITEM_TYPE_SOLICITUD = 'solicitud'
 
 /**
+ * Payload que viaja en un `ItemPendiente` cuando su `type` es ITEM_TYPE_SOLICITUD.
+ *
+ * ⚠ NO es la fila de `solicitudes_asistente` (para eso está `SolicitudAsistente` en
+ * `roles.ts`): es la proyección ENRIQUECIDA con nombre y email del solicitante que
+ * arma `obtenerSolicitudesPendientes()` (`app/onboarding/actions.ts`) y que
+ * `leerSolicitudesNormalizadas()` (`app/(app)/notificaciones/actions.ts`) mete tal
+ * cual en `payload`.
+ */
+export interface SolicitudPendientePayload {
+  id: string
+  solicitante_nombre: string
+  solicitante_email: string
+  mensaje: string | null
+  created_at: string
+}
+
+/**
+ * Estrecha el `payload: unknown` de un `ItemPendiente` a la forma de solicitud.
+ *
+ * Chequea SOLO el `id`, que es lo único que los consumidores leen hoy (los botones
+ * de aprobar/rechazar de `components/notificaciones/list.tsx`). Se mantiene mínimo
+ * a propósito: un guard que valide campos que nadie usa prometería una verificación
+ * más fuerte de la que el código necesita, y habría que actualizarlo por gusto.
+ */
+export function esPayloadSolicitud(p: unknown): p is SolicitudPendientePayload {
+  return (
+    typeof p === 'object' && p !== null &&
+    'id' in p && typeof (p as Record<string, unknown>).id === 'string'
+  )
+}
+
+/**
  * Item normalizado de "algo que le llegó al usuario", común a las tres fuentes
  * (solicitudes de vinculación, mensajes internos y avisos del sistema).
  *

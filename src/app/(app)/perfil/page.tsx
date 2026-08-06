@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import { PerfilForm } from '@/components/perfil/perfil-form'
+import type { Asistente } from '@/components/perfil/perfil-form'
 import type { Matricula, PermisosAsistente } from '@/types/roles'
 import { PERMISOS_DEFAULT } from '@/types/roles'
 
@@ -31,7 +32,7 @@ export default async function PerfilPage() {
   }
 
   // 3. Si es médico: Cargar asistentes vinculados
-  let asistentes: any[] = []
+  let asistentes: Asistente[] = []
   if (profile.role === 'medico') {
     const { data: rawAsistentes } = await supabase
       .from('profiles')

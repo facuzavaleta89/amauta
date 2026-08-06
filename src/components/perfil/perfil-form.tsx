@@ -24,7 +24,7 @@ import type { Matricula, MatriculaTipo, PermisosAsistente, PermisoKey } from '@/
 import { TITULOS_DISPONIBLES, PERMISO_LABELS, PERMISOS_GRUPOS } from '@/types/roles'
 
 // ── Tipos ────────────────────────────────────────────────────
-interface Asistente {
+export interface Asistente {
   id: string
   full_name: string
   email: string
