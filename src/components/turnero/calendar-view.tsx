@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback, useRef, useEffect } from 'react'
+import React, { useState, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
@@ -39,18 +39,27 @@ const ALL_CATEGORIES = Object.keys(CATEGORIA_STYLES)
 const LS_FILTER_KEY = 'turnero_categoria_filter'
 
 // ── Hook: detecta si es móvil ────────────────────────────────
+// Usa useSyncExternalStore (React 19) en vez de useState + useEffect: es el patrón
+// canónico para suscribirse a un store externo del navegador (aquí, un MediaQueryList).
+// getServerSnapshot devuelve false y React lo usa TANTO en SSR COMO en el primer render
+// de hidratación del cliente, así que no hay mismatch: la secuencia de valores es la
+// misma que tenía el useState+useEffect (false → false → valor real tras montar).
 function useIsMobile(breakpoint = 768) {
-  const [isMobile, setIsMobile] = useState(false)
+  const query = `(max-width: ${breakpoint - 1}px)`
 
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`)
-    setIsMobile(mq.matches)
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [breakpoint])
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      const mq = window.matchMedia(query)
+      mq.addEventListener('change', onStoreChange)
+      return () => mq.removeEventListener('change', onStoreChange)
+    },
+    [query]
+  )
 
-  return isMobile
+  const getSnapshot = useCallback(() => window.matchMedia(query).matches, [query])
+  const getServerSnapshot = () => false
+
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }
 
 // ── Renderizado custom — vista semana/día ────────────────────
@@ -187,12 +196,24 @@ export function CalendarView() {
 
   // Cambiar vista al detectar cambio de tamaño
   useEffect(() => {
-    const api = calendarRef.current?.getApi()
-    if (!api) return
     const targetView = isMobile ? 'timeGridDay' : 'timeGridWeek'
-    if (api.view.type !== targetView) {
-      api.changeView(targetView)
-    }
+
+    // Diferimos changeView a un microtask: FullCalendar usa flushSync internamente, y
+    // llamarlo síncronamente desde el efecto puede caer mientras React todavía renderiza
+    // (React avisa con "flushSync was called from inside a lifecycle method"). El microtask
+    // garantiza que corra después del render en curso. El flag `cancelled` evita actuar
+    // sobre un calendario ya desmontado.
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      const api = calendarRef.current?.getApi()
+      if (!api) return
+      if (api.view.type !== targetView) {
+        api.changeView(targetView)
+      }
+    })
+
+    return () => { cancelled = true }
   }, [isMobile])
 
   const fetchEvents = useCallback(

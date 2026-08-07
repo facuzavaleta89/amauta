@@ -24,7 +24,7 @@ import type { Matricula, MatriculaTipo, PermisosAsistente, PermisoKey } from '@/
 import { TITULOS_DISPONIBLES, PERMISO_LABELS, PERMISOS_GRUPOS } from '@/types/roles'
 
 // ── Tipos ────────────────────────────────────────────────────
-interface Asistente {
+export interface Asistente {
   id: string
   full_name: string
   email: string
@@ -47,7 +47,7 @@ interface PerfilFormProps {
 
 // ── Componente selector de título ───────────────────────────
 function TituloSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const isCustom = value !== '' && !TITULOS_DISPONIBLES.includes(value as any)
+  const isCustom = value !== '' && !(TITULOS_DISPONIBLES as readonly string[]).includes(value)
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">

@@ -38,11 +38,21 @@ interface DocumentoVerificado {
   valido_hasta: string | null
 }
 
-function formatMatriculas(matriculas: any): string | null {
+function formatMatriculas(matriculas: unknown): string | null {
   if (!matriculas) return null
   const arr = Array.isArray(matriculas) ? matriculas : JSON.parse(JSON.stringify(matriculas))
   if (!Array.isArray(arr) || arr.length === 0) return null
-  return arr.map((m: Matricula) => `${m.tipo} ${m.numero}`).join('  |  ')
+  const formateadas = arr
+    .filter((m): m is { tipo: string; numero: string | number } => {
+      if (typeof m !== 'object' || m === null) return false
+      if (!('tipo' in m) || !('numero' in m)) return false
+      const tipo = (m as Record<string, unknown>).tipo
+      const numero = (m as Record<string, unknown>).numero
+      return typeof tipo === 'string' && (typeof numero === 'string' || typeof numero === 'number')
+    })
+    .map((m) => `${m.tipo} ${m.numero}`)
+    .join('  |  ')
+  return formateadas.length > 0 ? formateadas : null
 }
 
 export default async function VerificarDocumentoPage({ params }: PageProps) {
