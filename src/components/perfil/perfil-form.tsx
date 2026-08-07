@@ -20,18 +20,10 @@ import {
   actualizarPerfil, guardarFirma, guardarLogo,
   actualizarPermisosAsistente, desvincularAsistente,
 } from '@/app/(app)/perfil/actions'
-import type { Matricula, MatriculaTipo, PermisosAsistente, PermisoKey } from '@/types/roles'
+import type { Asistente, Matricula, MatriculaTipo, PermisosAsistente, PermisoKey } from '@/types/roles'
 import { TITULOS_DISPONIBLES, PERMISO_LABELS, PERMISOS_GRUPOS } from '@/types/roles'
 
 // ── Tipos ────────────────────────────────────────────────────
-export interface Asistente {
-  id: string
-  full_name: string
-  email: string
-  permisos: PermisosAsistente
-  created_at: string
-}
-
 interface PerfilFormProps {
   profile: {
     id: string; full_name: string; role: 'medico' | 'asistente'

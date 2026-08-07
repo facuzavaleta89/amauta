@@ -1,9 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
+import { AlertCircle } from 'lucide-react'
+import { obtenerAsistentes } from './actions'
 import { PerfilForm } from '@/components/perfil/perfil-form'
-import type { Asistente } from '@/components/perfil/perfil-form'
-import type { Matricula, PermisosAsistente } from '@/types/roles'
+import type { Asistente, Matricula, PermisosAsistente } from '@/types/roles'
 import { PERMISOS_DEFAULT } from '@/types/roles'
 
 export const metadata = {
@@ -31,52 +32,19 @@ export default async function PerfilPage() {
     notFound()
   }
 
-  // 3. Si es médico: Cargar asistentes vinculados
+  // 3. Si es médico: Cargar asistentes vinculados.
+  // La query (select + filtros + orden + enriquecido de email + normalización de
+  // permisos) vive en `obtenerAsistentes()`, que declara este mismo shape: la página
+  // la consume en vez de repetirla inline. El guard de rol se mantiene ACÁ —la action
+  // no chequea rol— para que la llamada ocurra solo para el médico, igual que antes.
   let asistentes: Asistente[] = []
+  let errorAsistentes = false
   if (profile.role === 'medico') {
-    const { data: rawAsistentes } = await supabase
-      .from('profiles')
-      .select(`
-        id, full_name, created_at,
-        ver_pacientes, editar_pacientes,
-        ver_historia_clinica, crear_consultas, finalizar_consultas,
-        ver_turnos, gestionar_turnos,
-        ver_pedidos, crear_pedidos,
-        ver_certificados, crear_certificados,
-        acceso_mensajeria
-      `)
-      .eq('role', 'asistente')
-      .eq('medico_id', user.id)
-      .order('full_name')
-
-    if (rawAsistentes && rawAsistentes.length > 0) {
-      // Enriquecer con emails de Auth (requiere admin client)
-      const admin = createAdminClient()
-      asistentes = await Promise.all(
-        rawAsistentes.map(async (a) => {
-          const { data: authData } = await admin.auth.admin.getUserById(a.id)
-          return {
-            id: a.id,
-            full_name: a.full_name,
-            email: authData?.user?.email ?? 'Sin email',
-            created_at: a.created_at,
-            permisos: {
-              ver_pacientes:        a.ver_pacientes        ?? PERMISOS_DEFAULT.ver_pacientes,
-              editar_pacientes:     a.editar_pacientes     ?? PERMISOS_DEFAULT.editar_pacientes,
-              ver_historia_clinica: a.ver_historia_clinica ?? PERMISOS_DEFAULT.ver_historia_clinica,
-              crear_consultas:      a.crear_consultas      ?? PERMISOS_DEFAULT.crear_consultas,
-              finalizar_consultas:  a.finalizar_consultas  ?? PERMISOS_DEFAULT.finalizar_consultas,
-              ver_turnos:           a.ver_turnos           ?? PERMISOS_DEFAULT.ver_turnos,
-              gestionar_turnos:     a.gestionar_turnos     ?? PERMISOS_DEFAULT.gestionar_turnos,
-              ver_pedidos:          a.ver_pedidos          ?? PERMISOS_DEFAULT.ver_pedidos,
-              crear_pedidos:        a.crear_pedidos        ?? PERMISOS_DEFAULT.crear_pedidos,
-              ver_certificados:     a.ver_certificados     ?? PERMISOS_DEFAULT.ver_certificados,
-              crear_certificados:   a.crear_certificados   ?? PERMISOS_DEFAULT.crear_certificados,
-              acceso_mensajeria:    a.acceso_mensajeria    ?? PERMISOS_DEFAULT.acceso_mensajeria,
-            } satisfies PermisosAsistente,
-          }
-        })
-      )
+    const { data, error } = await obtenerAsistentes()
+    if (error) {
+      errorAsistentes = true
+    } else {
+      asistentes = data ?? []
     }
   }
 
@@ -122,6 +90,14 @@ export default async function PerfilPage() {
 
   return (
     <div className="py-2">
+      {errorAsistentes && (
+        <div className="mb-4 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm text-amber-900 dark:text-amber-200">
+            No se pudieron cargar los asistentes. Recargá la página o intentá más tarde.
+          </p>
+        </div>
+      )}
       <PerfilForm
         profile={{
           id: profile.id,

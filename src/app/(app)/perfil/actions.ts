@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { Matricula, PermisosAsistente } from '@/types/roles'
+import type { Asistente, Matricula, PermisosAsistente } from '@/types/roles'
 import { PERMISOS_DEFAULT } from '@/types/roles'
 
 const TIPOS_VALIDOS = ['MP', 'MN', 'ME'] as const
@@ -195,13 +195,7 @@ export async function guardarLogo(
 // Obtener lista de asistentes vinculados (para médicos)
 // ─────────────────────────────────────────────────────────────
 export async function obtenerAsistentes(): Promise<{
-  data: {
-    id: string
-    full_name: string
-    email: string
-    permisos: PermisosAsistente
-    created_at: string
-  }[] | null
+  data: Asistente[] | null
   error: string | null
 }> {
   try {
