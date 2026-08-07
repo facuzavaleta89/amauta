@@ -1,0 +1,227 @@
+-- Copia ejecutable de supabase/migrations/034_solicitudes_unique_parcial.sql
+-- — pegar en el SQL Editor de Supabase y correr UNA sola vez.
+--
+-- ORDEN DE TRABAJO:
+--   PASO 1 → correr el bloque BEGIN…COMMIT de más abajo (la migración).
+--   PASO 2 → correr las VERIFICACIONES V1–V6 de acá arriba, una por una.
+--   PASO 3 → verificación funcional en la app, con DOS sesiones.
+--
+-- ⚠ Las verificaciones están arriba para tenerlas a mano, pero se corren DESPUÉS
+--   del COMMIT. Están comentadas: si pegás el archivo entero, no se ejecutan.
+--
+-- ============================================================================
+-- VERIFICACIONES — correr DESPUÉS de aplicar la migración
+-- ============================================================================
+--
+-- ── V1. La constraint vieja ya NO existe ────────────────────────────────────
+-- Esperado: 0 filas.
+--
+-- SELECT conname, pg_get_constraintdef(oid) AS definicion
+-- FROM pg_constraint
+-- WHERE conrelid = 'public.solicitudes_asistente'::regclass
+--   AND conname  = 'solicitudes_asistente_solicitante_id_medico_id_key';
+--
+--
+-- ── V2. Qué constraints quedan en la tabla ──────────────────────────────────
+-- Esperado: 4 filas — 1 PRIMARY KEY ('p'), 2 FOREIGN KEY ('f') y el CHECK de
+-- `estado` ('c'). NINGUNA de tipo 'u' (unique): esa es la que se fue.
+--
+-- SELECT conname, contype, pg_get_constraintdef(oid) AS definicion
+-- FROM pg_constraint
+-- WHERE conrelid = 'public.solicitudes_asistente'::regclass
+-- ORDER BY contype, conname;
+--
+--
+-- ── V3. El índice parcial existe, con su WHERE ──────────────────────────────
+-- Esperado: 5 filas — los 3 `idx_solicitudes_*` de la 010, el `*_pkey`, y el nuevo
+-- `solicitudes_asistente_solicitante_medico_pendiente_key`, cuya definición tiene
+-- que terminar en:  ... USING btree (solicitante_id, medico_id) WHERE (estado = 'pendiente'::text)
+--
+-- ⚠ Ojo: el índice viejo que respaldaba la constraint (mismo nombre que la constraint)
+-- NO debe aparecer — se fue junto con ella.
+--
+-- SELECT indexname, indexdef
+-- FROM pg_indexes
+-- WHERE schemaname = 'public' AND tablename = 'solicitudes_asistente'
+-- ORDER BY indexname;
+--
+--
+-- ── V4. Confirmación de que el índice nuevo es ÚNICO y PARCIAL ──────────────
+-- V3 muestra el texto; esta lo confirma leyendo los flags reales del catálogo.
+-- Esperado: 2 filas — el `*_pkey` (predicado NULL) y el nuevo con
+-- predicado = (estado = 'pendiente'::text).
+--
+-- SELECT i.relname                                AS indice,
+--        ix.indisunique                           AS es_unico,
+--        pg_get_expr(ix.indpred, ix.indrelid)     AS predicado_parcial
+-- FROM pg_index ix
+-- JOIN pg_class i ON i.oid = ix.indexrelid
+-- WHERE ix.indrelid = 'public.solicitudes_asistente'::regclass
+--   AND ix.indisunique;
+--
+--
+-- ── V5. Sanidad de datos: no hay dos PENDIENTES del mismo par ───────────────
+-- Esperado: 0 filas. (Si el CREATE INDEX pasó, esto no puede fallar — es una
+-- contraprueba barata de que la regla nueva está activa sobre los datos reales.)
+--
+-- SELECT solicitante_id, medico_id, count(*)
+-- FROM public.solicitudes_asistente
+-- WHERE estado = 'pendiente'
+-- GROUP BY solicitante_id, medico_id
+-- HAVING count(*) > 1;
+--
+--
+-- ── V6. Informativo: a quiénes destraba el fix ──────────────────────────────
+-- Solicitudes NO pendientes cuyo solicitante hoy está desvinculado
+-- (`profiles.medico_id IS NULL`). Cada fila era un asistente que hasta ahora no
+-- podía volver a solicitar vinculación a ese médico. No es un chequeo de la
+-- migración: es para saber a quién avisarle que ya puede reintentar.
+--
+-- SELECT s.estado, count(*) AS asistentes_destrabados
+-- FROM public.solicitudes_asistente s
+-- JOIN public.profiles p ON p.id = s.solicitante_id
+-- WHERE s.estado <> 'pendiente' AND p.medico_id IS NULL
+-- GROUP BY s.estado
+-- ORDER BY s.estado;
+--
+--
+-- ============================================================================
+-- VERIFICACIÓN FUNCIONAL — en la app, con DOS sesiones (médico + asistente)
+-- ============================================================================
+-- El SQL de arriba prueba que el objeto está bien creado, NO que el bug se fue.
+-- Esto último se prueba en la app y a mano. ⚠ No se hace con un INSERT de prueba
+-- desde el SQL Editor: el admin/`postgres` del editor NO pasa por RLS, así que un
+-- INSERT manual probaría la constraint pero saltearía el camino real (Server Action
+-- + política `solicitudes_insert`). Hay que ejercitar el flujo completo.
+--
+--   CAMINO A — el que motivó el fix (asistente DESVINCULADO):
+--     1. Médico → /perfil → desvincular a un asistente que ya estaba vinculado.
+--        (Su fila en `solicitudes_asistente` queda en 'aprobada', a propósito.)
+--     2. Asistente → cerrar sesión, volver a entrar → cae en /onboarding.
+--     3. Buscar AL MISMO médico, seleccionarlo y enviar la solicitud.
+--        ✅ ESPERADO: entra bien y la pantalla pasa a "Esperando aprobación".
+--        ❌ ANTES DEL FIX: "Ya enviaste una solicitud a este médico".
+--     4. Médico → la solicitud aparece en la campanita / en /notificaciones.
+--     5. Médico aprueba → el asistente entra al sistema normalmente.
+--
+--   CAMINO B — el gemelo (asistente RECHAZADO), roto por la misma causa:
+--     1. Asistente envía solicitud → médico la RECHAZA.
+--     2. Asistente ve "Solicitud rechazada" → botón "Buscar otro médico".
+--     3. Volver a elegir AL MISMO médico y enviar.
+--        ✅ ESPERADO: entra bien.  ❌ ANTES: mismo mensaje de bloqueo.
+--
+--   CONTRAPRUEBA — que la regla nueva SIGA protegiendo lo que debía proteger:
+--     Con una solicitud ya PENDIENTE, intentar enviar otra al mismo médico.
+--     ✅ ESPERADO: sigue bloqueada con "Ya enviaste una solicitud a este médico"
+--        (y ahora el mensaje es literalmente cierto). Si esto NO bloquea, el índice
+--        parcial no quedó bien: revisar V3/V4.
+--     ⚠ Nota: la UI no ofrece el camino directo (con una pendiente muestra la
+--       pantalla "Esperando aprobación"), así que esta contraprueba requiere llegar
+--       al formulario de otra forma — o darla por cubierta con V3/V4, que verifican
+--       la unicidad sobre 'pendiente' directamente en el catálogo.
+--
+-- ============================================================================
+
+
+-- ============================================================================
+-- Migration 034 — solicitudes_asistente: UNIQUE total → índice único PARCIAL
+-- ============================================================================
+-- PROBLEMA QUE RESUELVE:
+--   Un asistente que fue DESVINCULADO (o RECHAZADO) no puede volver a enviarle una
+--   solicitud de vinculación AL MISMO MÉDICO: la app le responde
+--   "Ya enviaste una solicitud a este médico" y queda sin forma de reingresar.
+--
+--   La causa es la constraint que la 010 creó junto con la tabla:
+--
+--       UNIQUE(solicitante_id, medico_id)        -- 010_multitenancy.sql:70
+--
+--   No contempla `estado` y no es parcial, así que un par (asistente, médico) puede
+--   tener EXACTAMENTE UNA fila EN TODA LA HISTORIA. Como la fila vieja sobrevive a
+--   la desvinculación —`desvincularAsistente()` solo pone `profiles.medico_id = NULL`
+--   y no toca esta tabla—, el par queda con su cupo ocupado para siempre por una
+--   solicitud en 'aprobada' (o 'rechazada'), y el segundo INSERT muere con 23505.
+--
+--   ⚠ LA CONSTRAINT NUNCA IMPLEMENTÓ LO QUE DECÍA IMPLEMENTAR. El comentario que la
+--   010 escribió tres líneas más arriba (`010_multitenancy.sql:59`) dice:
+--
+--       "Constraint UNIQUE garantiza una sola solicitud activa por par."
+--
+--   La intención declarada era "una sola ACTIVA" —o sea, una sola PENDIENTE—; lo
+--   implementado fue "una sola en la historia". Esta migración cierra esa brecha:
+--   no cambia la regla de negocio, la hace cumplir como estaba escrita.
+--
+-- QUÉ HACE:
+--   1. Dropea la constraint total `solicitudes_asistente_solicitante_id_medico_id_key`
+--      (nombre real leído de pg_constraint contra la base; es el que Postgres generó).
+--   2. Crea un ÍNDICE ÚNICO PARCIAL sobre el mismo par, restringido a las pendientes.
+--
+--   Resultado: sigue habiendo como máximo UNA solicitud pendiente por par —no se puede
+--   spamear al médico— pero el historial ('aprobada' / 'rechazada') deja de bloquear
+--   una solicitud nueva.
+--
+-- ⚠ POR QUÉ UN ÍNDICE Y NO UNA CONSTRAINT — no es una preferencia de estilo:
+--   Postgres NO admite constraints UNIQUE parciales (no existe
+--   `ADD CONSTRAINT ... UNIQUE (...) WHERE ...`). La cláusula WHERE solo se puede
+--   expresar en un `CREATE UNIQUE INDEX`. Por eso el swap es constraint → índice, y
+--   por eso el objeto nuevo aparece en `pg_indexes` / `pg_index` y NO en
+--   `pg_constraint`. A efectos de integridad son equivalentes: el índice único
+--   rechaza el duplicado con el mismo SQLSTATE 23505.
+--
+-- SEGURO POR CONSTRUCCIÓN — sin auditoría previa de datos:
+--   Se pasa de una regla MÁS ESTRICTA a una MÁS LAXA, así que es imposible que los
+--   datos existentes violen la nueva. Todo par que hoy cumple "una sola fila en la
+--   historia" cumple trivialmente "una sola pendiente". Es la situación INVERSA a la
+--   de las UNIQUE de DNI/matrícula previstas en PENDIENTES.md, que sí exigen auditar
+--   duplicados antes de aplicar. (Igual se verificó contra la base: 0 pares duplicados.)
+--
+-- NO CAMBIA NADA DEL CÓDIGO — y esto es intencional:
+--   · `enviarSolicitud()` sigue insertando directo y traduciendo el 23505. El código
+--     de error no cambia, así que el mapeo sigue funcionando sin tocarlo. De hecho su
+--     mensaje —"Ya enviaste una solicitud a este médico"— pasa a ser VERDADERO: a
+--     partir de acá solo puede chocar contra una solicitud realmente pendiente.
+--   · `desvincularAsistente()` no se toca: la fila vieja se conserva a propósito, como
+--     rastro de que el vínculo existió.
+--   · No se agrega ningún estado nuevo al CHECK (sigue 'pendiente'/'aprobada'/'rechazada').
+--   · Ningún `.upsert()` / `ON CONFLICT ON CONSTRAINT` referencia el nombre viejo
+--     (verificado por grep: las 6 referencias a la tabla en src/ son insert/select/update
+--     planos), así que dropear el nombre no rompe ninguna consulta.
+--
+-- ALCANCE: arregla los DOS caminos que necesitaban una segunda solicitud del mismo par
+--   — tras desvinculación (fila en 'aprobada') y tras rechazo (fila en 'rechazada', donde
+--   la UI ya invitaba a reintentar con el botón "Buscar otro médico").
+--
+-- Envuelto en transacción: entre el DROP y el CREATE la tabla queda sin la garantía de
+--   unicidad; BEGIN/COMMIT lo hace atómico y evita quedarse sin ninguna de las dos si
+--   el CREATE fallara.
+--   ⚠ Por eso el índice se crea SIN `CONCURRENTLY`: esa variante no puede correr dentro
+--   de un bloque de transacción. El lock que toma el CREATE INDEX común es irrelevante
+--   acá (tabla chiquísima, un puñado de filas).
+-- Reversible: ver el bloque comentado al final (con su condición).
+-- ============================================================================
+
+BEGIN;
+
+-- 1. Fuera la constraint total (arrastra consigo su índice único implícito)
+ALTER TABLE public.solicitudes_asistente
+  DROP CONSTRAINT solicitudes_asistente_solicitante_id_medico_id_key;
+
+-- 2. La misma unicidad, pero solo entre las PENDIENTES
+CREATE UNIQUE INDEX solicitudes_asistente_solicitante_medico_pendiente_key
+  ON public.solicitudes_asistente (solicitante_id, medico_id)
+  WHERE estado = 'pendiente';
+
+COMMIT;
+
+-- ── REVERSIBLE ──────────────────────────────────────────────────────────────
+-- ⚠ Solo es aplicable MIENTRAS no exista ningún par (solicitante_id, medico_id)
+--    repetido — o sea, mientras nadie haya usado todavía la funcionalidad que esta
+--    migración destraba. Chequear ANTES (tiene que dar 0 filas):
+--      SELECT solicitante_id, medico_id, count(*) FROM public.solicitudes_asistente
+--      GROUP BY 1,2 HAVING count(*) > 1;
+--    Si devuelve filas, revertir es IMPOSIBLE sin borrar solicitudes: no revertir.
+-- BEGIN;
+--   DROP INDEX IF EXISTS public.solicitudes_asistente_solicitante_medico_pendiente_key;
+--   ALTER TABLE public.solicitudes_asistente
+--     ADD CONSTRAINT solicitudes_asistente_solicitante_id_medico_id_key
+--     UNIQUE (solicitante_id, medico_id);
+-- COMMIT;
