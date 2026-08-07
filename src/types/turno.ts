@@ -102,6 +102,8 @@ export interface BloqueoAgenda {
   medico_id: string                      // tenant key — agenda del médico
   creado_por: string
   created_at: string
+  /** Lo mantiene el trigger `bloqueos_updated_at` (migración 036). Al crear, = created_at. */
+  updated_at: string
 }
 
 export interface BloqueoAgendaInsert {
