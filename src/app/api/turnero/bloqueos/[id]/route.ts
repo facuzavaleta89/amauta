@@ -85,10 +85,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const inicio = updates.fecha_inicio ?? existing.fecha_inicio
     const fin    = updates.fecha_fin    ?? existing.fecha_fin
 
+    // Los cancelados y los pendientes de confirmar NO ocupan la franja: mismo criterio (y
+    // misma forma) que el POST de /api/turnero. Sin filtro de `categoria`, por lo mismo
+    // que en el POST de bloqueos: un bloqueo pisa turnos de cualquier categoría.
     const { data: overT } = await supabase
       .from('turnos')
       .select('id')
       .eq('medico_id', tenantMedicoId)
+      .not('estado', 'in', '(pendiente_confirmar,cancelado)')
       .lt('fecha_inicio', fin)
       .gt('fecha_fin', inicio)
 
