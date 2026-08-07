@@ -4,6 +4,23 @@ import { Users, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { formatFechaAR } from '@/lib/utils/format-date'
 
+/**
+ * Proyección PROPIA de este componente. No pasa por `GET /api/pacientes`, así que NO es
+ * un `PacienteBusqueda`: trae `created_at` (que aquél no proyecta) y no trae
+ * `fecha_nacimiento`, `obra_social_id`, `numero_afiliado`, `telefono` ni `email`.
+ * El shape lo fija el `.select()` de acá abajo — si se toca uno, se toca el otro.
+ */
+interface PacienteReciente {
+  id: string
+  nombre_completo: string
+  dni: string
+  created_at: string
+  /** Join `obras_sociales ( nombre )`. NULL si la obra social no es del catálogo. */
+  obras_sociales: { nombre: string } | null
+  /** Texto libre, para los pacientes cuya obra social no está en el catálogo. */
+  obra_social_otro: string | null
+}
+
 export async function RecentPatients() {
   const supabase = await createClient()
 
@@ -14,11 +31,13 @@ export async function RecentPatients() {
       nombre_completo,
       dni,
       created_at,
+      obra_social_otro,
       obras_sociales ( nombre )
     `)
     .is('archivado_at', null)
     .order('created_at', { ascending: false })
     .limit(5)
+    .overrideTypes<PacienteReciente[], { merge: false }>()
 
   return (
     <Card className="border-border/60 shadow-sm">
@@ -45,7 +64,7 @@ export async function RecentPatients() {
           <div className="space-y-1">
             {pacientes.map((p) => {
               const obraSocial =
-                (p.obras_sociales as unknown as { nombre: string } | null)?.nombre ?? '—'
+                p.obras_sociales?.nombre ?? (p.obra_social_otro?.trim() || '—')
               return (
                 <Link
                   key={p.id}
