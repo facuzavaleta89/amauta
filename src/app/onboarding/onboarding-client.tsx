@@ -41,7 +41,12 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
   // Debounce de búsqueda
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (query.trim().length < 3) { setResultados([]); setBusquedaError(null); return }
+
+    // Guard: con menos de 3 caracteres no se agenda búsqueda.
+    // NO se limpia estado acá (eso causaría set-state-in-effect y renders en cascada);
+    // la visibilidad de resultados se deriva en render (ver `resultadosVisibles`), así que
+    // los resultados viejos dejan de mostrarse solos cuando la query baja de 3 caracteres.
+    if (query.trim().length < 3) return
 
     debounceRef.current = setTimeout(async () => {
       setBuscando(true)
@@ -56,8 +61,9 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
 
   function handleSeleccionar(medico: MedicoResult) {
     setMedicoSeleccionado(medico)
+    // Al vaciar la query, `resultadosVisibles` pasa a [] por derivación: no hace falta
+    // limpiar `resultados` a mano.
     setQuery('')
-    setResultados([])
   }
 
   function handleEnviar() {
@@ -172,6 +178,13 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
   }
 
   // ── Flujo principal ────────────────────────────────────────
+
+  // La búsqueda solo es "válida" con 3+ caracteres. Derivamos la visibilidad de los
+  // resultados de la query actual, en vez de vaciar el estado desde el efecto: así, al
+  // borrar por debajo de 3 caracteres, la lista desaparece sin un setState en el efecto.
+  const queryValida = query.trim().length >= 3
+  const resultadosVisibles = queryValida ? resultados : []
+
   return (
     <div className="w-full max-w-lg">
       {/* Header */}
@@ -208,9 +221,9 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
             </div>
 
             {/* Resultados */}
-            {resultados.length > 0 && (
+            {resultadosVisibles.length > 0 && (
               <div className="border border-border rounded-xl overflow-hidden">
-                {resultados.map((medico, i) => (
+                {resultadosVisibles.map((medico, i) => (
                   <button
                     key={medico.id}
                     onClick={() => handleSeleccionar(medico)}
@@ -232,7 +245,7 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
               </div>
             )}
 
-            {query.trim().length >= 3 && !buscando && resultados.length === 0 && (
+            {queryValida && !buscando && resultadosVisibles.length === 0 && (
               <p className={`text-xs text-center py-2 ${busquedaError ? 'text-destructive' : 'text-muted-foreground'}`}>
                 {busquedaError ?? 'No se encontraron médicos con ese nombre o email.'}
               </p>
