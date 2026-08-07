@@ -162,10 +162,12 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
           consulta_id: initialData.consulta_id || undefined,
           color: initialData.color
         })
-        // Pre-fill search term if patient name exists
-        if (initialData.paciente_nombre_libre) {
-          setSearchTerm(initialData.paciente_nombre_libre)
-        }
+        // Pre-fill search term con las DOS fuentes posibles del nombre del paciente:
+        // los turnos creados desde el formulario guardan `paciente_nombre_libre`, pero los
+        // creados desde la HC (`origen: 'desde_hc'`) se insertan con `paciente_id` y SIN ese
+        // campo — su nombre solo llega por el join `paciente` de GET /api/turnero. Leer solo
+        // el primero dejaba el buscador vacío al editarlos.
+        setSearchTerm(initialData.paciente_nombre_libre ?? initialData.paciente?.nombre_completo ?? '')
       } else if (initialDates) {
         form.reset({
           paciente_id: undefined,
