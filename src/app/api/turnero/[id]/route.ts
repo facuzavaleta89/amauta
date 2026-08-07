@@ -67,11 +67,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     // If updating times, check for overlaps
     if (updates.fecha_inicio && updates.fecha_fin) {
+        // Los turnos cancelados y los pendientes de confirmar NO ocupan la franja:
+        // mismo criterio (y misma forma) que el POST de /api/turnero al crear un turno.
         const { data: overT } = await supabase
           .from('turnos')
           .select('id')
           .eq('medico_id', tenantMedicoId)
           .neq('id', id)
+          .not('estado', 'in', '(pendiente_confirmar,cancelado)')
           .lt('fecha_inicio', updates.fecha_fin)
           .gt('fecha_fin', updates.fecha_inicio)
 

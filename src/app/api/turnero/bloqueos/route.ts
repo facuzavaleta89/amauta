@@ -53,10 +53,15 @@ export async function POST(request: NextRequest) {
     const b = result.data
 
     // Optionally check if a turn currently falls strictly into this completely new blockage
+    // Los cancelados y los pendientes de confirmar NO ocupan la franja: mismo criterio (y
+    // misma forma) que el POST de /api/turnero. ⚠ A diferencia de aquél, acá NO se filtra
+    // por `categoria`: esto compara bloqueo vs turno, y un bloqueo pisa turnos de cualquier
+    // categoría (curso, personal, administrativo…), no solo los turno_medico.
     const { data: superpuestosTurnos, error: errT } = await supabase
       .from('turnos')
       .select('id')
       .eq('medico_id', tenantMedicoId)
+      .not('estado', 'in', '(pendiente_confirmar,cancelado)')
       .lt('fecha_inicio', b.fecha_fin)
       .gt('fecha_fin', b.fecha_inicio)
 
