@@ -158,6 +158,26 @@ export interface ProfileUpdate {
   logo_url?: string | null
 }
 
+// ── ASISTENTES VINCULADOS (proyección de /perfil) ──────────
+
+/**
+ * Asistente vinculado tal como lo consume el panel de `/perfil`.
+ *
+ * ⚠ NO es una fila de `profiles`: es la proyección que arma
+ * `obtenerAsistentes()` (`app/(app)/perfil/actions.ts`) — los 3 campos del
+ * `select` sobre `profiles` (`id`, `full_name`, `created_at`), los 12 permisos
+ * normalizados contra `PERMISOS_DEFAULT`, y el `email`, que NO está en
+ * `profiles`: lo enriquece `admin.auth.admin.getUserById()` desde `auth.users`
+ * (por eso su fallback es la cadena 'Sin email', no `null`).
+ */
+export interface Asistente {
+  id: string
+  full_name: string
+  email: string
+  permisos: PermisosAsistente
+  created_at: string
+}
+
 // ── SOLICITUDES DE VINCULACIÓN ─────────────────────────────
 
 export type SolicitudEstado = 'pendiente' | 'aprobada' | 'rechazada'
