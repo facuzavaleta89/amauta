@@ -35,20 +35,27 @@ export interface PacienteWithObraSocial extends Paciente {
 
 /**
  * Paciente tal como lo devuelve el autocompletado `GET /api/pacientes?q=`, que proyecta
- * `id, nombre_completo, dni, fecha_nacimiento, obra_social_id, numero_afiliado, telefono,
- * email, obras_sociales ( nombre )` sobre pacientes activos del tenant.
+ * `id, nombre_completo, dni, fecha_nacimiento, obra_social_id, obra_social_otro,
+ * numero_afiliado, telefono, email, obras_sociales ( nombre )` sobre pacientes activos
+ * del tenant.
  *
- * ⚠ Es una proyección PARCIAL: no trae `sexo`, `provincia`, `ciudad`, `obra_social_otro`,
- * `creado_por`, `archivado_at` ni los timestamps. Y del join solo viene `nombre` (no el `id`
+ * ⚠ Es una proyección PARCIAL: no trae `sexo`, `provincia`, `ciudad`, `creado_por`,
+ * `archivado_at` ni los timestamps. Y del join solo viene `nombre` (no el `id`
  * de la obra social), así que NO es un `PacienteWithObraSocial`.
  *
- * Consumidores: el buscador de `turnero/turno-form.tsx` y el de `pedidos/pedido-form.tsx`.
+ * ⚠ `obra_social_otro` viaja junto al join a propósito: la obra social se resuelve con
+ * el fallback `obras_sociales?.nombre ?? (obra_social_otro?.trim() || null)`, porque un
+ * paciente puede tenerla cargada como TEXTO LIBRE (fuera del catálogo) y en ese caso el
+ * join viene NULL. Leer solo `obras_sociales.nombre` la muestra vacía — era el bug.
+ *
+ * Consumidores: el buscador de `turnero/turno-form.tsx`, el de `pedidos/pedido-form.tsx`
+ * y el de `certificados/certificado-form.tsx`.
  * `GET /api/pacientes/[id]` proyecta `*, obras_sociales ( nombre )` — un superset de esta
  * forma —, así que también es asignable acá.
  */
 export interface PacienteBusqueda extends Pick<Paciente,
   'id' | 'nombre_completo' | 'dni' | 'fecha_nacimiento' |
-  'obra_social_id' | 'numero_afiliado' | 'telefono' | 'email'
+  'obra_social_id' | 'obra_social_otro' | 'numero_afiliado' | 'telefono' | 'email'
 > {
   /** Join de `obras_sociales ( nombre )`. NULL si el paciente no tiene obra social. */
   obras_sociales: Pick<ObraSocial, 'nombre'> | null

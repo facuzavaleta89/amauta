@@ -101,7 +101,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
     setValue('paciente_nombre', p.nombre_completo)
     setValue('paciente_dni', p.dni)
     setValue('paciente_dob', p.fecha_nacimiento)
-    setValue('obra_social_nombre', p.obras_sociales?.nombre ?? null)
+    setValue('obra_social_nombre', p.obras_sociales?.nombre ?? (p.obra_social_otro?.trim() || null))
     setValue('numero_afiliado', p.numero_afiliado ?? null)
     setSearchQuery(p.nombre_completo)
     setShowSugerencias(false)

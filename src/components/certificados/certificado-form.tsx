@@ -21,16 +21,7 @@ import {
   certificadoSchema,
   type CertificadoFormInput,
 } from '@/lib/validations/pedido.schema'
-
-interface PacienteSugerido {
-  id: string
-  nombre_completo: string
-  dni: string
-  fecha_nacimiento: string
-  obra_social_id: number | null
-  numero_afiliado: string | null
-  obras_sociales?: { nombre: string } | null
-}
+import type { PacienteBusqueda } from '@/types'
 
 interface CertificadoFormProps {
   preselectedPacienteId?: string | null
@@ -40,10 +31,10 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sugerencias, setSugerencias] = useState<PacienteSugerido[]>([])
+  const [sugerencias, setSugerencias] = useState<PacienteBusqueda[]>([])
   const [isBuscando, setIsBuscando] = useState(false)
   const [showSugerencias, setShowSugerencias] = useState(false)
-  const [pacienteSeleccionado, setPacienteSeleccionado] = useState<PacienteSugerido | null>(null)
+  const [pacienteSeleccionado, setPacienteSeleccionado] = useState<PacienteBusqueda | null>(null)
 
   const {
     register,
@@ -92,13 +83,13 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselectedPacienteId])
 
-  const seleccionarPaciente = (p: PacienteSugerido) => {
+  const seleccionarPaciente = (p: PacienteBusqueda) => {
     setPacienteSeleccionado(p)
     setValue('paciente_id', p.id)
     setValue('paciente_nombre', p.nombre_completo)
     setValue('paciente_dni', p.dni)
     setValue('paciente_dob', p.fecha_nacimiento)
-    setValue('obra_social_nombre', p.obras_sociales?.nombre ?? null)
+    setValue('obra_social_nombre', p.obras_sociales?.nombre ?? (p.obra_social_otro?.trim() || null))
     setValue('numero_afiliado', p.numero_afiliado ?? null)
     setSearchQuery(p.nombre_completo)
     setShowSugerencias(false)
