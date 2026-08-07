@@ -374,6 +374,28 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
      cargar y qué no en el sistema real.
 
 ### Bugs menores detectados
+- **⚠ BUG FUNCIONAL NUEVO (detectado 2026-08-06) — un asistente DESVINCULADO no puede volver a
+  solicitar vinculación con el mismo médico. SIN DIAGNOSTICAR — rama propia.**
+  - **Síntoma:** el asistente que ya estuvo vinculado a un médico y fue **desvinculado** vuelve al
+    onboarding, lo busca, envía la solicitud y recibe **"Ya enviaste una solicitud a este médico"**.
+    Queda **sin forma de volver a entrar** al sistema con ese médico.
+  - **Hipótesis SIN CONFIRMAR** (no se verificó nada todavía): el chequeo de solicitud duplicada de
+    `enviarSolicitud` (`app/onboarding/actions.ts`) **no filtra por `estado`**, así que la solicitud
+    vieja —que quedó en **`'aprobada'`**— bloquea la nueva. Falta comprobar además si existe un
+    **constraint `UNIQUE (solicitante_id, medico_id)`** en `solicitudes_asistente`, porque eso
+    cambiaría el fix (no alcanzaría con tocar el `if` del Server Action: habría que decidir si se
+    reutiliza la fila vieja, se la borra o se relaja la constraint).
+  - **Puede afectar también el caso `'rechazada'`:** el flujo de "Buscar otro médico"
+    (`onboarding-client.tsx`, botón que hace `setSolicitud(null)`) sugiere que reintentar está
+    contemplado en la UI, pero si el chequeo del servidor no filtra por estado, reintentar **con el
+    mismo médico** fallaría igual. **Verificar los dos caminos.**
+  - **Severidad: MEDIA-ALTA por impacto, aunque el caso sea poco frecuente** — deja a un asistente
+    fuera del sistema sin salida desde la UI, y el onboarding es **la puerta de entrada** de los
+    asistentes. No hay workaround para el usuario: hoy se arregla solo tocando la base a mano.
+  - **Primer paso cuando se retome:** diagnóstico **de solo lectura** — leer `enviarSolicitud`, mirar
+    si el `.select()` del chequeo filtra por `estado`, y consultar `pg_constraint` /
+    `information_schema` para ver si hay UNIQUE sobre `(solicitante_id, medico_id)`. Recién con eso a
+    la vista, decidir el fix. **Es un bug de aplicación + posiblemente de modelo, no de lint.**
 - **✅ RESUELTO (2026-07-26) — Filename de certificados sin tipo → `certificado_null_...`.** El
   nombre del PDF interpolaba `certificado.tipo`, que llega **siempre `null`** desde que la
   elección de tipo se quitó de la UI, y el null se coercionaba a la cadena `"null"`. Se
@@ -1007,7 +1029,9 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   a tandas con nombre propio** (ver el plan). **No abordarlos como "limpieza de lint"**: ese fue
   exactamente el criterio con el que se los fue apartando tanda tras tanda.
   > **Epílogo (2026-08-05):** de esos 21, **13 eran el bloque "tipos de dominio"** y quedaron
-  > cerrados por las tandas **T1–T6** (ver el ítem que sigue). Restan **8**.
+  > cerrados por las tandas **T1–T6** (ver el ítem que sigue). Restaban **8**.
+  > **Epílogo final (2026-08-06):** esos 8 los cerró la serie **"lint a 0"** (5 sub-tandas). **El lint
+  > del proyecto quedó en CERO** — ver el ítem 🏁 más abajo.
 - **✅ RESUELTO (bloque TIPOS DE DOMINIO, tandas T1–T6, 2026-08-05) — 21 → 8 problemas (−13).**
   Lo que el hito de L4 había apartado como *"trabajo de otra naturaleza"*: **no se arreglaba con
   anotaciones, había que crear o aplicar tipos que modelaran las proyecciones reales de la API.**
@@ -1055,22 +1079,95 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   (pendiente que T4 no pudo tocar por alcance, cerrado en T5) y el tipo local **incompleto**
   `PacienteSugerido` de `pedido-form.tsx`, cuya desalineación con el endpoint era **la causa** de sus
   2 casts — no un descuido de estilo.
-- **Deuda que QUEDA: 8 problemas preexistentes** (8 errores, **0 warnings**; medido 2026-08-05 tras
-  T6). Desglose por regla:
-  - **6 `@typescript-eslint/no-explicit-any`** — **ya no queda ningún `any` de tipos de dominio**, ni
-    de `catch`, ni de FullCalendar. Son **6 sueltos**: `perfil/page.tsx:34`,
-    `verificar/[codigo]/page.tsx:41`, `notificaciones/list.tsx:19`,
-    `historia-clinica-form.tsx:29` y `:43`, `perfil-form.tsx:50`.
-  - **0 `@typescript-eslint/no-unused-vars`** — el `mode` se cerró en L4 y el `_pid` en L3b.
-  - **0 `@next/next/no-img-element`** — cerrados en L3a.
-  - **2 `react-hooks/set-state-in-effect`** — `calendar-view.tsx:47` (línea corrida por los imports de
-    T3/T4) y `onboarding-client.tsx:44`. ⚠ **Son dos problemas distintos, no un lote:** el primero
-    está en el hook `useIsMobile` y **no es derivable en render** (`matchMedia` no existe en SSR,
-    derivarlo rompería la hidratación); su fix canónico es `useSyncExternalStore`, o sea un
-    **refactor**, y **cambia comportamiento observable** porque `isMobile` alimenta el efecto que hace
-    `changeView` a vista día en móvil. El segundo es un reset de estado enredado con la lógica del
-    debounce de búsqueda. Tratarlos por separado.
-  - Ninguno **bloquea el build**.
+- **🏁 ✅ RESUELTO (serie "lint a 0", 2026-08-06) — los 8 problemas preexistentes que quedaban. EL
+  LINT DEL PROYECTO ESTÁ EN CERO.** `npm run lint` no imprime **nada**: ni errores, ni warnings, ni la
+  línea de resumen. Recorrido completo del proyecto: **96** (antes de la tanda 1A) → 8 (tras T6) →
+  **0**. Se hizo en **5 sub-tandas**, cortadas por naturaleza del cambio y por cómo se verifica cada
+  una:
+
+  | Sub-tanda | Qué cerró | Naturaleza | Verificación |
+  |---|---|---|---|
+  | **1** | **A2** (`verificar/[codigo]/page.tsx:41`) + **A6** (`perfil-form.tsx:50`) | Tipado mecánico | `tsc` |
+  | **2** | **A4 + A5** (`historia-clinica-form.tsx`) | **Borrado de código muerto** | build (nada lo importaba) |
+  | **3** | **A1** (`perfil/page.tsx:34`) + **A3** (`notificaciones/list.tsx:19`) | Diseño de tipos | `tsc` |
+  | **4** | **B1** (`onboarding-client.tsx:44`) | Estado derivado en render | **navegador** |
+  | **5** | **B2** (`calendar-view.tsx:47`) | `useSyncExternalStore` | **navegador (móvil + desktop)** |
+
+  - **Sub-tanda 1 — tipado mecánico.** **A6:** `TITULOS_DISPONIBLES.includes(value as any)` →
+    `(TITULOS_DISPONIBLES as readonly string[]).includes(value)` — el cast se movió **del valor al
+    array**, que es lo que lo hace seguro. ⚠ **No confundir con el precedente de L3b**, donde un
+    `as any` sobre ese mismo array se **borró** por redundante: ahí el valor ya era de la unión
+    correcta; acá es `string`, más ancho, y borrarlo a secas **no compila**. **A2:**
+    `formatMatriculas` pasó de `any` a **`unknown`** con **type-guard real por elemento** (antes el
+    `.map((m: Matricula) => …)` **prometía** la forma sin chequearla), y se blindó para aceptar
+    `numero` como **string O number** (es JSONB sin constraint).
+    ⚠ **NO FUE SOLO LIMPIEZA DE TIPOS — fue un fix de robustez sobre una ruta PÚBLICA:** la versión
+    original **lanzaba una excepción** (`TypeError: Cannot read properties of null`) si el array JSONB
+    traía un elemento `null`, o sea un **500 en la página pública de verificación de documentos**. El
+    type-guard lo cierra. Se verificó la equivalencia ejecutando las versiones lado a lado: para
+    arrays bien formados el output es **byte a byte idéntico**, separador `'  |  '` incluido.
+  - **Sub-tanda 2 — se borró el vestigio del modelo VIEJO de historia clínica.** Cuando la HC era un
+    **documento fijo** sobre la tabla `historia_clinica`; el modelo cambió a **"conjunto de
+    consultas"** (tabla `consultas`), que es la HC viva en `.../[id]/historia`. Se borraron
+    `components/pacientes/historia-clinica-form.tsx` (390 líneas, **cero importadores**, verificado
+    por 5 vías incluidas dinámicas y barrels) y el **stub de ruta fantasma**
+    `(app)/pacientes/[id]/historia-clinica/page.tsx` (48 bytes, `return null`, sin un solo enlace), y
+    se quitó la entrada `'historia-clinica'` del diccionario de `breadcrumb.tsx` — **conservando
+    `historia`**, la de la ruta viva. **NO se tocó** la tabla `historia_clinica`, ni
+    `historia.schema.ts`, ni los Route Handlers: siguen en uso.
+  - **Sub-tanda 3 — diseño de tipos.** **A1:** se **exportó** la interface `Asistente` de
+    `perfil-form.tsx` y se anotó `let asistentes: Asistente[] = []`. **Solo anotación**, a propósito:
+    la deduplicación contra `obtenerAsistentes()` quedó como tanda aparte (ver pendientes de abajo).
+    **A3:** se crearon **`SolicitudPendientePayload`** y el type-guard **`esPayloadSolicitud`** en
+    `types/notificacion.ts`, se reemplazó el tipo local `NotificationItem` (con `payload: any`) por
+    **`ItemPendiente`** del barrel, y el guard estrecha el payload antes de leer `.id`. De paso el
+    literal `'solicitud'` pasó a la constante **`ITEM_TYPE_SOLICITUD`**. Sin cambio observable — y con
+    una mejora en datos degenerados: un payload `null` **crasheaba el render** y ahora no.
+  - **Sub-tanda 4 — B1, el debounce del onboarding.** La visibilidad de los resultados se **deriva en
+    render** (`const resultadosVisibles = queryValida ? resultados : []`) en vez de vaciar el estado
+    desde el efecto; el efecto quedó **solo agendando el timer**, conservando el guard que evita
+    disparar una búsqueda por tecla. ⚠ **Cambio de comportamiento menor, decidido y aceptado:** al
+    re-buscar tras bajar de 3 caracteres ahora se ve brevemente **la lista vieja** en vez de un
+    destello de "no se encontraron médicos" (mejor UX). **El requisito se cumple**: al bajar de 3
+    caracteres la lista desaparece.
+  - **Sub-tanda 5 — B2, `useIsMobile`.** Migrado de `useState + useEffect` a
+    **`useSyncExternalStore`** (React 19), el patrón canónico para suscribirse a un `MediaQueryList`.
+    `getServerSnapshot` devuelve `false` y React lo usa **en SSR y también en la hidratación**, así que
+    **no hay mismatch** y la secuencia de valores es idéntica a la anterior. El parámetro `breakpoint`
+    se mantuvo parametrizado. **`editable={!isMobile}` —del que cuelga el drag/resize (H2)— recibe el
+    mismo valor en el mismo momento que antes.**
+    - ⚠ **Ajuste que destapó el fix:** apareció un warning de desarrollo **"flushSync was called from
+      inside a lifecycle method"** en el efecto del `changeView`. **`api.changeView()` usa `flushSync`
+      internamente**, y con la nueva semántica de scheduling la llamada podía caer mientras React
+      todavía renderizaba. Se **difirió a `queueMicrotask`** con flag de cancelación en el cleanup.
+      Verificado en vivo: warning desaparecido, la vista cambia bien en desktop, móvil y transición, y
+      el drag/resize sigue intacto. **El aprendizaje quedó en `CLAUDE.md` → nota técnica 21**, porque
+      aplica a cualquier llamada imperativa a la API de FullCalendar.
+
+- **Deduplicar `/perfil` contra `obtenerAsistentes()` — tanda aparte, ya decidida.** La página
+  `(app)/perfil/page.tsx` mantiene una **consulta inline** (perfil + enriquecido con
+  `admin.auth.admin.getUserById`) mientras la action `obtenerAsistentes()`
+  (`(app)/perfil/actions.ts:197-206`) **declara exactamente el mismo shape** y tiene **cero
+  consumidores**. La sub-tanda 3 cerró el `any` **solo anotando**, a propósito: deduplicar **cambia
+  qué código corre** en una página real y pide verificación en vivo (listar asistentes, cambiar
+  permisos, desvincular). Ahora es más barato: **`Asistente` ya está exportada**, así que hay un tipo
+  compartido donde apoyarse.
+  - De paso, **`SolicitudPendientePayload`** (creado en la sub-tanda 3) podría reemplazar el **tipo
+    anónimo** que `obtenerSolicitudesPendientes()` declara inline en su firma de retorno
+    (`app/onboarding/actions.ts:283-292`), cerrando el círculo **productor ↔ consumidor**: hoy los dos
+    describen la misma forma y solo uno la nombra.
+
+- **`POST /api/pacientes/[id]/historia` quedó SIN NINGÚN LLAMADOR.** Su único consumidor era el
+  formulario de HC vieja que borró la sub-tanda 2. El endpoint sigue vivo y funcional (hace el upsert
+  sobre `historia_clinica`), y con él **`lib/validations/historia.schema.ts`**, que es su validador y
+  por eso **no** quedó huérfano. Es el **siguiente eslabón de la cadena del modelo viejo de HC**, y
+  arrastra una pregunta que **no es técnica**: ¿la tabla `historia_clinica` y su endpoint se dan de
+  baja del todo? ⚠ **Decisión de producto con implicancias legales** — son datos clínicos (Ley 26.529,
+  conservación de la HC), y hoy la tabla sigue recibiendo una **fila vacía por paciente** al darlo de
+  alta (`POST /api/pacientes`). Los **6 campos de antecedentes** que esa tabla modela
+  (patológicos, quirúrgicos, hábitos tóxicos, actividad física/laboral, perímetro de cintura) **no
+  tienen equivalente en `consultas`**: si se decide que la funcionalidad se discontinúa, conviene
+  dejarlo escrito; si se decide recuperarla, el formulario borrado está en el historial de git.
 - **✅ RESUELTO (T1, T2 y T6) — los 4 `any` de Route Handlers que NO eran de `catch`.** Quedaron
   deliberadamente afuera de L1 por ser diseño de tipos, y se cerraron en el bloque de tipos de
   dominio: los 2 `(profile as any)[permisoRequerido]` de `consultas` (**T2**), el
@@ -1110,6 +1207,14 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     sería lo correcto, pero es un **cambio de dependencias**, no de código.
   - **Helper duplicado `formatDateToIsoOutput`**, idéntico en `turno-form.tsx:80` y
     `block-slot-modal.tsx:50`. Candidato a `lib/utils/`.
+  - **Quedan 4 llamadas imperativas más a la API de FullCalendar** (relevadas al cerrar B2, ver
+    `CLAUDE.md` → nota técnica 21). **Ninguna reporta el warning de `flushSync` hoy** y por eso no se
+    tocaron, pero conviene tener el inventario: **`refetchEvents()` en el efecto de
+    `[activeCategories]` es la única estructuralmente igual a la que hubo que diferir** (llamada
+    imperativa síncrona dentro de un `useEffect`) — **es el primer lugar donde mirar** si el warning
+    reaparece en otro flujo. Las otras tres (`refetchEvents()` en `handleEventDrop` /
+    `handleEventResize` y en `refreshAction`) corren en **handlers de evento**, fuera del render de
+    React, así que son seguras.
   - **Indentación a 4 espacios** en los bloques `onDelete`/`onSubmit` de esos dos archivos, contra
     los 2 del resto del repo. Cosmético; **no tocar dentro de una tanda de tipos** (ensuciaría el diff).
 - **⚠ DECISIÓN DE POLÍTICA PENDIENTE — adoptar (o no) la convención de prefijo `_`.** Hoy el repo
@@ -1131,33 +1236,21 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   de dominio. Lo que queda es de otra naturaleza.
   - ~~**Tanda "tipos de dominio"**~~ **✅ HECHA (T1–T6, 2026-08-05).** Estaba anotada **dos veces** en
     este mismo plan (duplicación previa); ambas entradas quedan cerradas por el ítem ✅ de arriba.
-  - **Los 6 `any` sueltos — SIGUEN SIN TANDA ASIGNADA.** `perfil/page.tsx:34`,
-    `verificar/[codigo]/page.tsx:41`, `notificaciones/list.tsx:19`, `historia-clinica-form.tsx:29`
-    y `:43`, `perfil-form.tsx:50`. (Eran 8: los 2 de `pedido-form.tsx` **resultaron ser de T5** —
-    compartían raíz con el buscador de pacientes.)
-    ⚠ **Diagnosticarlos ANTES de agruparlos, y ahora con más razón:** el precedente de `pedido-form`
-    confirma que "suelto" es una etiqueta provisoria, no un diagnóstico. Dos pistas ya detectadas:
-    - **`historia-clinica-form.tsx:43` es un CALCO de lo que L4 ya resolvió:** el **segundo genérico**
-      de `useForm` en `any` (`useForm<HistoriaFormInput, any, HistoriaFormData>`), donde L4 estableció
-      **`unknown`**. Fix de **una palabra**, con doctrina ya escrita en `CLAUDE.md`. El `:29` del mismo
-      archivo es otro `initialData?: any`, mismo patrón que cerraron T4/T5 pero en el dominio de
-      `HistoriaClinica` (**el tipo ya existe**, en `types/pedido.ts`).
-    - **`perfil/page.tsx:34` (`let asistentes: any[]`) es ARRASTRE de código muerto:** la action
-      `obtenerAsistentes` (`(app)/perfil/actions.ts:197-206`) **ya declara exactamente ese shape** en
-      su firma de retorno, pero **tiene cero consumidores** porque la página **duplica la consulta
-      inline**. **Se cierra solo si se resuelve esa duplicación** — es un ítem de código muerto, no de
-      tipos.
-  - **Tanda "efectos y estado derivado"** — los 2 `react-hooks/set-state-in-effect`. **No son un
-    lote:** son de naturaleza distinta, cambian comportamiento observable y se verifican en
-    **superficies distintas**. Se pueden hacer por separado.
-    - `calendar-view.tsx:47` (`useIsMobile`) → fix canónico **`useSyncExternalStore`** (no es
-      derivable en render: `matchMedia` no existe en SSR). ⚠ **Cambia comportamiento en móvil**:
-      `isMobile` alimenta el efecto que hace `changeView` a vista día. Verificación: **móvil real o
-      emulado, con recarga**.
-    - `onboarding-client.tsx:44` (debounce de búsqueda) → **derivar en render**, pero ⚠ **conservando
-      el guard del timer**: el `return` temprano hace dos cosas —limpia estado **y** evita agendar el
-      `setTimeout`—, así que mover solo el reseteo dispararía una búsqueda por tecla. Verificación:
-      **flujo de onboarding**, que es la puerta de entrada de los asistentes.
+  - ~~**Los 6 `any` sueltos**~~ **✅ CERRADOS (serie "lint a 0", 2026-08-06).** Dos por **borrado** del
+    archivo que los contenía (`historia-clinica-form.tsx`, código muerto), y los otros cuatro por
+    tipado. **La pista de `perfil/page.tsx:34` se confirmó**: era arrastre de código muerto, y se
+    cerró **anotando**, dejando la deduplicación contra `obtenerAsistentes()` como tanda propia. Ver
+    el ítem 🏁 de arriba.
+  - ~~**Tanda "efectos y estado derivado"**~~ **✅ HECHA (sub-tandas 4 y 5, 2026-08-06).** Se hicieron
+    **por separado**, como estaba previsto: `onboarding-client.tsx:44` derivando en render (con el
+    guard del timer conservado) y `calendar-view.tsx:47` con **`useSyncExternalStore`**.
+    ⚠ **La advertencia de este plan sobre B2 resultó EXAGERADA, y conviene dejarlo escrito:** decía
+    que *"cambia comportamiento en móvil"*. **No lo cambió.** `getServerSnapshot` se usa **también en
+    el render de hidratación**, así que la secuencia de valores (`false` en SSR → `false` al hidratar
+    → valor real tras montar) es **idéntica** a la del `useState + useEffect`, y FullCalendar sigue
+    montando con los mismos `initialView` y `editable` que antes. Lo que sí apareció fue **otra cosa**,
+    imposible de anticipar desde el análisis de tipos: el warning de **`flushSync`** al llamar
+    `api.changeView()` desde el efecto (ver el ítem 🏁 y `CLAUDE.md` → nota técnica 21).
   - **Tandas ya decididas que viven FUERA de esta sección** (se listan acá solo como índice, para que
     el plan no dé la impresión de que el lint es todo lo que queda):
     - ~~**Fix RLS de bloqueos de agenda**~~ **✅ HECHA (migración 033 + guardas de "0 filas",
@@ -1211,13 +1304,18 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - ⚠ El cambio **propaga** a `form.getValues()`, `form.setValue()` (`:279`, `:281`, `:292`) y al
     `field` de cada `FormField` (12 campos numéricos): hay que **compilar** para confirmar que la
     combinación RHF 7 + Zod 4 + `@hookform/resolvers` acepta la firma sin arrastrar otros errores.
-- **⚠ DECISIÓN PENDIENTE (2026-07-30) — `calendar-view.tsx:125`, el `currentView` "sin usar".**
-  El linter marcaba `currentView`, pero **`setCurrentView` SÍ se usa** (`:532` `viewDidMount` y
-  `:533` `datesSet`): borrar el estado entero habría quitado un re-render que hoy ocurre al
-  cambiar de vista, o sea un **cambio de comportamiento disfrazado de limpieza**. Quedó como
+- **⚠ DECISIÓN PENDIENTE (2026-07-30) — `calendar-view.tsx:156`, el `currentView` "sin usar".**
+  (Línea corrida por la serie "lint a 0"; antes figuraba como `:125`.) El linter marcaba
+  `currentView`, pero **`setCurrentView` SÍ se usa** (`viewDidMount` y `datesSet`): borrar el estado
+  entero habría quitado un re-render que hoy ocurre al cambiar de vista, o sea un **cambio de
+  comportamiento disfrazado de limpieza**. Quedó como
   `const [, setCurrentView] = useState('timeGridWeek')` con el porqué comentado en el código. Si
   se decide eliminar el estado completo, evaluar antes si ese re-render hace falta para el
   turnero — es una decisión aparte, no lint.
+  - **Dato nuevo (2026-08-06):** como el `changeView` ahora está **diferido a un microtask**, el
+    `setCurrentView` que disparan `viewDidMount`/`datesSet` ocurre **un microtask más tarde** que
+    antes. Hoy no cambia nada (el valor no se lee), pero si alguna vez ese estado se usa de verdad,
+    este timing es parte del cuadro.
 
 ### Datos / catálogo
 - **"Particular / Sin obra social"** existe como **registro real** en la seed de

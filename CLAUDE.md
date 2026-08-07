@@ -197,6 +197,18 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   individualmente**—; y tener presente que **`event.extendedProps` es `Record<string, any>` por
   diseño**, así que tipar el handler **no** tipa el payload de la app que viaja ahí adentro (eso
   necesita un tipo de dominio propio).
+- **Hook que se suscribe a un store del navegador (`matchMedia`, `localStorage`, `online/offline`…):
+  `useSyncExternalStore`, no `useState` + `useEffect`.** Sembrar el valor inicial con un `setState`
+  síncrono dentro del efecto dispara `react-hooks/set-state-in-effect` y provoca un render en cascada.
+  El patrón canónico de React 19 es `useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)`,
+  con **`getServerSnapshot` devolviendo el valor neutro** (`false`, en el caso de "¿es móvil?"): React
+  lo usa en SSR **y también en el render de hidratación**, así que **no hay mismatch** y la secuencia
+  de valores es la misma que tenía el `useState + useEffect`. Dos detalles: `subscribe` va memoizada
+  (`useCallback`) o React re-suscribe en cada render, y `getSnapshot` debe devolver un **primitivo**
+  (o un valor estable) para que la comparación por `Object.is` no cicle. Ejemplo vivo: `useIsMobile`
+  en `components/turnero/calendar-view.tsx`. ⚠ **No sirve derivar en render** en estos casos: `window`
+  no existe en SSR. Y si el hook alimenta una llamada imperativa a una librería, ver la **nota
+  técnica 21**.
 - **`useForm` con un schema que tiene `.transform()` o `z.coerce`: van los TRES genéricos.**
   Cuando `z.input` ≠ `z.output`, el tipo del resolver no calza con
   `useForm<TFieldValues>` y aparece la tentación del `as any`. La forma correcta es
@@ -793,3 +805,34 @@ es `schema.sql`.
       hay que revisarlo.
     - ⚠ **Limitación:** el hilo se busca entre los threads cargados y `obtenerBandeja()` tiene
       `.limit(100)`; un hilo más viejo **no abre** (no rompe). Ver `PENDIENTES.md` → Bloque A.
+21. **La API imperativa de FullCalendar NO se llama en forma síncrona desde un `useEffect` — se
+    difiere a `queueMicrotask`.** `api.changeView()` (y en general cualquier método de FullCalendar que
+    haga un flush interno) usa **`flushSync`** por dentro. Llamarlo derecho desde el cuerpo de un
+    efecto puede caer **mientras React todavía está renderizando**, y React avisa con
+    *"flushSync was called from inside a lifecycle method. React cannot flush when React is already
+    rendering."*.
+    - **Bug real, no precaución:** apareció en `calendar-view.tsx` al migrar `useIsMobile` a
+      `useSyncExternalStore` (serie "lint a 0", 2026-08-06). Con el `useState + useEffect` anterior el
+      flush caía en un momento seguro por casualidad; con la semántica de scheduling de
+      `useSyncExternalStore` dejó de caer ahí. Es warning de **desarrollo** —la vista cambiaba igual—,
+      pero es una llamada síncrona en un momento que React marca como incorrecto.
+    - **El patrón:** calcular el objetivo en el cuerpo del efecto, y **diferir la llamada**:
+      ```ts
+      let cancelled = false
+      queueMicrotask(() => {
+        if (cancelled) return
+        const api = calendarRef.current?.getApi()
+        if (!api) return
+        if (api.view.type !== targetView) api.changeView(targetView)
+      })
+      return () => { cancelled = true }
+      ```
+      El flag de cancelación en el cleanup evita actuar sobre un calendario ya desmontado (o pisar con
+      un objetivo viejo si la dependencia cambió otra vez). ⚠ **`queueMicrotask`, no `setTimeout`:** el
+      microtask corre en el **mismo tick**, apenas React termina, así que no hay frame de demora ni
+      parpadeo. Y el `getApi()` va **adentro** del microtask, para leer el estado del calendario en el
+      momento real de la llamada.
+    - **Alcance:** aplica a **toda** llamada imperativa desde un efecto. Las de
+      `handleEventDrop`/`handleEventResize`/`refreshAction` corren en **handlers de evento** —fuera del
+      render— y no necesitan esto. El inventario de las que quedan (y cuál mirar primero si el warning
+      reaparece) está en `PENDIENTES.md` → "Prolijidad del turnero".
