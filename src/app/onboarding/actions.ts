@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { z } from 'zod'
+import type { SolicitudPendientePayload } from '@/types/notificacion'
 
 // ─────────────────────────────────────────────────────────────
 // Buscar médicos por email o nombre (usa service role para
@@ -281,13 +282,7 @@ export async function responderSolicitud(
 // Obtener solicitudes pendientes para el médico (para el header)
 // ─────────────────────────────────────────────────────────────
 export async function obtenerSolicitudesPendientes(): Promise<{
-  data: {
-    id: string
-    solicitante_nombre: string
-    solicitante_email: string
-    mensaje: string | null
-    created_at: string
-  }[]
+  data: SolicitudPendientePayload[]
   count: number
 }> {
   const supabase = await createClient()
