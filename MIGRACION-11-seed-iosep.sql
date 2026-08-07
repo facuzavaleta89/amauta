@@ -1,0 +1,88 @@
+-- Copia ejecutable de supabase/migrations/035_seed_iosep.sql
+-- — pegar en el SQL Editor de Supabase y correr UNA sola vez.
+--
+-- ORDEN DE TRABAJO:
+--   PASO 1 → correr el INSERT de más abajo.
+--   PASO 2 → correr la verificación V1 (acá arriba).
+--   PASO 3 → comprobar en la app que IOSEP aparece en el selector de cobertura médica.
+--
+-- ⚠ La verificación está arriba para tenerla a mano, pero se corre DESPUÉS del INSERT.
+--   Está comentada: si pegás el archivo entero, no se ejecuta.
+--
+-- ============================================================================
+-- VERIFICACIÓN — correr DESPUÉS de aplicar
+-- ============================================================================
+--
+-- ── V1. La fila existe · esperado: 1 fila ───────────────────────────────────
+--
+-- SELECT id, nombre FROM public.obras_sociales WHERE nombre = 'IOSEP';
+--
+--
+-- ── V2 (opcional). El catálogo completo, como lo ve la app ──────────────────
+-- Mismo orden que usan los tres consumidores (`.select('*').order('nombre')`),
+-- así que esta lista es literalmente lo que va a mostrar el selector.
+-- Esperado: 14 filas (las 13 del seed de la 001 + IOSEP).
+--
+-- SELECT id, nombre FROM public.obras_sociales ORDER BY nombre;
+--
+--
+-- ── VERIFICACIÓN FUNCIONAL (en la app, sin cambios de código) ───────────────
+--   1. Ir a /pacientes/nuevo (o editar un paciente existente).
+--   2. Abrir el selector "Cobertura médica".
+--   3. ✅ ESPERADO: IOSEP aparece entre las opciones del catálogo, abajo del separador
+--      que la separa de "Particular / Sin obra social" y "Otra (no está en la lista)".
+--   4. Elegirla y guardar → el paciente queda con `obra_social_id` (del catálogo), ya no
+--      con `obra_social_otro` (texto libre).
+--
+-- ============================================================================
+
+
+-- ============================================================================
+-- Migration 035 — Catálogo: agregar IOSEP a obras_sociales
+-- ============================================================================
+-- QUÉ CARGA:
+--   Una fila en `public.obras_sociales`: **IOSEP** (Instituto de Obra Social del
+--   Empleado Provincial). Es una obra social COMÚN EN LA ZONA del consultorio y no
+--   estaba en el seed original de la 001, que trae 13 filas de alcance nacional
+--   (OSDE, Swiss Medical, Galeno, Medifé, IOMA, PAMI, …).
+--
+-- POR QUÉ:
+--   Al no estar en el catálogo, los pacientes con IOSEP se venían cargando por la vía
+--   de escape de texto libre (`pacientes.obra_social_otro`), que existe justamente para
+--   eso. Funciona, pero deja el dato fuera del catálogo: no se puede filtrar ni agrupar
+--   por obra social, y cada carga depende de cómo la escriba quien da el alta.
+--
+-- ⚠ ESTO NO ARREGLA, POR SÍ SOLO, A LOS PACIENTES YA CARGADOS.
+--   Los que hoy tienen `obra_social_otro = 'IOSEP'` la SIGUEN teniendo como texto libre;
+--   esta migración solo hace que en adelante se pueda elegir de la lista. Que esos
+--   pacientes muestren bien su obra social lo resuelve el fix de código que acompaña a
+--   esta tanda (el fallback `obras_sociales?.nombre ?? obra_social_otro` en el endpoint
+--   de búsqueda, los formularios de pedidos/certificados y el dashboard).
+--   Reasignarlos de `obra_social_otro` a `obra_social_id` sería una migración de DATOS
+--   aparte y OPCIONAL — no hace falta para que se vean bien.
+--
+-- NO SE TOCA `001_pacientes.sql`:
+--   Esa migración ya está aplicada, así que editar su INSERT no cambiaría nada en la base
+--   real; y como la secuencia de migraciones no corre desde cero (ver PENDIENTES.md →
+--   nota 6, consolidación de baseline pendiente), tampoco se re-ejecutaría en un entorno
+--   nuevo. Sería un cambio cosmético que daría la falsa impresión de que IOSEP está cargada.
+--
+-- IDEMPOTENTE:
+--   `obras_sociales.nombre` es `TEXT NOT NULL UNIQUE` (001_pacientes.sql:77), así que el
+--   `ON CONFLICT (nombre) DO NOTHING` deja correr esto dos veces sin error y sin duplicar.
+--
+-- NO TOCA: ni el esquema, ni RLS, ni ninguna otra fila. Es una carga de datos de catálogo.
+--   `id` es SERIAL: no se especifica, lo asigna la secuencia.
+-- ============================================================================
+
+INSERT INTO public.obras_sociales (nombre) VALUES
+  ('IOSEP')
+ON CONFLICT (nombre) DO NOTHING;
+
+-- ── REVERSIBLE ──────────────────────────────────────────────────────────────
+-- ⚠ Solo mientras NINGÚN paciente la tenga asignada — un DELETE con pacientes
+--    referenciando la fila falla por la FK `pacientes.obra_social_id`. Chequear antes:
+--      SELECT count(*) FROM public.pacientes p
+--      JOIN public.obras_sociales o ON o.id = p.obra_social_id
+--      WHERE o.nombre = 'IOSEP';
+-- DELETE FROM public.obras_sociales WHERE nombre = 'IOSEP';
