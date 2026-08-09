@@ -44,7 +44,7 @@ cp .env.example .env.local
 
 # 3. Preparar la base de datos
 #   Aplicá las migraciones de supabase/migrations/ a tu proyecto Supabase
-#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 033).
+#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 038).
 #   ⚠ La secuencia NO es ejecutable sobre una base vacía: varias migraciones (013, 014,
 #   015, 022, 025) referencian la tabla "consultas", que recién se crea en la 030. Ver
 #   PENDIENTES.md → "Consolidación de baseline de migraciones".

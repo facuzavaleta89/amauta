@@ -33,23 +33,34 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   negocio 12 y nota técnica 16. **Quedan pendientes** los **cinco** ítems de difusión listados
   abajo (opt-out, dominio de Resend, envío por lotes, reintento de fallidos y corte del día en
   UTC), más **WhatsApp**, que no es un pendiente activo sino un canal **fuera de alcance**.
-- **⚠ HUECO FUNCIONAL NUEVO (2026-08-03) — no hay forma de descartar/eliminar un BORRADOR de
-  consulta.** Detectado al verificar la tanda L4; **preexistente**, no lo causó esa tanda (que fue
-  solo tipado). Se puede **crear y guardar** un borrador, pero **no cancelarlo ni borrarlo**: un
-  borrador equivocado, de prueba o incompleto **queda sin salida** en la HC del paciente.
-  ⚠ **Requiere decisiones de producto y de seguridad ANTES de codear** — no es un fix menor:
-  - **¿Borrado físico o lógico?** La regla de negocio 1 protege las consultas **finalizadas**, no los
-    borradores; pero hay que decidir explícitamente si un borrador se borra de verdad o se archiva
-    (criterio análogo al de pacientes, regla 9).
-  - **¿Qué rol puede?** ¿Solo el médico, o también el asistente que lo creó (que puede crear
-    borradores con `crear_consultas`, pero no finalizar)?
-  - **⚠ Ley 25.326 — consultar con el médico.** Un borrador **puede contener datos clínicos del
-    paciente** ya cargados. El tratamiento de esos datos al descartar (¿se eliminan?, ¿quedan en un
-    log?, ¿se conserva rastro de que existió?) es una decisión que **corresponde al responsable de
-    los datos**, no al criterio técnico.
-  - Nota: `DELETE /api/consultas/[id]` **ya existe y solo permite borrar borradores** (rechaza
-    `finalizada`), así que el backend está en gran parte; lo que falta es la decisión y la UI.
-  **Tanda propia, con su diagnóstico.**
+- **✅ RESUELTO (migración 038 + tanda de descarte, 2026-08-08) — no había forma de descartar un
+  BORRADOR de consulta.** Detectado al verificar la tanda L4 (2026-08-03) y **preexistente**: se podía
+  crear y guardar un borrador, pero **no cancelarlo ni borrarlo**, así que un borrador equivocado o de
+  prueba quedaba **sin salida** en la HC del paciente. Las tres decisiones que bloqueaban la ejecución
+  se tomaron, y quedan asentadas acá porque son la **razón** de cómo está implementado:
+  - **Borrado FÍSICO y SIN RASTRO** (no archivado, no log). Se verificó que `consultas` **no tiene
+    trigger de auditoría** —el único es `consultas_updated_at`; `turnos_audit_log` es exclusivo de
+    `turnos`—, así que "sin rastro" **se cumplía solo**: no hubo nada que quitar. Contraste
+    deliberado con pacientes (regla 9), que se archivan.
+  - **Quién puede: el médico** (cualquier borrador de su tenant) **o el asistente que lo creó.**
+    Requirió una columna nueva: `consultas` era la **única de su familia sin columna de autor**
+    (`turnos.agendado_por`, `pacientes.creado_por`, `historia_clinica.creado_por`), y `medico_id` no
+    sirve como sustituto porque es el **tenant**, no quién escribió.
+  - **Ley 25.326:** decisión del responsable de los datos, tomada — los datos clínicos del borrador
+    **se eliminan**, sin log ni rastro de que existió.
+  - **── Qué se implementó ──** Migración **038**: columna `consultas.creado_por` (nullable, FK a
+    `profiles`) y `consultas_delete` reescrita (tenant + `estado = 'borrador'` + rol médico OR autor,
+    normalizada a `TO authenticated`). El `estado = 'borrador'` en la política es **defensa en
+    profundidad de la regla 1**: desde la 038 una consulta finalizada es **imborrable desde la base**,
+    para todos los roles. Código: `DELETE /api/consultas/[id]` con **chequeo explícito de autoría**
+    (403), **rechazo de paciente archivado** (409, regla 9) y **guarda de "0 filas"** (403, la lección
+    de la 033); UI en `components/pacientes/consultas/descartar-dialog.tsx` + botón en
+    `consulta-detail.tsx` y camino `onDeleted` en `historia-clinica-view.tsx`.
+  - ⚠ **LIMITACIÓN CONOCIDA que sobrevive:** los borradores **anteriores a la 038** tienen
+    `creado_por IS NULL` y **solo los descarta el médico**. No se hizo backfill a propósito (no se le
+    puede inventar autor a una fila vieja). No necesita cláusula propia en la política: con NULL, la
+    comparación `creado_por = auth.uid()` da **NULL** —o sea, no pasa— y el médico entra por la otra
+    rama del `OR`. Es lógica ternaria de SQL, no un caso especial.
 - **Recetas:** bloqueadas por certificación ANMAT. `src/app/api/recetas/route.ts` es
   stub y `src/lib/pdf/receta-template.tsx` es un placeholder vacío (esperado; dejar
   documentado que está en pausa).
@@ -242,38 +253,125 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     deuda ya anotada como *"extraer el helper a `lib/`"* (ver "Lint preexistente" → los 4 `any`
     no-catch de Route Handlers); tocarla implica ~14 endpoints, así que sigue siendo **otra tanda**.
 
-- **`turnos_audit_log` no registra los DELETE.** El trigger `turno_audit_trigger` es
-  `AFTER INSERT OR UPDATE ON public.turnos` (`schema.sql` → TRIGGERS): **el borrado no deja rastro**.
-  Antes importaba poco —en la práctica solo el médico llegaba a borrar, porque al asistente la
-  política se lo filtraba en silencio—, pero **desde la migración 033 el asistente con
-  `gestionar_turnos` borra turnos de verdad y no queda registro de quién lo hizo**. La función
-  `log_turno_cambio` ya contempla el literal `'cancelado'` entre sus acciones, así que sumar el DELETE
-  sería acotado, pero es **cambio de esquema** (migración nueva) y conviene decidirlo con el médico:
-  también hay que definir qué se guarda en `detalle` cuando la fila deja de existir.
-- **`bloqueos_agenda` no tiene `updated_at` ni trigger `set_updated_at`.** La tabla solo define
-  `created_at` (`005_turnos.sql`), mientras que `turnos` sí tiene ambos (`turnos_updated_at`). Desde
-  la 033 los bloqueos **son editables de verdad**, así que ahora sí importa: no queda registro de
-  **cuándo** se editó uno. Tampoco hay un equivalente de `turnos_audit_log` para bloqueos. Requiere
-  migración (columna + trigger); el tipo `BloqueoAgenda` de `types/turno.ts` habría que actualizarlo
-  en el mismo cambio.
-- **`bloqueos_select` no exige `ver_turnos`** (es **tenant-only**: `medico_id = get_medico_id()`), a
-  diferencia de `turnos_select`, que sí lo chequea. Un asistente **sin** `ver_turnos` no ve la agenda
-  en la app pero **puede leer los bloqueos por PostgREST directo** — mismo tipo de hueco que la `026`
-  cerró en `estudios`. Severidad baja: el contenido es `motivo`, texto libre del consultorio, no dato
-  clínico. ⚠ **Si se endurece esa política, hay que revisar la guarda de "0 filas" del PATCH de
-  bloqueos**: el `.select()` que la alimenta pasa por `bloqueos_select`, así que una fila escrita pero
-  no legible daría un **403 falso** sobre una escritura que sí ocurrió. El comentario en el código ya
-  lo advierte.
-- **Las políticas de `bloqueos_agenda` aplican a `{public}`, no a `{authenticated}`.** La `029`
-  normalizó otras tablas a `TO authenticated` y a esta no la tocó (la `033` tampoco lo cambió: se
-  limitó al criterio de permisos). Sin impacto práctico hoy —el rol `anon` no pasa el
-  `get_medico_id()`—, pero es **defensa en profundidad** y consistencia con el resto del esquema.
-- **El chequeo de solapamiento de bloqueos no filtra por `estado`.** Tanto
-  `POST /api/turnero/bloqueos` como el `PATCH` buscan turnos que se solapen **sin excluir los
-  cancelados**, así que un turno cancelado en esa franja bloquea la creación o edición del bloqueo con
-  un **409**. Los dos endpoints son **consistentes entre sí**, o sea que **no es una regresión** de la
-  tanda de RLS. Conviene confirmar con el médico si un turno cancelado debe seguir "ocupando" la
-  franja antes de cambiarlo.
+- **`turnos_audit_log` no registra los DELETE.** El trigger `turno_audit_trigger` solo cubre
+  INSERT y UPDATE: **el borrado no deja rastro**. Antes importaba poco —en la práctica solo el médico
+  llegaba a borrar, porque al asistente la política se lo filtraba en silencio—, pero **desde la
+  migración 033 el asistente con `gestionar_turnos` borra turnos de verdad y no queda registro de
+  quién lo hizo**. La función `log_turno_cambio` ya contempla el literal `'cancelado'` entre sus
+  acciones. Es **cambio de esquema** (migración nueva) y conviene decidirlo con el médico: también hay
+  que definir qué se guarda en `detalle` cuando la fila deja de existir.
+  - ⚠ **CORRECCIÓN (2026-08-08) — el trigger es `BEFORE`, no `AFTER`; la versión anterior de este
+    ítem afirmaba lo contrario y eso cambiaba el tamaño del trabajo.** Verificado contra la **base
+    viva**: `turno_audit_trigger` es `BEFORE INSERT OR UPDATE ON public.turnos`. Importa porque con
+    `AFTER DELETE` la fila de auditoría **no se podría insertar** —violaría la FK
+    `turno_id NOT NULL REFERENCES turnos(id)`, ya que el turno dejó de existir—, mientras que con
+    `BEFORE DELETE` la fila **todavía está** y el INSERT entra sin problema. **El bloqueador que
+    parecía impedirlo no existe: sumar `OR DELETE` es viable.**
+  - ⚠ **La discrepancia es de TRES archivos, no de esta nota:** `schema.sql` decía `AFTER` (corregido
+    en el pase de docs del Grupo 1) y la **migración fuente `005_turnos.sql:176` también lo dice**.
+    O la base se cambió a mano en algún momento, o hay que **re-verificar**. `005_turnos.sql` **no se
+    toca** —es historia ya aplicada—, así que la verdad vive en `schema.sql` con su nota.
+  - **Los DOS obstáculos REALES que quedan** (son los que hay que resolver, no la dirección del trigger):
+    1. **`ON DELETE CASCADE` en `turnos_audit_log.turno_id`** (`schema.sql` → TABLAS): al borrar el
+       turno, Postgres **borra su historial completo**. Auditar el DELETE sin tocar esto es escribir
+       una fila que se autodestruye en el mismo statement.
+    2. **La política `audit_select`** resuelve el tenant con
+       `EXISTS (SELECT 1 FROM turnos WHERE id = turnos_audit_log.turno_id …)`: sin el turno, la fila
+       huérfana queda **invisible para todos**.
+  - **Salida natural:** **desnormalizar `medico_id`** en `turnos_audit_log` (y pasar la FK a
+    `ON DELETE SET NULL`, o quitarla). **Volumen verificado: 178 filas / 71 turnos**, así que el
+    backfill de esa columna es trivial.
+- **✅ RESUELTO (migración 036, 2026-08-07) — `bloqueos_agenda` no tenía `updated_at` ni trigger.**
+  La tabla solo definía `created_at` (`005_turnos.sql`), mientras que `turnos` tenía ambos
+  (`turnos_updated_at`). Desde la 033 los bloqueos **son editables de verdad**, así que dejó de ser
+  cosmético: no quedaba registro de **cuándo** se editó uno. La 036 agregó la columna y colgó el
+  trigger `bloqueos_updated_at`, espejo exacto de `turnos_updated_at`; `BloqueoAgenda`
+  (`types/turno.ts`) ya declara el campo, y `BloqueoAgendaInsert` **no** lo lleva (lo pone el DEFAULT).
+  - **Detalle que vale conservar:** la migración **sembró las filas existentes con su `created_at`**
+    en vez de dejar el DEFAULT. Sin ese paso, todos los bloqueos históricos habrían quedado con
+    `updated_at = now()`, afirmando una edición que **nunca ocurrió**.
+  - ⚠ **Lo que esto NO cerró:** registra el **cuándo**, no el **quién** ni el **qué**. **Sigue sin
+    haber un equivalente de `turnos_audit_log` para bloqueos** (la única tabla de auditoría del
+    proyecto es esa, y su FK apunta a `turnos(id)`). Una auditoría completa de bloqueos es trabajo
+    aparte, no previsto todavía.
+- **✅ RESUELTO (migración 037, 2026-08-07) — `bloqueos_select` no exigía `ver_turnos`.** Era
+  **tenant-only** (`medico_id = get_medico_id()`) desde la 005, a diferencia de `turnos_select`, que sí
+  chequeaba permiso: un asistente **sin** `ver_turnos` no veía la agenda en la app pero **podía leer
+  los bloqueos por PostgREST directo** — mismo tipo de hueco que la `026` cerró en `estudios`.
+  Severidad baja (el contenido es `motivo`, texto del consultorio, no dato clínico), pero era una
+  lectura que nadie autorizó. Dos precisiones sobre **cómo** se cerró, que no son detalle menor:
+  - **El criterio NO espeja a `turnos_select`:** la política nueva pide **`ver_turnos` OR
+    `gestionar_turnos`**, siguiendo el criterio que la 033 dejó asentado (*"la agenda es una unidad de
+    permiso"*). ⚠ El motivo es concreto: los 12 permisos son booleanos **independientes** y nada obliga
+    a que `gestionar_turnos` implique `ver_turnos`, así que un asistente con `gestionar_turnos` y **sin**
+    `ver_turnos` es configurable hoy. Con un `USING` que pidiera solo `ver_turnos` se le habrían **roto
+    los endpoints de edición y borrado**, que hacen fetch previo y `.select()` de verificación sobre
+    esta misma tabla.
+  - ⚠ **La advertencia sobre la guarda de "0 filas" SE ACTIVÓ:** ya no es hipotética. El `OR
+    gestionar_turnos` está elegido justamente para que la guarda del PATCH siga siendo correcta (quien
+    pasa el chequeo del endpoint pasa también el SELECT → **no hay 403 falsos**), pero **el comentario
+    del código quedó desactualizado** — ver el ítem del comentario del PATCH de bloqueos, más abajo.
+- **✅ RESUELTO (migración 037, 2026-08-07) — las políticas de `bloqueos_agenda` aplicaban a
+  `{public}`, no a `{authenticated}`.** Ninguna declaraba `TO`, y en Postgres eso equivale a
+  `TO PUBLIC`: la política se evaluaba para todos los roles, `anon` incluido. La `029` normalizó otras
+  tablas y a esta no la tocó; la `033` tampoco (se limitó al criterio de permisos). Sin impacto
+  explotable —el rol `anon` no pasa el `get_medico_id()`—, pero era **defensa en profundidad**. La 037
+  dejó las **4** en `TO authenticated`; las tres de escritura se **re-emitieron con su expresión
+  textual** (copiada de la 015 y la 033), solo para cambiarles el rol: no se reinventó ninguna.
+- **✅ RESUELTO (2026-08-07, commit `6cd48c2`) — el chequeo de solapamiento no filtraba por `estado`.**
+  Un turno **cancelado** en la franja bloqueaba la creación o edición de un bloqueo con un **409**.
+  Dos correcciones respecto de cómo estaba descrito acá:
+  - **El fix es más amplio: son 4 sitios, no 2.** Además de `POST /api/turnero/bloqueos`
+    (`bloqueos/route.ts:64`) y su `PATCH` (`bloqueos/[id]/route.ts:95`), se alinearon los dos del
+    turnero: `turnero/route.ts:133` y `turnero/[id]/route.ts:77`.
+  - **Excluye `cancelado` Y `pendiente_confirmar`**, no solo cancelados:
+    `.not('estado', 'in', '(pendiente_confirmar,cancelado)')`. Un turno sin confirmar tampoco "ocupa"
+    la franja.
+  - ⚠ **Dejó una asimetría nueva:** los **2 sitios de `consultas`** quedaron con `(cancelado)` a
+    secas. Ver el ítem *"el solapamiento de consultas quedó desalineado"*, más abajo.
+
+- **⚠ PENDIENTE NUEVO (2026-08-08) — `turnos_select` no exige `gestionar_turnos`: es el mismo hueco
+  que la 037 cerró en bloqueos, todavía abierto en `turnos`.** Las dos tablas de la agenda quedaron
+  con **criterios distintos**: `bloqueos_select` ya pide `ver_turnos OR gestionar_turnos`, mientras que
+  `turnos_select` sigue pidiendo **solo `ver_turnos`**.
+  - **El síntoma:** un asistente con **`gestionar_turnos` y SIN `ver_turnos`** puede **escribir** turnos
+    pero **no leerlos**. Eso produce **404 falsos** (los endpoints hacen fetch previo o `.select()` de
+    verificación) y, más grave, **falsos negativos de solapamiento**: la query de solape pasa por
+    `turnos_select`, así que devuelve vacío y **deja crear un turno encima de otro**.
+  - ⚠ **La decisión de raíz no es la política, es el modelo de permisos:** definir si
+    **`gestionar_turnos` debe implicar `ver_turnos`**. Dos salidas, y conviene elegir a conciencia:
+    **(a)** replicar el `OR` de la 037 en `turnos_select` — barato y consistente con *"la agenda es una
+    unidad de permiso"* (033); **(b)** que la UI de `/perfil` **no permita** esa combinación — arregla
+    la causa pero deja la base sin defensa. La (a) no excluye a la (b).
+  - Ver también Bloque B → *"Aislamiento por tenant a nivel base de datos"*.
+- **⚠ PENDIENTE NUEVO (2026-08-08) — el PATCH de turnos no filtra `categoria` en el solapamiento
+  turno-vs-turno.** `turnero/[id]/route.ts:73-80` busca turnos solapados filtrando por `medico_id`,
+  `id ≠` y `estado`, pero **sin `categoria`**: un turno médico choca contra un `curso`, un `personal`
+  o un `administrativo`. **El POST sí lo hace** — `turnero/route.ts:127-135` entra al chequeo solo
+  `if (t.categoria === 'turno_medico')` y filtra `.eq('categoria', 'turno_medico')`.
+  - ⚠ **El comentario del PATCH (`:70-71`) afirma "mismo criterio (y misma forma) que el POST"**: es
+    cierto para `estado` (lo alineó `6cd48c2`) y **falso para `categoria`**.
+  - **Decidir antes de tocar:** ¿un curso debe bloquear un turno médico? Si la respuesta es sí, el que
+    está mal es el **POST**, no el PATCH. Conviene resolverlo junto con el ítem que sigue.
+- **⚠ PENDIENTE NUEVO (2026-08-08) — el solapamiento de `consultas` quedó desalineado con el del
+  turnero.** El commit `6cd48c2` alineó **4** sitios a
+  `.not('estado','in','(pendiente_confirmar,cancelado)')`, pero los **2 de consultas quedaron atrás**
+  con `(cancelado)` a secas: **`api/consultas/route.ts:179`** y **`api/consultas/[id]/route.ts:172`**.
+  - **Consecuencia:** al finalizar una consulta con próximo control, un turno en
+    **`pendiente_confirmar`** en esa franja la **rechaza con 409**, aunque el turnero ya considere esa
+    franja libre. **Dos criterios distintos de "franja ocupada" conviviendo en la misma app.**
+  - ⚠ **Es la asimetría INVERSA del ítem anterior**, y por eso conviene resolverlos juntos: los de
+    consultas **sí** filtran `categoria` y **no** el estado completo; el PATCH del turnero **sí**
+    filtra el estado completo y **no** `categoria`. La salida sana es **un criterio único de "franja
+    ocupada" escrito en un solo lugar** (helper compartido), en vez de seguir parchando 6 sitios.
+- **⚠ PENDIENTE NUEVO (2026-08-08) — comentario desactualizado en el PATCH de bloqueos.** Deuda de
+  comentario, no de código: `src/app/api/turnero/bloqueos/[id]/route.ts:128-130` dice que
+  `bloqueos_select` *"hoy es tenant-only, así que si algún día se endurece esa política habría que
+  revisar esta guarda"*. **La 037 la endureció**: el *"si algún día"* ya pasó.
+  - ⚠ **Y la conclusión útil es la contraria a la que teme el comentario:** el `OR gestionar_turnos`
+    de la 037 fue elegido **exactamente** para que esta guarda siga siendo correcta — quien pasa el
+    chequeo del endpoint (`gestionar_turnos`) pasa también el SELECT, así que **no hay 403 falsos**.
+    Eso es lo que debería decir.
 
 ### Modelo de datos — reglas de unicidad (DECIDIDO, sin aplicar)
 
@@ -374,28 +472,41 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
      cargar y qué no en el sistema real.
 
 ### Bugs menores detectados
-- **⚠ BUG FUNCIONAL NUEVO (detectado 2026-08-06) — un asistente DESVINCULADO no puede volver a
-  solicitar vinculación con el mismo médico. SIN DIAGNOSTICAR — rama propia.**
-  - **Síntoma:** el asistente que ya estuvo vinculado a un médico y fue **desvinculado** vuelve al
-    onboarding, lo busca, envía la solicitud y recibe **"Ya enviaste una solicitud a este médico"**.
-    Queda **sin forma de volver a entrar** al sistema con ese médico.
-  - **Hipótesis SIN CONFIRMAR** (no se verificó nada todavía): el chequeo de solicitud duplicada de
-    `enviarSolicitud` (`app/onboarding/actions.ts`) **no filtra por `estado`**, así que la solicitud
-    vieja —que quedó en **`'aprobada'`**— bloquea la nueva. Falta comprobar además si existe un
-    **constraint `UNIQUE (solicitante_id, medico_id)`** en `solicitudes_asistente`, porque eso
-    cambiaría el fix (no alcanzaría con tocar el `if` del Server Action: habría que decidir si se
-    reutiliza la fila vieja, se la borra o se relaja la constraint).
-  - **Puede afectar también el caso `'rechazada'`:** el flujo de "Buscar otro médico"
-    (`onboarding-client.tsx`, botón que hace `setSolicitud(null)`) sugiere que reintentar está
-    contemplado en la UI, pero si el chequeo del servidor no filtra por estado, reintentar **con el
-    mismo médico** fallaría igual. **Verificar los dos caminos.**
-  - **Severidad: MEDIA-ALTA por impacto, aunque el caso sea poco frecuente** — deja a un asistente
-    fuera del sistema sin salida desde la UI, y el onboarding es **la puerta de entrada** de los
-    asistentes. No hay workaround para el usuario: hoy se arregla solo tocando la base a mano.
-  - **Primer paso cuando se retome:** diagnóstico **de solo lectura** — leer `enviarSolicitud`, mirar
-    si el `.select()` del chequeo filtra por `estado`, y consultar `pg_constraint` /
-    `information_schema` para ver si hay UNIQUE sobre `(solicitante_id, medico_id)`. Recién con eso a
-    la vista, decidir el fix. **Es un bug de aplicación + posiblemente de modelo, no de lint.**
+- **✅ RESUELTO (migración 034, 2026-08-07) — un asistente DESVINCULADO no podía volver a solicitar
+  vinculación con el mismo médico.** Detectado el 2026-08-06. **Síntoma:** el asistente que ya había
+  estado vinculado y fue **desvinculado** volvía al onboarding, enviaba la solicitud y recibía
+  **"Ya enviaste una solicitud a este médico"**, quedando **sin forma de volver a entrar** al sistema
+  con ese médico. Severidad MEDIA-ALTA por impacto: el onboarding es **la puerta de entrada** de los
+  asistentes y no había workaround desde la UI (se arreglaba tocando la base a mano).
+
+  > ⚠ **La HIPÓTESIS que este ítem registraba era INCORRECTA, y conviene dejarlo escrito.** Decía que
+  > la causa era que el chequeo de duplicados de `enviarSolicitud` **no filtraba por `estado`**, y
+  > planteaba la constraint como un factor secundario *"a comprobar"*. Fue al revés: **la causa era la
+  > constraint, no el `if`** — tanto, que el fix **no tocó una sola línea de código**.
+
+  - **Causa raíz:** `UNIQUE(solicitante_id, medico_id)` (`010_multitenancy.sql:70`), **total y sin
+    `estado`**: un par (asistente, médico) podía tener **exactamente UNA fila en toda la historia**.
+    Como la fila vieja sobrevive a la desvinculación —`desvincularAsistente()` solo pone
+    `profiles.medico_id = NULL` y no toca esta tabla—, el cupo del par quedaba ocupado para siempre
+    por una solicitud en `'aprobada'` (o `'rechazada'`), y el segundo INSERT moría con **23505**.
+  - ⚠ **La constraint nunca implementó lo que decía implementar:** el comentario de la propia 010
+    (`:59`) prometía *"una sola solicitud **activa** por par"* y lo implementado fue *"una sola en la
+    historia"*. La 034 no cambió la regla de negocio: **la hizo cumplir como estaba escrita**.
+  - **El fix:** se dropeó la constraint total y se creó un **ÍNDICE ÚNICO PARCIAL**
+    (`… WHERE estado = 'pendiente'`). ⚠ **Índice y no constraint no es preferencia de estilo:**
+    Postgres **no admite constraints UNIQUE parciales** (no existe `ADD CONSTRAINT … UNIQUE (…) WHERE
+    …`), la cláusula `WHERE` solo se expresa en un `CREATE UNIQUE INDEX`. Por eso el objeto vive ahora
+    en `pg_indexes` y **ya no en `pg_constraint`**; a efectos de integridad son equivalentes (mismo
+    SQLSTATE 23505).
+  - **Cubre los DOS caminos** que necesitaban una segunda solicitud del mismo par: tras
+    **desvinculación** (fila en `'aprobada'`) y tras **rechazo** (fila en `'rechazada'`, donde la UI ya
+    invitaba a reintentar con "Buscar otro médico").
+  - **Sin cambios de código, a propósito:** `enviarSolicitud()` sigue traduciendo el 23505 y su
+    mensaje —*"Ya enviaste una solicitud a este médico"*— **pasa a ser verdadero**: a partir de acá
+    solo puede chocar contra una solicitud realmente **pendiente**. `desvincularAsistente()` tampoco se
+    tocó: la fila vieja se conserva como rastro de que el vínculo existió.
+  - **Seguro por construcción:** se pasó de una regla **más estricta** a una **más laxa**, así que era
+    imposible que los datos existentes violaran la nueva (igual se verificó: 0 pares duplicados).
 - **✅ RESUELTO (2026-07-26) — Filename de certificados sin tipo → `certificado_null_...`.** El
   nombre del PDF interpolaba `certificado.tipo`, que llega **siempre `null`** desde que la
   elección de tipo se quitó de la UI, y el null se coercionaba a la cadena `"null"`. Se
@@ -633,37 +744,35 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - El **filtro por tenant** del canal (`medico_id=eq.${tenantId}`) quedó **activo**: el filtro de
     prueba que se usó para diagnosticar fue revertido.
   - ⚠ **Se verifica con DOS sesiones y a mano.** No se prueba con `tsc`/`build`.
-- **⚠ PENDIENTE NUEVO (2026-08-04) — al editar un turno creado desde la HC, el campo "Paciente"
-  arranca VACÍO. Severidad BAJA. PREEXISTENTE.** Detectado al verificar la tanda T4; **no lo
-  causaron las tandas de tipos** (solo tocaron anotaciones).
-  - **Síntoma:** se abre un turno con `origen: 'desde_hc'` para editarlo y el buscador de paciente
-    aparece en blanco, **aunque el calendario sí muestra el nombre** del paciente en el evento.
-  - **Causa:** `turno-form.tsx` siembra el buscador **solo** desde
-    `initialData.paciente_nombre_libre` (`:165-166`) y **nunca lee `initialData.paciente.nombre_completo`**,
-    que es el campo que trae el join de `GET /api/turnero`
-    (`.select('*, paciente:paciente_id (id, nombre_completo)')`). Los turnos creados **desde el
-    formulario** funcionan, porque al elegir un paciente de la lista se escribe
-    `paciente_nombre_libre` (`:363`); pero los turnos **`desde_hc`** se insertan desde los endpoints
-    de consultas con **`paciente_id` y SIN `paciente_nombre_libre`**
-    (`api/consultas/[id]/route.ts` y `api/consultas/route.ts`, en el `insert` de `turnos`).
-  - **Por qué es baja:** el `paciente_id` **no se pierde** — sigue en el form y el enlace "Ver
-    historia clínica" funciona. Es cosmético/confuso, no destructivo.
-  - **Fix natural:**
+- **✅ RESUELTO (2026-08-07, commit `57032ed`) — al editar un turno creado desde la HC, el campo
+  "Paciente" arrancaba VACÍO.** Severidad BAJA, **PREEXISTENTE** (detectado al verificar T4; no lo
+  causaron las tandas de tipos, que solo tocaron anotaciones). Se abría un turno con
+  `origen: 'desde_hc'` y el buscador de paciente aparecía en blanco, **aunque el calendario sí mostraba
+  el nombre** en el evento. El `paciente_id` nunca se perdía, así que era cosmético/confuso, no
+  destructivo.
+  - **Causa:** `turno-form.tsx` sembraba el buscador **solo** desde `initialData.paciente_nombre_libre`
+    y **nunca leía `initialData.paciente.nombre_completo`**, que es el campo que trae el join de
+    `GET /api/turnero` (`.select('*, paciente:paciente_id (id, nombre_completo)')`).
+  - **Fix aplicado — exactamente el "fix natural" que este ítem proponía**, en
+    `src/components/turnero/turno-form.tsx:170`, con el porqué comentado arriba (`:165-169`):
     `setSearchTerm(initialData.paciente_nombre_libre ?? initialData.paciente?.nombre_completo ?? '')`.
-    ✅ **La precondición de tipos YA ESTÁ CUMPLIDA (2026-08-05):** el tipo **`TurnoConPaciente`**
-    existe desde **T4** y el prop quedó tipado como tal en **T5**
-    (`turno-form.tsx:76`, ya no es `any`), así que `initialData.paciente?.nombre_completo`
-    **compila type-safe**. El fix se puede encarar cuando se quiera; ya no depende de ninguna tanda
-    de tipos.
+    La precondición de tipos ya estaba cumplida desde T4/T5 (`TurnoConPaciente`).
+  - ⚠ **Sigue vigente el hecho que lo originaba, y conviene no perderlo:** los turnos `desde_hc` se
+    insertan desde los endpoints de consultas con **`paciente_id` y SIN `paciente_nombre_libre`**
+    (`api/consultas/route.ts` y `api/consultas/[id]/route.ts`). Eso **no cambió** —y es correcto: el
+    dato canónico es el `paciente_id`, duplicar el nombre lo desactualizaría—; lo único que cambió con
+    el Grupo 1 es **cuándo** se ejecuta ese insert (solo al finalizar la consulta, ver `CLAUDE.md` →
+    nota técnica 22). Quien toque esos inserts tiene que saber que este fix asume esa forma.
 - **💡 MEJORA DE UX (2026-08-04, NO es un bug) — los turnos médicos no muestran el motivo en el
   evento del calendario.** El dato **se guarda bien**; simplemente no se pinta: el evento de un
   turno médico muestra hora + nombre del paciente, y el `motivo` queda solo dentro del modal. Sería
   una mejora mostrarlo **cuando la altura del evento lo permita**, como ya hacen los **bloqueos** con
   su descripción. Es **funcionalidad nueva**, no una regresión: entra por diseño (ver `DESIGN.md` →
   categorías del turnero y `.fc-event-*`), decidiendo umbral de altura y truncado.
-- **⚠ PENDIENTE NUEVO (2026-08-05) — la obra social NO se muestra cuando está cargada como texto
-  libre (`obra_social_otro`). Severidad MEDIA. PREEXISTENTE y SISTÉMICO.** No rompe nada crítico,
-  pero **oculta un dato clínico-administrativo relevante** en varios formularios y documentos.
+- **✅ RESUELTO (2026-08-07, commits `9a291f2` + migración 035) — la obra social NO se mostraba cuando
+  estaba cargada como texto libre (`obra_social_otro`). Severidad MEDIA. PREEXISTENTE y SISTÉMICO.**
+  No rompía nada crítico, pero **ocultaba un dato clínico-administrativo relevante** en varios
+  formularios y documentos.
   - **Síntoma:** al buscar y seleccionar un paciente en el formulario de **pedidos** o de
     **certificados**, el **número de afiliado sí aparece** pero la **obra social queda vacía** — solo
     para los pacientes cuya obra social está en `obra_social_otro`. Con una obra social del catálogo
@@ -713,36 +822,54 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     3. **IOSEP debería estar en el catálogo** (es común en la zona del consultorio) y hoy **falta** —
        por eso quedó cargada como texto libre. **Cargarla es una acción SEPARADA** (ver Capa 2, en
        "Datos / catálogo"), y **no reemplaza al fix de código**.
-  - **── CAPA 1 — el fix de código (la tanda propiamente dicha) ──**
-    1. **Endpoint:** sumar **`obra_social_otro`** al `.select(...)` del handler GET de búsqueda
-       (`src/app/api/pacientes/route.ts:48`), para que el dato llegue al front.
-       ✅ **`GET /api/pacientes/[id]` NO necesita cambio — verificado:** usa
-       `select('*, obras_sociales ( nombre )')` (`api/pacientes/[id]/route.ts:50`), y el `*` **ya
-       trae `obra_social_otro`**.
-    2. **Componentes:** aplicar el fallback `obras_sociales?.nombre ?? obra_social_otro` en
-       `pedido-form.tsx:104` y `certificado-form.tsx:101`, replicando el patrón de
-       `difusion/destinatarios`. Sumar `recent-patients.tsx` (select **y** render), que va por su
-       cuenta.
-    3. ⚠ **DEPENDENCIA DE TIPOS — no olvidar, o el fallback no compila type-safe.** El tipo
-       **`PacienteBusqueda`** (`src/types/paciente.ts`, creado en T5) **hoy NO incluye
-       `obra_social_otro`**, a propósito: se definió como espejo exacto de lo que el endpoint
-       proyecta. Al agregar el campo al `.select`, hay que **sumar `obra_social_otro: string | null`
-       al tipo** en el mismo cambio. Son **dos ediciones que van juntas**: si se toca solo el select,
-       el front no puede leer el campo sin un cast; si se toca solo el tipo, el tipo miente.
-    4. ⚠ **Verificación en NAVEGADOR de cada formulario tocado** (pedidos y certificados, más el
-       dashboard si entra), con **dos pacientes**: uno con `obra_social_otro` (p. ej. Paula/IOSEP) y
-       otro con `obra_social_id` del catálogo, **confirmando que ambos muestran la obra social**. No
-       alcanza con `tsc`: el bug es de datos que no llegan, no de tipos.
-  - **── CAPA 2 — el dato del catálogo ──** Es **independiente** y no es código: ver
-    "Datos / catálogo" → *"Faltan obras sociales de la zona en el catálogo (IOSEP)"*.
-    ⚠ **Las dos capas son necesarias:** cargar IOSEP al catálogo **no arregla** a los pacientes ya
-    guardados como "otra" (siguen dependiendo de la Capa 1), y la Capa 1 **no evita** que se sigan
-    cargando obras sociales comunes como texto libre.
-  - **Hallazgo relacionado, para aprovechar el viaje:** `certificado-form.tsx` tiene una **copia
-    duplicada** del tipo local de paciente (su propio `PacienteSugerido`, `:25-33`), que quedó fuera
-    de T5 por alcance. Como este fix **ya toca ese archivo**, es la ocasión natural de unificarlo con
-    **`PacienteBusqueda`** y borrar la interface — dos pájaros de un tiro. Ver "Lint preexistente" →
-    cierre de T5.
+  - **── CAPA 1 — ✅ RESUELTA (2026-08-07, commit `9a291f2`) ──** Se ejecutaron los tres pasos, y las
+    **dos ediciones que iban juntas** (select + tipo) entraron en el mismo commit:
+    1. **Endpoint:** `GET /api/pacientes?q=` ahora proyecta `obra_social_otro`.
+       (`GET /api/pacientes/[id]` no necesitó cambio: su `select('*, …')` ya lo traía.)
+    2. **Tipo:** `PacienteBusqueda` (`src/types/paciente.ts`) incluye el campo — pasó de **8 a 9
+       campos** + el join. Ver `CLAUDE.md` → Mapa de tipos.
+    3. **Componentes:** el fallback se aplicó en `pedido-form.tsx`, `certificado-form.tsx` y
+       `dashboard/recent-patients.tsx` (select **y** render, que iba por su cuenta).
+    - **Se implementó con `.trim()`**, algo más robusto que el fallback propuesto acá: un
+      `obra_social_otro = '   '` ya **no** gana sobre el `null`, siguiendo el ejemplo canónico de
+      `api/difusion/destinatarios/route.ts`.
+    - **De paso cerró el "hallazgo relacionado":** la copia duplicada `PacienteSugerido` de
+      `certificado-form.tsx` se unificó con **`PacienteBusqueda`** y la interface se borró.
+    - ⚠ **LO QUE NO CIERRA, y sobrevive:** la **tarjeta de preview** de `pedido-form.tsx` sigue sin
+      mostrar la obra social — es otro eslabón, no lo tapa este fix. Ver el ítem propio más abajo.
+  - **── CAPA 2 — el dato del catálogo ──** ✅ **IOSEP cargada** (migración 035); el resto sigue
+    abierto: ver "Datos / catálogo" → *"Faltan obras sociales de la zona en el catálogo (IOSEP)"*.
+    ⚠ **Las dos capas eran necesarias:** cargar IOSEP **no arregla** a los pacientes ya guardados como
+    "otra" (dependían de la Capa 1), y la Capa 1 **no evita** que se sigan cargando obras sociales
+    comunes como texto libre.
+  - ⚠ **SIGUE VIGENTE — los documentos YA EMITIDOS conservan el valor vacío.** `obra_social_nombre` se
+    persiste en la fila del pedido/certificado al emitir y **el snapshot es inmutable** (regla de
+    negocio 5): **no hay backfill**. El fix solo alcanza a los documentos emitidos de acá en adelante.
+- **⚠ PENDIENTE NUEVO (2026-08-08) — la TARJETA DE PREVIEW de `pedido-form.tsx` no muestra la obra
+  social. Severidad BAJA.** Cola del ítem anterior: es **otro eslabón**, no lo tapa la Capa 1.
+  - **Causa:** el estado del paciente elegido está tipado como
+    `type PacienteElegido = Pick<PacienteBusqueda, 'id' | 'nombre_completo' | 'dni' | 'obra_social_id' | 'numero_afiliado'>`
+    (`pedido-form.tsx:28-30`): **no incluye `obras_sociales.nombre` ni `obra_social_otro`**, así que la
+    tarjeta **no tiene con qué mostrarla** — ni la del catálogo ni la de texto libre.
+  - **Por qué la Capa 1 no lo alcanzó:** ese fix arregló lo que **se guarda** en el documento
+    (`setValue('obra_social_nombre', …)`), no lo que **se muestra** en la tarjeta. El dato viaja bien
+    al PDF; lo que falta es pintarlo.
+  - **Fix acotado:** ensanchar el `Pick`. ⚠ Revisar de paso si `certificado-form.tsx` tiene la misma
+    tarjeta con el mismo recorte.
+- **⚠ PENDIENTE NUEVO (2026-08-08) — la HORA del próximo control no se persiste: se pierde y cae a
+  las 09:00. Severidad MEDIA.** Es un límite del **modelo**, no del formulario.
+  - **Causa:** `consultas.proximo_turno_sugerido` es **`DATE`**, no `timestamptz`, así que la base
+    guarda `2026-08-20` y **la hora se descarta**. `consulta-detail.tsx` siembra la hora con
+    `proximo_turno_sugerido.split('T')[1]`; como el valor guardado **no tiene `T`**, cae al default
+    **`'09:00'`**.
+  - **El caso concreto:** elegís **14:00**, guardás borrador, y al **finalizar más tarde** el turno se
+    agenda a las **09:00**, en silencio.
+  - ⚠ **PREEXISTENTE, pero MÁS VISIBLE desde el Grupo 1, y por eso entra ahora:** antes el turno se
+    creaba en el mismo request en que se elegía la hora, así que la pérdida casi no se notaba. Desde
+    que **el turno se crea solo al finalizar** (`CLAUDE.md` → nota técnica 22), **agendar y elegir la
+    hora son momentos distintos** y el desfase queda a la vista.
+  - **Fix candidato:** migrar la columna a **`timestamptz`** (o sumar una columna de hora). Es cambio
+    de esquema + revisar los dos endpoints de consultas que la leen y el sembrado del formulario.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -1144,18 +1271,20 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
       el drag/resize sigue intacto. **El aprendizaje quedó en `CLAUDE.md` → nota técnica 21**, porque
       aplica a cualquier llamada imperativa a la API de FullCalendar.
 
-- **Deduplicar `/perfil` contra `obtenerAsistentes()` — tanda aparte, ya decidida.** La página
-  `(app)/perfil/page.tsx` mantiene una **consulta inline** (perfil + enriquecido con
-  `admin.auth.admin.getUserById`) mientras la action `obtenerAsistentes()`
-  (`(app)/perfil/actions.ts:197-206`) **declara exactamente el mismo shape** y tiene **cero
-  consumidores**. La sub-tanda 3 cerró el `any` **solo anotando**, a propósito: deduplicar **cambia
-  qué código corre** en una página real y pide verificación en vivo (listar asistentes, cambiar
-  permisos, desvincular). Ahora es más barato: **`Asistente` ya está exportada**, así que hay un tipo
-  compartido donde apoyarse.
-  - De paso, **`SolicitudPendientePayload`** (creado en la sub-tanda 3) podría reemplazar el **tipo
-    anónimo** que `obtenerSolicitudesPendientes()` declara inline en su firma de retorno
-    (`app/onboarding/actions.ts:283-292`), cerrando el círculo **productor ↔ consumidor**: hoy los dos
-    describen la misma forma y solo uno la nombra.
+- **✅ RESUELTO (2026-08-07) — deduplicar `/perfil` contra `obtenerAsistentes()`.** La página
+  `(app)/perfil/page.tsx` mantenía una **consulta inline** (perfil + enriquecido con
+  `admin.auth.admin.getUserById`) mientras la action `obtenerAsistentes()` **declaraba exactamente el
+  mismo shape** y tenía **cero consumidores**. Ahora la página **consume la action**
+  (`perfil/page.tsx:43`) y esa duplicación desapareció. Se hizo con verificación en vivo —listar
+  asistentes, cambiar permisos, desvincular—, que era la razón por la que la sub-tanda 3 lo había
+  dejado en "solo anotar".
+  - **La interface `Asistente` se MUDÓ** de `perfil-form.tsx` a **`src/types/roles.ts`**: dejó de ser
+    un tipo de componente para ser un tipo de dominio, que es lo que permitió apoyar a las dos puntas
+    en la misma forma. Registrado en `CLAUDE.md` → Mapa de tipos.
+  - ✅ **También se cerró el sub-ítem:** **`SolicitudPendientePayload`** reemplazó el **tipo anónimo**
+    que `obtenerSolicitudesPendientes()` declaraba inline en su firma de retorno
+    (`app/onboarding/actions.ts:285`), cerrando el círculo **productor ↔ consumidor**: ahora los dos
+    lados nombran la misma forma.
 
 - **`POST /api/pacientes/[id]/historia` quedó SIN NINGÚN LLAMADOR.** Su único consumidor era el
   formulario de HC vieja que borró la sub-tanda 2. El endpoint sigue vivo y funcional (hace el upsert
@@ -1168,6 +1297,17 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   (patológicos, quirúrgicos, hábitos tóxicos, actividad física/laboral, perímetro de cintura) **no
   tienen equivalente en `consultas`**: si se decide que la funcionalidad se discontinúa, conviene
   dejarlo escrito; si se decide recuperarla, el formulario borrado está en el historial de git.
+  - **⚠ AMPLIACIÓN (2026-08-08) — ese endpoint también escribe en la AGENDA, y el índice único de la
+    038 no lo alcanza.** Además del upsert sobre `historia_clinica`, sincroniza turnos a partir de
+    `historia_clinica.proximo_control`: **inserta** (`route.ts:141-154`), **actualiza**
+    (`:126-134`) y **borra con admin client** (`:166-169`) turnos con `origen = 'desde_hc'`,
+    `estado = 'pendiente_confirmar'` y **`consulta_id` NULL**.
+  - ⚠ **`turnos_consulta_id_unico` (migración 038) es un índice PARCIAL** (`WHERE consulta_id IS NOT
+    NULL`), así que esos turnos **quedan fuera de la garantía de unicidad**: son el único camino que
+    puede volver a meter turnos en la agenda sin que cuelguen de una consulta finalizada.
+  - **Hoy es inofensivo** (cero llamadores), pero **si el endpoint se reactiva, reintroduce por otra
+    puerta el problema que el Grupo 1 cerró** (ver `CLAUDE.md` → nota técnica 22). Es un motivo más
+    para resolver la pregunta de producto de este ítem en vez de dejar el endpoint vivo y mudo.
 - **✅ RESUELTO (T1, T2 y T6) — los 4 `any` de Route Handlers que NO eran de `catch`.** Quedaron
   deliberadamente afuera de L1 por ser diseño de tipos, y se cerraron en el bloque de tipos de
   dominio: los 2 `(profile as any)[permisoRequerido]` de `consultas` (**T2**), el
@@ -1318,25 +1458,36 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     este timing es parte del cuadro.
 
 ### Datos / catálogo
-- **"Particular / Sin obra social"** existe como **registro real** en la seed de
-  `obras_sociales` (migración 001), a la vez que el formulario ofrece una opción
-  "Particular" hardcodeada. Verificar que no haya duplicación/ambigüedad al seleccionar.
-- **⚠ PENDIENTE NUEVO (2026-08-05) — faltan obras sociales de la zona en el catálogo (IOSEP).
-  CAPA 2 del bug de obra social; NO es código.** Detectado al diagnosticar el bug de la obra social
-  que no se muestra (ver Bloque A → "Bugs menores detectados").
-  - **El caso concreto:** **IOSEP** no está en `obras_sociales` y **es común en la zona del
-    consultorio**. Por eso el paciente de prueba (Paula Zavaleta) quedó con
-    `obra_social_otro: 'IOSEP'` en vez de una referencia al catálogo — el texto libre funcionó como
-    lo que es, una vía de escape.
-  - **Acción:** cargar **IOSEP** al catálogo y, de paso, **revisar qué otras obras sociales comunes
-    de la zona faltan**, para que en adelante se elijan de la lista (`obra_social_id`) en vez de
-    escribirse a mano. Es una tarea de **datos/seed**, independiente del fix de código.
-  - ⚠ **Esto NO arregla el bug por sí solo, y son cosas distintas:**
-    - **No toca a los pacientes ya cargados** como "otra": esos siguen mostrándose vacíos hasta que
-      se haga la **Capa 1** (el fallback en el código). Las dos capas son necesarias.
-    - **Reasignar pacientes existentes** de `obra_social_otro` a `obra_social_id` (p. ej. pasar a
-      Paula a la IOSEP del catálogo) sería una **migración de datos aparte y OPCIONAL** — no hace
-      falta para que el bug quede resuelto, porque con la Capa 1 el texto libre se muestra bien.
+- **⚠ "Particular / Sin obra social": la ambigüedad está CONFIRMADA (verificado 2026-08-08).**
+  Existe como **registro real** en la seed de `obras_sociales` (migración 001) **y** como opción
+  hardcodeada del formulario. Este ítem pedía *"verificar que no haya duplicación/ambigüedad"*: la
+  verificación está hecha y **sí la hay**.
+  - **Las dos opciones son visualmente idénticas en el `<Select>` y guardan cosas distintas:**
+    - `patient-form.tsx:244` → `<SelectItem value="particular">Particular / Sin obra social</SelectItem>`,
+      cuyo handler (`:72-74`) pone **`obra_social_id = undefined` y `obra_social_otro = ''`**: el
+      paciente queda **sin ninguna obra social**.
+    - La **fila del catálogo con el mismo texto** → guarda **`obra_social_id = <id de esa fila>`**: el
+      paciente queda **vinculado a un registro real**.
+  - **Consecuencia:** dos pacientes "particulares" quedan modelados distinto según **cuál de las dos
+    filas clickeó** quien lo dio de alta, y **cualquier filtro o agrupación por obra social los
+    separa**. No hay forma de distinguirlo desde la UI: se ven iguales.
+  - **Decisión de producto pendiente: quitar una de las dos.** ⚠ Si se elige borrar la fila del
+    catálogo, hay que **revisar antes los pacientes que ya la apuntan** (quedarían con un
+    `obra_social_id` colgado); si se elige quitar la opción hardcodeada, el cambio es solo de UI.
+- **✅ RESUELTO PARCIALMENTE (migración 035, 2026-08-07) — faltaban obras sociales de la zona en el
+  catálogo (IOSEP). CAPA 2 del bug de obra social; NO es código.** Detectado al diagnosticar el bug de
+  la obra social que no se muestra (ver Bloque A → "Bugs menores detectados").
+  - ✅ **IOSEP cargada.** La 035 la inserta con `ON CONFLICT (nombre) DO NOTHING` (idempotente:
+    `obras_sociales.nombre` es `TEXT NOT NULL UNIQUE`). **No se tocó el seed de la 001** a propósito:
+    esa migración ya está aplicada, editarla no cambiaría la base real y —como la secuencia no corre
+    desde cero— daría la **falsa impresión** de que IOSEP está cargada en un entorno nuevo.
+  - ⬜ **SIGUE ABIERTO — revisar qué OTRAS obras sociales comunes de la zona faltan**, para que en
+    adelante se elijan de la lista (`obra_social_id`) en vez de escribirse a mano. Es tarea de
+    **datos/catálogo** y **requiere al médico**: no se decide por criterio técnico.
+  - ⬜ **SIGUE ABIERTO y es OPCIONAL — reasignar los pacientes ya cargados** de `obra_social_otro` a
+    `obra_social_id` (p. ej. pasar a Paula a la IOSEP del catálogo). Sería una **migración de datos
+    aparte**, y **no hace falta** para que se vean bien: con la Capa 1 ya resuelta, el texto libre se
+    muestra correctamente.
   - **Nota:** `obra_social_otro` **no se elimina** — es intencional y seguirá existiendo para las
     obras sociales que no estén en la lista (decisión de producto registrada en el ítem del bug).
 
@@ -1397,6 +1548,23 @@ Información Pública**). Hallazgos:
   > un `WITH CHECK` violado levanta `42501`). Cualquier endpoint que escriba y **no chequee cuántas
   > filas tocó** puede estar reportando éxito sin haber escrito nada. Vale tenerlo presente al
   > auditar el resto de los endpoints de escritura.
+- **✅ RESUELTO para `bloqueos_agenda` (migración 037, 2026-08-07) — lectura sin permiso + rol
+  `{public}`.** `bloqueos_select` era **tenant-only** (un asistente sin ningún permiso de agenda podía
+  leer los bloqueos por PostgREST directo) y las 4 políticas se evaluaban para `{public}`. La 037 pide
+  ahora **`ver_turnos` OR `gestionar_turnos`** y normaliza las cuatro a `TO authenticated`. Detalle y
+  el porqué del `OR` en **Bloque A → "Agenda y RLS"**.
+  - ⚠ **EL MISMO HUECO SIGUE ABIERTO EN `turnos`:** `turnos_select` exige **solo `ver_turnos`**, así
+    que un asistente con `gestionar_turnos` y sin `ver_turnos` **escribe turnos que no puede leer** —
+    con 404 falsos y **falsos negativos de solapamiento** como consecuencia. Las dos tablas de la
+    agenda quedaron con criterios distintos. Ítem completo, con las dos salidas posibles, en
+    **Bloque A → "Agenda y RLS"**.
+- **`consultas_delete` se endureció (migración 038, 2026-08-08) — nota de seguridad.** La política
+  ahora exige, además del tenant, que la fila esté en **`estado = 'borrador'`**. Es **defensa en
+  profundidad de la regla de negocio 1 y de la Ley 26.529**: una consulta **finalizada** pasó a ser
+  **imborrable desde la base**, para todos los roles y por cualquier vía (endpoint, PostgREST directo
+  o un script futuro), sin depender de que el código se acuerde de chequearlo. El mismo cambio abrió
+  el borrado de **borradores** al asistente **autor** (`creado_por`), que antes no podía y recibía un
+  falso éxito. Ver Bloque A → *"descartar un BORRADOR de consulta"*.
 - **RLS de tablas:** el modelo con `get_medico_id()` + `check_permiso()` está bien
   aplicado en las tablas de datos (ver `schema.sql`). Verificar dos huecos:
   - **Difusión** no tiene permiso granular: cualquier asistente vinculado ve/crea posts
@@ -1554,6 +1722,16 @@ Unificación visual y pulido de interfaz. Detalle y ubicaciones en `DESIGN.md`
 - **Contraste / accesibilidad:** verificar contraste de los tintes de categoría del
   turnero (10–12% de opacidad) y de `muted-foreground` sobre `muted`, sobre todo en la
   página pública de verificación.
+- **⚠ COSMÉTICO NUEVO (2026-08-08) — un bloqueo creado sobre un turno cancelado se dibuja a MEDIA
+  FRANJA. Severidad MUY BAJA.** Efecto secundario visible del fix de solapamiento (`6cd48c2`): desde
+  que los turnos `cancelado` y `pendiente_confirmar` **ya no ocupan la franja**, se puede crear un
+  bloqueo encima de uno de ellos — y cuando eso pasa, **FullCalendar apila los eventos solapados** y
+  el bloqueo se pinta con la mitad del ancho, como si cubriera medio horario.
+  - **Es solo pintura:** el bloqueo cubre el rango completo y se respeta al agendar; lo único raro es
+    el ancho del evento.
+  - **Salidas posibles:** `eventOverlap` / `slotEventOverlap` en la config del calendario, o un
+    `eventOrder` que mande los bloqueos al fondo. Ver `DESIGN.md` → categorías del turnero y
+    `.fc-event-bloqueo`.
 - **Layout inconsistente entre secciones** (observado en el navegador). Las páginas del área
   autenticada no comparten un patrón único de encabezado ni de ancho:
   - **Correctas / de referencia:** dashboard, pacientes, turnero, pedidos y certificados —

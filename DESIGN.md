@@ -123,6 +123,18 @@ En `src/components/ui/` (shadcn/ui sobre Radix). Una línea por componente:
 tenue (`bg-destructive/10`) con texto destructivo, salvo botones sólidos donde se
 fuerza texto blanco (`.bg-destructive { color:#fff }`).
 
+**Acción destructiva dentro de una fila de acciones (patrón nuevo):** cuando una acción
+destructiva convive con la acción **primaria** de un formulario, va como botón `ghost` en
+tono destructivo (`text-destructive hover:text-destructive hover:bg-destructive/10`) y
+**empujada a la derecha con `ml-auto`**, para estar disponible sin competir visualmente con
+la primaria. Ejemplo vivo: **"Descartar"** junto a "Finalizar consulta" en
+`pacientes/consultas/consulta-detail.tsx`. La confirmación reusa el molde destructivo ya
+establecido por `pacientes/paciente-acciones.tsx` (título `text-destructive` con
+`AlertTriangle`, `AlertDialogAction` en `bg-destructive hover:bg-destructive/90`, y la frase
+"Esta acción no se puede deshacer") — ver `consultas/descartar-dialog.tsx`. Se distingue del
+caso de `paciente-acciones.tsx`, donde las destructivas viven **solas** en la cabecera de la
+ficha y por eso pueden usar `icon`/`ghost` sin desambiguar.
+
 **Componentes compartidos de dominio:** `shared/qr-verificacion.tsx` (Server
 Component que genera el QR con `qrcode` y deriva la URL base con `headers()`),
 `shared/page-header`, `shared/view-toggle.tsx` (selector **mosaico / lista**, Client
