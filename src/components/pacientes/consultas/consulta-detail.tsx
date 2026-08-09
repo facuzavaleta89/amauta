@@ -21,8 +21,10 @@ import {
   Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from '@/components/ui/form'
 
+import { usePermisos } from '@/contexts/permisos-context'
 import { consultaSchema, type ConsultaFormInput, type ConsultaFormData } from '@/lib/validations/consulta.schema'
 import { FinalizarDialog } from './finalizar-dialog'
+import { DescartarDialog } from './descartar-dialog'
 import { ConsultaPDFButton } from './pdf-download-button'
 import type { Consulta, CampoExtraSeccion } from '@/types/consulta'
 
@@ -32,8 +34,17 @@ interface ConsultaDetailProps {
   mode: 'new' | 'edit' | 'view'
   consulta: Consulta | null   // null cuando mode='new'
   pacienteId: string
+  /**
+   * Id del usuario logueado. Hace falta para la regla de descarte ("el médico, o el
+   * asistente que lo creó"): `usePermisos()` expone `esMedico` pero NO el id, así que
+   * baja por props desde la page (Server Component), que ya lo tiene.
+   */
+  currentUserId: string
+  /** Paciente archivado → solo lectura (regla de negocio 9): no se descarta. */
+  archivado?: boolean
   onSaved: (c: Consulta) => void
   onCancel: () => void
+  onDeleted: (id: string) => void
 }
 
 // ── Helpers de visualización ──────────────────────────────────
@@ -196,10 +207,25 @@ function ConsultaReadOnly({ consulta }: { consulta: Consulta }) {
 // ── Formulario (nueva / editar borrador) ──────────────────────
 
 function ConsultaForm({
-  consulta, pacienteId, onSaved, onCancel,
-}: Pick<ConsultaDetailProps, 'mode' | 'consulta' | 'pacienteId' | 'onSaved' | 'onCancel'>) {
+  consulta, pacienteId, currentUserId, archivado = false, onSaved, onCancel, onDeleted,
+}: Pick<ConsultaDetailProps,
+  'mode' | 'consulta' | 'pacienteId' | 'currentUserId' | 'archivado' | 'onSaved' | 'onCancel' | 'onDeleted'
+>) {
+  const { esMedico } = usePermisos()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showFinalizar, setShowFinalizar] = useState(false)
+  const [showDescartar, setShowDescartar] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  // Descartar es para BORRADORES ya guardados: no aplica a `mode='new'` (no hay nada
+  // que borrar) ni a las finalizadas (regla de negocio 1), ni con el paciente archivado.
+  // La regla de quién puede: el médico siempre; el asistente, solo lo que él creó.
+  // ⚠ `creado_por` es NULL en los borradores previos a la migración 038 → solo el médico.
+  const puedeDescartar =
+    !!consulta &&
+    consulta.estado === 'borrador' &&
+    !archivado &&
+    (esMedico || consulta.creado_por === currentUserId)
 
   // Valor default para fecha_hora: ahora, en formato datetime-local
   const nowLocal = useMemo(() => {
@@ -327,11 +353,41 @@ function ConsultaForm({
 
       toast.success(estado === 'finalizada' ? 'Consulta finalizada correctamente' : 'Borrador guardado')
 
+      // El servidor agenda el turno de control al finalizar. Si no pudo (p. ej. un
+      // asistente sin `gestionar_turnos`), la consulta SE FINALIZÓ igual y lo informa
+      // con `turnoAgendado: false` — hay que avisarlo, o el turno se pierde en silencio.
+      if (json.turnoAgendado === false) {
+        toast.warning('La consulta se finalizó, pero no se pudo agendar el turno de control. Agendalo a mano desde el turnero.')
+      }
+
       onSaved(data)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Ocurrió un error')
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  async function descartarBorrador() {
+    if (!consulta) return
+
+    setIsDeleting(true)
+    setShowDescartar(false)
+
+    try {
+      const res = await fetch(`/api/consultas/${consulta.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        // 403 → no es el autor / la base lo rechazó · 409 → paciente archivado.
+        throw new Error(data?.error || 'No se pudo descartar el borrador')
+      }
+
+      toast.success('Borrador descartado')
+      // No se baja `isDeleting`: el panel se desmonta al sacar la consulta de la lista.
+      onDeleted(consulta.id)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo descartar el borrador')
+      setIsDeleting(false)
     }
   }
 
@@ -615,7 +671,8 @@ function ConsultaForm({
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Si seleccionás una fecha, se creará automáticamente un turno pendiente en la agenda. La hora por defecto es 09:00.
+              Al <strong>finalizar</strong> la consulta se agendará automáticamente un turno para esta fecha.
+              Mientras siga en borrador, la agenda no se toca. La hora por defecto es 09:00.
             </p>
           </div>
 
@@ -644,12 +701,27 @@ function ConsultaForm({
             <Button
               type="button"
               onClick={() => setShowFinalizar(true)}
-              disabled={isSubmitting}
+              disabled={isSubmitting || isDeleting}
               className="gap-2 bg-emerald-600 hover:bg-emerald-700"
             >
               <CheckCircle2 className="h-4 w-4" />
               Finalizar consulta
             </Button>
+
+            {/* Descartar: destructivo pero discreto (ghost + a la derecha), para no
+                competir con Finalizar, que es la acción principal del formulario. */}
+            {puedeDescartar && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setShowDescartar(true)}
+                disabled={isSubmitting || isDeleting}
+                className="gap-2 ml-auto text-destructive hover:text-destructive hover:bg-destructive/10"
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Descartar
+              </Button>
+            )}
           </div>
         </form>
       </Form>
@@ -660,6 +732,13 @@ function ConsultaForm({
         onConfirm={() => submitWithEstado('finalizada')}
         isLoading={isSubmitting}
       />
+
+      <DescartarDialog
+        open={showDescartar}
+        onOpenChange={setShowDescartar}
+        onConfirm={descartarBorrador}
+        isLoading={isDeleting}
+      />
     </>
   )
 }
@@ -667,7 +746,7 @@ function ConsultaForm({
 // ── Componente principal ──────────────────────────────────────
 
 export function ConsultaDetail({
-  mode, consulta, pacienteId, onSaved, onCancel,
+  mode, consulta, pacienteId, currentUserId, archivado, onSaved, onCancel, onDeleted,
 }: ConsultaDetailProps) {
   if (mode === 'view' && consulta) {
     return (
@@ -680,8 +759,11 @@ export function ConsultaDetail({
       mode={mode}
       consulta={consulta}
       pacienteId={pacienteId}
+      currentUserId={currentUserId}
+      archivado={archivado}
       onSaved={onSaved}
       onCancel={onCancel}
+      onDeleted={onDeleted}
     />
   )
 }
