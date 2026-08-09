@@ -148,9 +148,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ── ¿Corresponde agendar el turno del próximo control? ─────────────────────
+    // SOLO si la consulta NACE finalizada. El formulario usa POST cuando la consulta
+    // es nueva, así que por acá pasan los dos casos: "guardar borrador" (provisorio,
+    // no agenda nada) y "cargar y finalizar de una" (el flujo normal del médico, que
+    // SÍ agenda). Por eso el bloque de creación del turno no se elimina: se condiciona.
+    const debeAgendarTurno = consulta.estado === 'finalizada' && !!consulta.proximo_turno_sugerido
+
     // ── Validar solapamiento del próximo control ANTES de guardar ──
-    if (consulta.proximo_turno_sugerido) {
-      const fechaBase      = new Date(consulta.proximo_turno_sugerido)
+    // Bajo la MISMA condición que la creación: si el turno no se va a crear, un
+    // solapamiento no tiene por qué rechazar con 409 el guardado de un borrador.
+    if (debeAgendarTurno) {
+      const fechaBase      = new Date(consulta.proximo_turno_sugerido!)
       const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
       const fechaIsoInicio = fechaBase.toISOString()
       const fechaIsoFin    = fechaFin.toISOString()
@@ -186,15 +195,30 @@ export async function POST(request: NextRequest) {
       .insert({
         ...consulta,
         medico_id: ctx.tenantMedicoId,
+        // Autor de la consulta (migración 038). `medico_id` es el TENANT, no quién
+        // la escribió: sin esta columna la regla "descarta el médico o el asistente
+        // que lo creó" no se puede expresar. Lo fija el servidor, nunca el cliente.
+        creado_por: user.id,
       })
       .select()
       .single()
 
     if (insertError) throw insertError
 
-    // ── Crear turno automático si se sugirió próximo control ──
-    if (consulta.proximo_turno_sugerido) {
-      const fechaBase      = new Date(consulta.proximo_turno_sugerido)
+    // ── Agendar el turno de control — solo si la consulta nace finalizada ──
+    // ⚠ La consulta YA está guardada. Si el turno falla, NO se revierte nada ni se
+    // responde error: se informa con `turnoAgendado: false` y la UI avisa. Misma
+    // política que el insert de la notificación en `api/turnero/route.ts`.
+    //
+    // `turnoAgendado` viaja SOLO cuando correspondía agendar algo: undefined → no había
+    // nada que agendar · true → quedó en la agenda · false → no se pudo (+ `turnoError`).
+    // Los `undefined` los descarta JSON.stringify, así que la respuesta de un borrador
+    // queda idéntica a la de antes: `{ data }` y nada más.
+    let turnoAgendado: boolean | undefined
+    let turnoError: string | undefined
+
+    if (debeAgendarTurno) {
+      const fechaBase      = new Date(consulta.proximo_turno_sugerido!)
       const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
       const fechaIsoInicio = fechaBase.toISOString()
       const fechaIsoFin    = fechaFin.toISOString()
@@ -208,7 +232,7 @@ export async function POST(request: NextRequest) {
 
       if (!existente) {
         const fechaConsulta = new Date(consulta.fecha_hora).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-        await supabase.from('turnos').insert({
+        const { error: insertTurnoError } = await supabase.from('turnos').insert({
           paciente_id:  consulta.paciente_id,
           fecha_inicio: fechaIsoInicio,
           fecha_fin:    fechaIsoFin,
@@ -221,10 +245,23 @@ export async function POST(request: NextRequest) {
           medico_id:    ctx.tenantMedicoId,
           agendado_por: user.id,
         })
+
+        if (insertTurnoError) {
+          // Causa típica: asistente sin `gestionar_turnos` (turnos_insert lo rechaza).
+          // Se loguea sin datos del paciente (Ley 25.326): solo el id de la consulta.
+          console.error('[POST /api/consultas] turno no agendado', { consultaId: nueva.id, error: insertTurnoError })
+          turnoAgendado = false
+          turnoError = 'No se pudo agendar el turno de control en la agenda.'
+        } else {
+          turnoAgendado = true
+        }
+      } else {
+        // Ya había un turno para esta consulta: nada que hacer, y no es un fallo.
+        turnoAgendado = true
       }
     }
 
-    return NextResponse.json({ data: nueva }, { status: 201 })
+    return NextResponse.json({ data: nueva, turnoAgendado, turnoError }, { status: 201 })
   } catch (error) {
     console.error('[POST /api/consultas]', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })

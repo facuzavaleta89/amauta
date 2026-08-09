@@ -22,6 +22,8 @@ interface HistoriaClinicaViewProps {
   paciente: PacienteData
   archivado?: boolean
   initialConsultas: Consulta[]
+  /** Usuario logueado: lo necesita la regla de descarte de borradores (médico o autor). */
+  currentUserId: string
 }
 
 type PanelMode = 'empty' | 'new' | 'view' | 'edit'
@@ -31,6 +33,7 @@ export function HistoriaClinicaView({
   paciente,
   archivado = false,
   initialConsultas,
+  currentUserId,
 }: HistoriaClinicaViewProps) {
   const [consultas, setConsultas] = useState<Consulta[]>(initialConsultas)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -90,6 +93,16 @@ export function HistoriaClinicaView({
     setMobileView('detail')
   }, [])
 
+  // Borrador descartado: se va de la lista y el panel vuelve a vacío. El descarte es
+  // físico, así que no hay estado intermedio que mostrar — y en mobile conviene volver
+  // a la lista, porque el detalle que se estaba viendo ya no existe.
+  const handleDeleted = useCallback((deletedId: string) => {
+    setConsultas((prev) => prev.filter((c) => c.id !== deletedId))
+    setSelectedId(null)
+    setPanelMode('empty')
+    setMobileView('list')
+  }, [])
+
   const handleBackToList = useCallback(() => {
     setMobileView('list')
   }, [])
@@ -116,8 +129,11 @@ export function HistoriaClinicaView({
       mode={panelMode === 'new' ? 'new' : panelMode}
       consulta={panelMode === 'new' ? null : selectedConsulta}
       pacienteId={pacienteId}
+      currentUserId={currentUserId}
+      archivado={archivado}
       onSaved={handleSaved}
       onCancel={handleCancel}
+      onDeleted={handleDeleted}
     />
   )
 

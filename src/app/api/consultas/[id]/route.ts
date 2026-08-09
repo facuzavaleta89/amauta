@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import type { PermisosAsistente, UserRole } from '@/types'
@@ -103,7 +104,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     // Verificar que la consulta existe y pertenece al tenant
     const { data: existing, error: fetchError } = await supabase
       .from('consultas')
-      .select('id, estado, proximo_turno_sugerido')
+      // `proximo_turno_sugerido` ya no se proyecta: se usaba solo para el viejo
+      // `turnoHaCambiado`, y esa comparación no decide nada ahora (decide finalizar).
+      .select('id, estado')
       .eq('id', id)
       .eq('medico_id', ctx.tenantMedicoId)
       .single()
@@ -131,11 +134,24 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     const { paciente_id: _pid, ...updates } = result.data
 
-    const nuevoTurno      = updates.proximo_turno_sugerido
-    const turnoHaCambiado = nuevoTurno && nuevoTurno !== existing.proximo_turno_sugerido
+    const nuevoTurno = updates.proximo_turno_sugerido
+
+    // ── ¿Corresponde agendar el turno del próximo control? ─────────────────────
+    // SOLO en la TRANSICIÓN borrador → finalizada. Un borrador es provisorio: mientras
+    // la consulta no se finaliza, su próximo control es una intención, no un turno.
+    // (Hasta esta tanda, guardar un borrador ya metía un turno real en la agenda.)
+    //
+    // `requiereFinalizar` (:97) ES esa transición, sin necesidad de comparar contra el
+    // estado anterior: la guarda de más arriba rechaza con 403 toda consulta que YA
+    // estuviera finalizada, así que acá `existing.estado` solo puede ser 'borrador'.
+    // Se lo chequea igual como defensa en profundidad — si alguien aflojara esa guarda,
+    // esta condición evita que re-guardar una finalizada vuelva a agendar el turno.
+    const debeAgendarTurno = requiereFinalizar && existing.estado === 'borrador' && !!nuevoTurno
 
     // ── Validar solapamiento del próximo control ANTES de actualizar ──
-    if (turnoHaCambiado) {
+    // Va bajo la MISMA condición que la creación: si el turno no se va a crear, un
+    // solapamiento no tiene por qué rechazar con 409 el guardado de un borrador.
+    if (debeAgendarTurno) {
       const fechaBase      = new Date(nuevoTurno!)
       const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
       const fechaIsoInicio = fechaBase.toISOString()
@@ -175,8 +191,20 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     if (updateError) throw updateError
 
-    // ── Crear turno automático si el próximo turno cambió ──
-    if (turnoHaCambiado) {
+    // ── Agendar el turno de control — solo al finalizar (ver `debeAgendarTurno`) ──
+    // ⚠ La consulta YA quedó finalizada arriba. Si el turno falla, NO se revierte nada
+    // ni se responde error: se informa con `turnoAgendado: false` y la UI avisa. Misma
+    // política que el insert de la notificación en `api/turnero/route.ts` — el acto
+    // principal ya ocurrió, el secundario no puede tumbarlo.
+    // `turnoAgendado` viaja en la respuesta SOLO cuando correspondía agendar algo:
+    // undefined → no había nada que agendar (no fue una finalización, o sin próximo
+    // control) · true → el turno quedó en la agenda · false → no se pudo, y va con
+    // `turnoError`. Los `undefined` los descarta JSON.stringify, así que la respuesta
+    // de un guardado de borrador queda idéntica a la de antes: `{ data }` y nada más.
+    let turnoAgendado: boolean | undefined
+    let turnoError: string | undefined
+
+    if (debeAgendarTurno) {
       const fechaBase      = new Date(nuevoTurno!)
       const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
       const fechaIsoInicio = fechaBase.toISOString()
@@ -198,7 +226,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
         if (!existente) {
           const fechaConsulta = new Date(pacienteRes.data.fecha_hora).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-          await supabase.from('turnos').insert({
+          const { error: insertTurnoError } = await supabase.from('turnos').insert({
             paciente_id:  pacienteRes.data.paciente_id,
             fecha_inicio: fechaIsoInicio,
             fecha_fin:    fechaIsoFin,
@@ -211,11 +239,28 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
             medico_id:    ctx.tenantMedicoId,
             agendado_por: user.id,
           })
+
+          if (insertTurnoError) {
+            // Causa típica: asistente sin `gestionar_turnos` (turnos_insert lo rechaza).
+            // Se loguea sin datos del paciente (Ley 25.326): solo el id de la consulta.
+            console.error('[PATCH /api/consultas/[id]] turno no agendado', { consultaId: id, error: insertTurnoError })
+            turnoAgendado = false
+            turnoError = 'No se pudo agendar el turno de control en la agenda.'
+          } else {
+            turnoAgendado = true
+          }
+        } else {
+          // Ya había un turno para esta consulta: nada que hacer, y no es un fallo.
+          turnoAgendado = true
         }
+      } else {
+        console.error('[PATCH /api/consultas/[id]] turno no agendado: consulta ilegible', { consultaId: id })
+        turnoAgendado = false
+        turnoError = 'No se pudo agendar el turno de control en la agenda.'
       }
     }
 
-    return NextResponse.json({ data: updated })
+    return NextResponse.json({ data: updated, turnoAgendado, turnoError })
   } catch (error) {
     console.error('[PATCH /api/consultas/[id]]', error)
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
@@ -240,7 +285,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
 
     const { data: existing } = await supabase
       .from('consultas')
-      .select('id, estado')
+      .select('id, estado, creado_por, paciente_id')
       .eq('id', id)
       .eq('medico_id', ctx.tenantMedicoId)
       .single()
@@ -251,8 +296,53 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: 'No se puede eliminar una consulta finalizada.' }, { status: 403 })
     }
 
-    const { error } = await supabase.from('consultas').delete().eq('id', id)
+    // Descartar un borrador: el médico (cualquiera de su tenant) o el asistente que lo
+    // creó. Validación explícita además de la RLS (migración 038), mismo criterio que el
+    // DELETE de estudios. ⚠ `creado_por` es NULL en los borradores anteriores a esa
+    // migración: sin autor conocido, solo el médico puede descartarlos.
+    if (ctx.role !== 'medico' && existing.creado_por !== user.id) {
+      return NextResponse.json(
+        { error: 'Solo el médico o quien creó el borrador puede descartarlo' },
+        { status: 403 }
+      )
+    }
+
+    // Paciente archivado → solo lectura (regla de negocio 9). Se lee con admin client
+    // (bypass RLS) porque quien descarta puede no tener `ver_pacientes`, igual que en el
+    // POST; acotado al tenant.
+    const admin = createAdminClient()
+    const { data: pac } = await admin
+      .from('pacientes')
+      .select('archivado_at')
+      .eq('id', existing.paciente_id)
+      .eq('creado_por', ctx.tenantMedicoId)
+      .single()
+
+    if (pac?.archivado_at) {
+      return NextResponse.json(
+        { error: 'El paciente está archivado. Desarchivalo para descartar borradores.' },
+        { status: 409 }
+      )
+    }
+
+    // ⚠ Guarda de "0 filas": una denegación de RLS en DELETE no levanta error, filtra
+    // filas — devolvería `error: null` y el usuario vería un falso éxito (la lección de
+    // la migración 033). El `.select('id')` es lo que permite contarlas.
+    const { data: borrada, error } = await supabase
+      .from('consultas')
+      .delete()
+      .eq('id', id)
+      .eq('medico_id', ctx.tenantMedicoId)
+      .select('id')
+      .maybeSingle()
+
     if (error) throw error
+    if (!borrada) {
+      return NextResponse.json(
+        { error: 'La base de datos rechazó la eliminación del borrador.' },
+        { status: 403 }
+      )
+    }
 
     return NextResponse.json({ success: true })
   } catch {

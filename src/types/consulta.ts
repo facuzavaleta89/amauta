@@ -19,6 +19,12 @@ export interface Consulta {
   id: string
   paciente_id: string
   medico_id: string
+  /**
+   * Autor de la consulta (quien la creó). NO es el tenant: eso es `medico_id`.
+   * NULL en las consultas anteriores a la migración 038 (sin backfill a propósito):
+   * esas solo las puede descartar el médico. Ver regla de descarte en `consultas_delete`.
+   */
+  creado_por: string | null
   fecha_hora: string               // ISO timestamptz
 
   // Motivo y anamnesis
@@ -63,6 +69,8 @@ export interface Consulta {
 export interface ConsultaInsert {
   paciente_id: string
   medico_id: string
+  /** Lo setea el SERVIDOR con el usuario autenticado; el cliente nunca lo manda. */
+  creado_por?: string
   fecha_hora?: string
   motivo_consulta?: string | null
   anamnesis?: string | null

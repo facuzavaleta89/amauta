@@ -72,6 +72,7 @@ export default async function HistoriaClinicaPage({ params }: Props) {
         }}
         archivado={Boolean(paciente.archivado_at)}
         initialConsultas={(consultas ?? []) as Consulta[]}
+        currentUserId={user.id}
       />
     </div>
   )
