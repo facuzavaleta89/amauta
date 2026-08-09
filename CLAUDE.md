@@ -88,17 +88,17 @@ del usuario actual.
 | `obras_sociales` | Catálogo (lectura pública autenticada) | — |
 | `pacientes` | Pacientes (DNI único). `archivado_at` → archivar en vez de borrar | `creado_por` |
 | `historia_clinica` | HC base 1:1 por paciente, **vacía** al crear (no es una actuación) | vía `pacientes` |
-| `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología). `campos_extra` (JSONB) ad-hoc | `medico_id` |
+| `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología). `campos_extra` (JSONB) ad-hoc. `creado_por` = **autor** (mig. 038; ⚠ **NULL** en las anteriores, y **no** es el tenant) | `medico_id` |
 | `estudios` | Archivos adjuntos por paciente (subir/ver/descargar/borrar **implementado**). Bucket privado `estudios` (migración 026), ruta `{medico_id}/{paciente_id}/{uuid}.{ext}` | vía `pacientes` |
 | `evoluciones` | Series de laboratorio/antropometría (legacy, gráficos) | vía `pacientes` |
-| `turnos` | Agenda. `categoria`, `origen`, `consulta_id` (Bloque 4) | `medico_id` |
-| `bloqueos_agenda` | Bloqueos de horario | `medico_id` |
+| `turnos` | Agenda. `categoria`, `origen`, `consulta_id` (Bloque 4). Índice único **parcial** `turnos_consulta_id_unico` (mig. 038): **un turno por consulta** | `medico_id` |
+| `bloqueos_agenda` | Bloqueos de horario. `updated_at` + trigger (mig. 036); RLS con permiso y a `authenticated` (mig. 037) | `medico_id` |
 | `turnos_audit_log` | Log de cambios de turnos (trigger) | vía `turnos` |
 | `pedidos` | Pedidos de estudios + PDF + QR (`codigo_verificacion`, `estado`). PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
 | `certificados` | Certificados + PDF + QR + `valido_hasta`. PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
 | `recetas` | Estructura lista; emisión **bloqueada** (ANMAT pendiente) | vía `pacientes` |
 | `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos. `difusion_envios` es el **log de envíos**: una fila por destinatario, la escribe `POST /api/difusion/enviar` | `medico_id` |
-| `solicitudes_asistente` | Workflow de vinculación (onboarding) | — |
+| `solicitudes_asistente` | Workflow de vinculación (onboarding). Unicidad **parcial** (`WHERE estado='pendiente'`, mig. 034): el historial ya no bloquea una solicitud nueva | — |
 | `notas` | Notas personales por usuario | `user_id` |
 | `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). En la publicación `supabase_realtime` (mig. 023) y con `REPLICA IDENTITY FULL` (mig. 032), pero ⚠ la entrega en vivo **NO funciona y quedó DIFERIDA** — causa acotada a infraestructura de Supabase (ver `PENDIENTES.md` → Bloque A y `schema.sql` → REALTIME). ⚠ `mensajes_lecturas` **no tiene política de UPDATE**: los upserts van con `ignoreDuplicates` | `medico_id` / `user_id` |
 | `notificaciones` | Avisos del sistema para el médico (turno agendado, recordatorio enviado). Estructura verificada y reconstruida en `schema.sql`; ⚠ **sigue sin migración fuente** | `medico_id` |
@@ -137,6 +137,18 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 > `bloqueos_update`, que **nunca había existido**. Es el único dominio donde el borrado no está
 > reservado al médico (contrastar con pacientes → regla 9, estudios → regla 10, documentos →
 > regla 5).
+
+> ⚠ **Agenda — LEER bloqueos exige permiso (desde la migración `037`, 2026-08-07).**
+> `bloqueos_select` era **tenant-only** y ahora pide **`ver_turnos` OR `gestionar_turnos`**; las 4
+> políticas de `bloqueos_agenda` quedaron en `TO authenticated`. **El `OR` es deliberado y no
+> espeja a `turnos_select`** (que pide solo `ver_turnos`): los 12 permisos son **independientes**,
+> así que un asistente con `gestionar_turnos` y **sin** `ver_turnos` es configurable, y con un
+> `USING` que pidiera solo `ver_turnos` se le romperían los endpoints de edición y borrado, que
+> hacen fetch previo sobre esa misma tabla.
+> ⚠ **El mismo hueco sigue ABIERTO en `turnos`:** `turnos_select` exige solo `ver_turnos`, así que
+> ese asistente **escribe turnos que no puede leer** — 404 falsos y falsos negativos de
+> solapamiento. Las dos tablas de la agenda quedaron con criterios distintos: ver `PENDIENTES.md`
+> → Bloque A → "Agenda y RLS".
 
 ---
 
@@ -236,7 +248,8 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 1. **HC inmutable:** una `consulta` en estado `finalizada` no se edita desde la UI.
    Solo el médico finaliza (el asistente con permiso puede crear en `borrador`).
    La **consulta** es la unidad de actuación clínica (la fila de `historia_clinica`
-   nace vacía y **no** cuenta como actuación).
+   nace vacía y **no** cuenta como actuación). Un `borrador`, en cambio, **sí se puede
+   descartar** — ver regla 13.
 2. **Médico = acceso total.** Los asistentes solo acceden a lo habilitado explícitamente.
 3. **Tenant aislado:** ninguna data se comparte entre médicos distintos.
 4. **Matrículas:** MP (provincial), MN (nacional), ME (especialidad). Varias posibles,
@@ -296,6 +309,20 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
     ⚠ **Sin opt-out (Ley 25.326):** hoy no existe mecanismo de baja ni registro de consentimiento
     del paciente; el pie de la plantilla tiene el `TODO` marcado. Es un **bloqueante de go-live**
     para el envío a pacientes reales (ver `PENDIENTES.md`).
+13. **Descartar un borrador de consulta:** una `consulta` en `borrador` se **elimina físicamente y
+    sin rastro** — no hay archivado ni log, contraste **deliberado** con pacientes (regla 9, que se
+    archivan por la Ley 26.529). Se pudo hacer así porque `consultas` **no tiene trigger de
+    auditoría**: "sin rastro" se cumple solo. **Quién puede: el médico** (cualquier borrador de su
+    tenant) **o el asistente que la creó** (`consultas.creado_por`, migración 038 — la tabla era la
+    única de su familia sin columna de autor; `medico_id` es el **tenant**, no el autor).
+    ⚠ Los borradores **anteriores a la 038** tienen `creado_por NULL` → **solo el médico** los
+    descarta (con NULL, `creado_por = auth.uid()` da NULL y no pasa: sale de la lógica ternaria de
+    SQL, no hay caso especial). La regla vive en **tres capas**: la política `consultas_delete`
+    (tenant + `estado='borrador'` + médico OR autor), el **chequeo explícito de autoría** en
+    `DELETE /api/consultas/[id]` (403) y la **visibilidad del botón** en la UI. El endpoint además
+    rechaza con **409** si el paciente está archivado (regla 9) y trae **guarda de "0 filas"** (403,
+    la lección de la 033). Una consulta **finalizada no se borra nunca** (regla 1) y **desde la 038
+    eso lo garantiza la base**, no solo el código.
 
 ---
 
@@ -541,6 +568,36 @@ Tanda del **modal del hilo desde la campanita** (2026-08-03, sin migración; ver
 - **Limitación conocida:** si el hilo no está entre las **100** conversaciones que trae
   `obtenerBandeja()` (`.limit(100)`), el modal **no abre** (no crashea). Anotada en `PENDIENTES.md`.
 
+**GRUPO 1 — cinco tandas, migraciones 034–038** (2026-08-07/08). Bugs de datos, de agenda y el
+hueco de los borradores. ⚠ **Trae el único cambio de COMPORTAMIENTO visible del grupo** (el
+momento en que se crea el turno de la agenda, ver nota técnica 22):
+1. **Dedup de `/perfil`** — la página consume `obtenerAsistentes()` (que tenía **cero
+   consumidores** mientras la página duplicaba su consulta inline); `SolicitudPendientePayload`
+   reemplazó un tipo anónimo en `onboarding/actions.ts`; y la interface **`Asistente` se mudó** de
+   `perfil-form.tsx` a `types/roles.ts` (pasó de tipo de componente a tipo de dominio).
+2. **Migración 034 — el asistente desvinculado podía volver a solicitar vinculación.** La
+   `UNIQUE(solicitante_id, medico_id)` **total** daba una fila por par **en toda la historia**, así
+   que la solicitud vieja (`aprobada`/`rechazada`) bloqueaba la nueva para siempre. Pasó a **índice
+   único PARCIAL** `WHERE estado = 'pendiente'` (⚠ índice y no constraint: Postgres no admite
+   UNIQUE parciales). **Sin una línea de código:** la causa era la constraint, no el `if`.
+3. **Migración 035 (IOSEP) + la obra social como texto libre.** `obra_social_otro` ahora se muestra
+   en pedidos, certificados y dashboard (fallback con `.trim()`); `PacienteBusqueda` sumó el campo
+   (**9 campos**) y absorbió al tipo local `PacienteSugerido`. ⚠ Los **documentos ya emitidos**
+   conservan el valor vacío: el snapshot es inmutable (regla 5), no hay backfill.
+4. **Turno `desde_hc` con el campo Paciente vacío al editar** — `turno-form.tsx` sembraba el
+   buscador solo desde `paciente_nombre_libre` y nunca leía el join `paciente.nombre_completo`.
+5. **Trazabilidad de agenda (036 + 037) y solapamiento.** La **036** sumó `updated_at` + trigger a
+   `bloqueos_agenda` (compañera de la 033: recién desde que son editables tiene sentido registrar
+   cuándo; las filas existentes se sembraron con `created_at`, no con `now()`). La **037** hizo que
+   `bloqueos_select` exija **`ver_turnos` OR `gestionar_turnos`** y normalizó las 4 políticas a
+   `TO authenticated`. Y el chequeo de solapamiento dejó de contar los turnos `cancelado` y
+   `pendiente_confirmar` en **4 sitios** del turnero.
+6. **Migración 038 — descartar borradores + el turno solo al finalizar.** Columna
+   `consultas.creado_por`, `consultas_delete` reescrita (tenant + `estado='borrador'` + médico OR
+   autor) e índice único `turnos_consulta_id_unico`. En código: el descarte de borradores (autoría,
+   paciente archivado, guarda de "0 filas") y **el turno `desde_hc` pasó a crearse SOLO al
+   finalizar la consulta**, no al guardar un borrador. Ver **regla de negocio 13** y **nota 22**.
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
 ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live), la
@@ -570,13 +627,13 @@ organización** (no consolidar en un archivo, no crear uno por entidad).
 
 | Archivo | Tipos que viven ahí |
 |---|---|
-| `roles.ts` | `UserRole`, `Profile` (+`Insert`/`Update`), `PermisosAsistente`, `PermisoKey`, `PERMISOS_DEFAULT`, `PERMISO_LABELS`, `PERMISOS_GRUPOS`, `Matricula`, `MatriculaTipo`, `TITULOS_DISPONIBLES`, `TituloPreset`, `SolicitudAsistente` (+`Insert`/`Update`), `SolicitudEstado` |
-| `paciente.ts` | `Paciente` (+`Insert`/`Update`), `PacienteWithObraSocial`, `ObraSocial`, **`PacienteBusqueda`** (proyección de `GET /api/pacientes?q=`: 8 campos + `obras_sociales ( nombre )`) |
+| `roles.ts` | `UserRole`, `Profile` (+`Insert`/`Update`), `PermisosAsistente`, `PermisoKey`, `PERMISOS_DEFAULT`, `PERMISO_LABELS`, `PERMISOS_GRUPOS`, `Matricula`, `MatriculaTipo`, `TITULOS_DISPONIBLES`, `TituloPreset`, `SolicitudAsistente` (+`Insert`/`Update`), `SolicitudEstado`, **`Asistente`** (se mudó desde `perfil-form.tsx`: es el shape que declara `obtenerAsistentes()` y consume `/perfil`) |
+| `paciente.ts` | `Paciente` (+`Insert`/`Update`), `PacienteWithObraSocial`, `ObraSocial`, **`PacienteBusqueda`** (proyección de `GET /api/pacientes?q=`: **9 campos** + `obras_sociales ( nombre )`; incluye `obra_social_otro` desde el fix de la obra social como texto libre) |
 | `consulta.ts` | `Consulta` (+`Insert`/`Update`), `ConsultaEstado`, `ConsultaConRelaciones`, `CampoExtra`, `CampoExtraSeccion` |
 | `pedido.ts` | ⚠ **seis entidades:** `Pedido`, `Certificado` (+`CertificadoTipo`), `Receta`, `Evolucion`, `HistoriaClinica` y `Estudio` (cada una con sus `Insert`/`Update`), más **`EmisorSnapshot`** (regla de negocio 11) |
 | `turno.ts` | `Turno` (+`Insert`/`Update`), `TurnoEstado`, `BloqueoAgenda` (+`Insert`), `TurnoAuditLog`, más **dos proyecciones con join**: **`TurnoConPaciente`** (`GET /api/turnero` → `paciente:paciente_id (id, nombre_completo)`) y **`TurnoParaRecordatorio`** (cron → `paciente:paciente_id(nombre_completo, email, telefono)`) |
 | `mensaje.ts` | `MensajeInterno`, `MensajeInsertar`, `MensajeFormValues`, `MensajeNoLeido`, `MensajeLectura` |
-| `notificacion.ts` | `Notificacion`, `NotificacionTipo`, `NotificacionTipoValor`, `ItemPendiente`, `ITEM_TYPE_SOLICITUD` |
+| `notificacion.ts` | `Notificacion`, `NotificacionTipo`, `NotificacionTipoValor`, `ItemPendiente`, `ITEM_TYPE_SOLICITUD`, **`SolicitudPendientePayload`** + el type-guard **`esPayloadSolicitud`** (lo produce `obtenerSolicitudesPendientes()` y lo consume el badge) |
 | `difusion.ts` | `DifusionPost` (+`Insert`/`Update`), `DifusionEstado`, `DifusionCanal`, `DifusionEnvio` (+`Insert`) |
 | `nota.ts` | `Nota` (+`Insert`/`Update`) |
 | `index.ts` | **barrel** — solo `export *`, sin declaraciones propias |
@@ -836,3 +893,31 @@ es `schema.sql`.
       `handleEventDrop`/`handleEventResize`/`refreshAction` corren en **handlers de evento** —fuera del
       render— y no necesitan esto. El inventario de las que quedan (y cuál mirar primero si el warning
       reaparece) está en `PENDIENTES.md` → "Prolijidad del turnero".
+22. **El turno de la agenda se crea SOLO al finalizar la consulta, nunca desde un borrador.** Un
+    borrador es **provisorio**: su `proximo_turno_sugerido` es una **intención**, no un turno. Hasta
+    el Grupo 1 (2026-08-08), **guardar un borrador metía un turno real en la agenda** — ése era el bug
+    de raíz. Los dos endpoints que lo crean son `POST /api/consultas` y `PATCH /api/consultas/[id]`.
+    - **PATCH:** la condición es la **transición** a finalizada (`requiereFinalizar`, derivada del
+      body). **No hace falta comparar contra el estado anterior:** la guarda de inmutabilidad rechaza
+      con **403** toda consulta que ya estuviera finalizada, así que en ese punto `existing.estado`
+      **solo puede ser `'borrador'`**. Se chequea igual, como defensa en profundidad, para que aflojar
+      esa guarda no reabra el agujero.
+    - **POST:** ⚠ **el bloque NO se elimina, se CONDICIONA a `estado === 'finalizada'`.** El
+      formulario elige POST/PATCH según **si la consulta existe**, no según si se finaliza, así que
+      por el POST pasa el flujo *"cargar y finalizar de una"* — borrar el bloque rompería la
+      finalización normal del médico.
+    - **La validación de solapamiento va bajo la MISMA condición.** Si el turno no se va a crear, un
+      solapamiento no puede rechazar con **409** el guardado de un borrador.
+    - **Si el turno falla, la consulta se finaliza igual.** Caso típico: un asistente sin
+      `gestionar_turnos` (lo rechaza `turnos_insert`). La respuesta lleva **`turnoAgendado: false` +
+      `turnoError`** y la UI avisa con un toast de advertencia **además** del de éxito. Los
+      `undefined` los descarta `JSON.stringify`, así que **la respuesta de un guardado de borrador es
+      idéntica a la de antes** (`{ data }`) y ningún consumidor se entera. Mismo criterio que el
+      insert de la notificación en `api/turnero/route.ts`: el acto principal ya ocurrió, el
+      secundario no puede tumbarlo.
+    - **Un turno por consulta lo garantiza la BASE** (`turnos_consulta_id_unico`, migración 038). La
+      guarda por `consulta_id` que hay en el código pasa por `turnos_select` y por lo tanto **depende
+      de `ver_turnos`**: sin ese permiso devuelve `null` aunque el turno exista.
+    - ⚠ **Lo que NO cambió:** el turno se sigue insertando con **`paciente_id` y SIN
+      `paciente_nombre_libre`** (el dato canónico es el id; duplicar el nombre lo desactualizaría).
+      `turno-form.tsx` asume esa forma al precargar el buscador.

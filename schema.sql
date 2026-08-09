@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→033).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→038).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -43,7 +43,26 @@
 -- falso éxito—, espejando `turnos_update`; y REEMPLAZA `bloqueos_delete` y
 -- `turnos_delete`, que eran solo-médico, por el mismo criterio de la agenda:
 -- gestionar_turnos. Decisión de producto: la agenda es una unidad de permiso, y las
--- políticas de DELETE ahora coinciden con lo que los endpoints ya permitían).
+-- políticas de DELETE ahora coinciden con lo que los endpoints ya permitían),
+-- 034 (solicitudes_asistente: la UNIQUE TOTAL (solicitante_id, medico_id) pasa a
+-- ÍNDICE ÚNICO PARCIAL `WHERE estado = 'pendiente'`. La constraint vieja daba UNA fila
+-- por par EN TODA LA HISTORIA, así que un asistente desvinculado o rechazado no podía
+-- volver a solicitarle vinculación al mismo médico. ⚠ Es índice y no constraint porque
+-- Postgres NO admite constraints UNIQUE parciales),
+-- 035 (catálogo: IOSEP agregada a obras_sociales — carga de datos, no cambia estructura),
+-- 036 (bloqueos_agenda: columna `updated_at` + trigger `bloqueos_updated_at`. Compañera
+-- de la 033: recién desde que los bloqueos son editables de verdad tiene sentido
+-- registrar cuándo se editaron. Las filas existentes se sembraron con su `created_at`,
+-- no con now(), para no afirmar una edición que nunca ocurrió),
+-- 037 (bloqueos_agenda: `bloqueos_select` pasa de TENANT-ONLY a exigir permiso
+-- —`ver_turnos` OR `gestionar_turnos`— y las 4 políticas se normalizan a
+-- TO authenticated. Cierra una lectura que nadie autorizaba: un asistente sin permisos
+-- de agenda podía leer los bloqueos por PostgREST directo),
+-- 038 (consultas: columna `creado_por` [autor, nullable, SIN backfill] y `consultas_delete`
+-- reescrita —tenant + estado='borrador' + rol médico OR autor, TO authenticated—, que
+-- habilita el descarte de borradores por su autor y deja a las consultas FINALIZADAS
+-- imborrables desde la base; + índice único parcial `turnos_consulta_id_unico`, que
+-- garantiza UN turno por consulta sin depender de ningún permiso).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -156,6 +175,14 @@ CREATE INDEX idx_profiles_medico ON public.profiles(medico_id);
 -- ── obras_sociales ──────────────────────────────────────────────────────────
 -- Catálogo de obras sociales. Lectura pública para autenticados.
 -- NOTA: la seed incluye 'Particular / Sin obra social' como registro real.
+--   ⚠ Ese registro CONVIVE con una opción "Particular" hardcodeada en el formulario de
+--   pacientes, y las dos guardan cosas distintas (la del catálogo escribe obra_social_id;
+--   la hardcodeada deja el paciente sin obra social). Ambigüedad confirmada — ver
+--   PENDIENTES.md → "Datos / catálogo".
+-- NOTA: este archivo NO incluye el INSERT del catálogo (vive en las migraciones). El
+--   contenido actual = las 13 filas de la seed de la 001 + 'IOSEP', agregada por la
+--   migración 035 (obra social común en la zona del consultorio, que hasta entonces se
+--   venía cargando como texto libre en pacientes.obra_social_otro).
 CREATE TABLE public.obras_sociales (
   id     SERIAL PRIMARY KEY,
   nombre TEXT NOT NULL UNIQUE
@@ -254,6 +281,12 @@ CREATE TABLE public.consultas (
   campos_extra           JSONB NOT NULL DEFAULT '[]'::jsonb,
   -- Estado: 'finalizada' es inmutable desde la UI
   estado                 TEXT NOT NULL DEFAULT 'borrador' CHECK (estado IN ('borrador', 'finalizada')),
+  -- migración 038 — AUTOR de la consulta (quien la creó). ⚠ NO es el tenant: eso es
+  -- medico_id. Habilita la regla de descarte "el médico O el asistente que la creó"
+  -- (ver la política consultas_delete). NULLABLE y SIN BACKFILL a propósito: a una
+  -- consulta anterior a la 038 no se le puede inventar autor, y con NULL la comparación
+  -- `creado_por = auth.uid()` da NULL → solo el médico puede descartarla.
+  creado_por             UUID REFERENCES public.profiles(id),
   -- NULLABLE en la base (no NOT NULL), con default now()
   created_at             TIMESTAMPTZ DEFAULT now(),
   updated_at             TIMESTAMPTZ DEFAULT now()
@@ -349,6 +382,14 @@ CREATE INDEX idx_turnos_rango    ON public.turnos(fecha_inicio, fecha_fin);
 CREATE INDEX idx_turnos_paciente ON public.turnos(paciente_id);
 CREATE INDEX idx_turnos_estado   ON public.turnos(estado);
 CREATE INDEX idx_turnos_medico   ON public.turnos(medico_id);
+-- migración 038 — UN turno por consulta. Lo único que evitaba el duplicado era un SELECT
+-- previo en el código de los endpoints de consultas, que pasa por `turnos_select` y por lo
+-- tanto DEPENDE de `ver_turnos`: un asistente sin ese permiso recibía `null` aunque el turno
+-- existiera e insertaba un duplicado. El índice lo cierra en la base, sin depender de ningún
+-- permiso. Es PARCIAL porque los turnos manuales —la mayoría— tienen consulta_id NULL.
+-- ⚠ Por eso mismo NO alcanza a los turnos que crea POST /api/pacientes/[id]/historia (HC
+--   vieja, hoy sin llamadores), que nacen con consulta_id NULL. Ver PENDIENTES.md.
+CREATE UNIQUE INDEX turnos_consulta_id_unico ON public.turnos(consulta_id) WHERE consulta_id IS NOT NULL;
 
 -- ── bloqueos_agenda ─────────────────────────────────────────────────────────
 -- Bloqueos de horario (vacaciones, almuerzo, etc.). medico_id = tenant key.
@@ -362,7 +403,12 @@ CREATE TABLE public.bloqueos_agenda (
   dias_semana   INTEGER[],                    -- 0=Dom … 6=Sáb
   medico_id     UUID NOT NULL REFERENCES public.profiles(id),  -- tenant key
   creado_por    UUID NOT NULL REFERENCES public.profiles(id),
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- migración 036 — compañera de la 033: recién desde que existe `bloqueos_update` los
+  -- bloqueos son editables de verdad, así que tiene sentido registrar CUÁNDO. Lo mantiene
+  -- el trigger `bloqueos_updated_at` (ver TRIGGERS). ⚠ Registra el cuándo, NO el quién ni
+  -- el qué: no hay un equivalente de `turnos_audit_log` para bloqueos.
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_bloqueos_medico ON public.bloqueos_agenda(medico_id);
 
@@ -520,12 +566,23 @@ CREATE TABLE public.solicitudes_asistente (
   mensaje         TEXT,
   respondido_at   TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(solicitante_id, medico_id)
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  -- ⚠ La UNIQUE(solicitante_id, medico_id) que la 010 declaraba acá YA NO EXISTE: la
+  --   migración 034 la dropeó y la reemplazó por el índice único PARCIAL de abajo.
 );
 CREATE INDEX idx_solicitudes_medico      ON public.solicitudes_asistente(medico_id);
 CREATE INDEX idx_solicitudes_solicitante ON public.solicitudes_asistente(solicitante_id);
 CREATE INDEX idx_solicitudes_estado      ON public.solicitudes_asistente(estado);
+-- migración 034 — una sola solicitud PENDIENTE por par, en vez de una sola en toda la
+-- historia. La constraint anterior no contemplaba `estado`, así que la fila vieja
+-- ('aprobada' tras una desvinculación, o 'rechazada') ocupaba el cupo del par para siempre
+-- y el asistente quedaba sin poder reingresar con ese médico.
+-- ⚠ Es un ÍNDICE y no una CONSTRAINT porque Postgres NO admite constraints UNIQUE parciales
+--   (no existe `ADD CONSTRAINT … UNIQUE (…) WHERE …`). Por eso el objeto aparece en
+--   pg_indexes / pg_index y NO en pg_constraint; a efectos de integridad es equivalente
+--   (mismo SQLSTATE 23505, que es el que la app ya traducía).
+CREATE UNIQUE INDEX solicitudes_asistente_solicitante_medico_pendiente_key
+  ON public.solicitudes_asistente(solicitante_id, medico_id) WHERE estado = 'pendiente';
 
 -- ── notas ───────────────────────────────────────────────────────────────────
 -- Notas personales por usuario (cualquier rol). RLS personal por user_id.
@@ -798,6 +855,7 @@ CREATE TRIGGER historia_updated_at        BEFORE UPDATE ON public.historia_clini
 CREATE TRIGGER consultas_updated_at       BEFORE UPDATE ON public.consultas            FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
 CREATE TRIGGER evoluciones_updated_at     BEFORE UPDATE ON public.evoluciones          FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
 CREATE TRIGGER turnos_updated_at          BEFORE UPDATE ON public.turnos               FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
+CREATE TRIGGER bloqueos_updated_at        BEFORE UPDATE ON public.bloqueos_agenda      FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();  -- migración 036
 CREATE TRIGGER pedidos_updated_at         BEFORE UPDATE ON public.pedidos              FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
 CREATE TRIGGER certificados_updated_at    BEFORE UPDATE ON public.certificados         FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
 CREATE TRIGGER recetas_updated_at         BEFORE UPDATE ON public.recetas              FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
@@ -805,8 +863,19 @@ CREATE TRIGGER difusion_updated_at        BEFORE UPDATE ON public.difusion_posts
 CREATE TRIGGER solicitudes_updated_at     BEFORE UPDATE ON public.solicitudes_asistente FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
 CREATE TRIGGER set_notas_updated_at       BEFORE UPDATE ON public.notas                FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+-- ⚠ ES `BEFORE`, NO `AFTER` — verificado contra la BASE REAL (2026-08-08). Este archivo
+--   decía `AFTER` y la MIGRACIÓN FUENTE `005_turnos.sql:176` TAMBIÉN lo dice, así que hay
+--   una discrepancia real entre las migraciones y la base: o se cambió a mano en algún
+--   momento, o hay que re-verificar. `005_turnos.sql` NO se toca (es historia ya aplicada);
+--   la verdad observada vive acá. PENDIENTE de re-verificar — ver PENDIENTES.md →
+--   "turnos_audit_log no registra los DELETE".
+--   Por qué importa la dirección: con `AFTER DELETE` la fila de auditoría no se podría
+--   insertar (violaría la FK turno_id NOT NULL → el turno ya no existe), mientras que con
+--   `BEFORE DELETE` la fila todavía está. O sea que sumar `OR DELETE` es VIABLE; lo que lo
+--   bloquea es otra cosa (el ON DELETE CASCADE de turnos_audit_log y la política
+--   audit_select, que esconde las filas huérfanas).
 CREATE TRIGGER turno_audit_trigger
-  AFTER INSERT OR UPDATE ON public.turnos
+  BEFORE INSERT OR UPDATE ON public.turnos
   FOR EACH ROW EXECUTE PROCEDURE public.log_turno_cambio();
 
 
@@ -896,8 +965,27 @@ CREATE POLICY "consultas_update" ON public.consultas
     public.get_user_role(auth.uid()) = 'medico'
     OR public.check_permiso(auth.uid(), 'crear_consultas')
     OR public.check_permiso(auth.uid(), 'finalizar_consultas')));
+-- consultas_delete: REESCRITA por la migración 038 (antes solo-médico:
+-- `get_user_role(auth.uid()) = 'medico' AND medico_id = auth.uid()`). Habilita el descarte
+-- de BORRADORES por su autor, con tres condiciones:
+--   · tenant  → get_medico_id(). Reemplaza al `medico_id = auth.uid()` anterior, que era
+--     correcto solo para el médico: para un asistente auth.uid() NUNCA es el medico_id de
+--     la fila, así que el predicado viejo lo excluía por construcción.
+--   · estado = 'borrador' → DEFENSA EN PROFUNDIDAD de la regla de negocio 1 y de la Ley
+--     26.529: una consulta FINALIZADA es imborrable desde la base, para todos los roles y
+--     por cualquier vía (endpoint, PostgREST directo, un script futuro).
+--   · rol médico OR creado_por = auth.uid() → la regla de producto.
+-- ⚠ Con `creado_por IS NULL` (consultas anteriores a la 038) la comparación da NULL, o sea
+--   NO pasa: esas solo las descarta el médico. La regla "sin autor → solo el médico" NO
+--   necesita cláusula propia, cae sola de la lógica ternaria de SQL.
 CREATE POLICY "consultas_delete" ON public.consultas
-  FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico' AND medico_id = auth.uid());
+  FOR DELETE TO authenticated USING (
+    medico_id = get_medico_id()
+    AND estado = 'borrador'
+    AND (
+      public.get_user_role(auth.uid()) = 'medico'
+      OR creado_por = auth.uid()
+    ));
 
 -- ── estudios ────────────────────────────────────────────────────────────────
 -- Endurecidas en la migración 026: select/insert/update exigen ahora
@@ -951,22 +1039,38 @@ CREATE POLICY "turnos_delete" ON public.turnos
 
 -- ── bloqueos_agenda ─────────────────────────────────────────────────────────
 -- Las tres de escritura comparten el mismo criterio (tenant + gestionar_turnos) desde
--- la migración 033. ⚠ bloqueos_select NO exige `ver_turnos`, a diferencia de
--- turnos_select — asimetría preexistente, anotada en PENDIENTES.md → Bloque A.
+-- la migración 033. Las CUATRO están en `TO authenticated` desde la 037 (antes ninguna
+-- declaraba TO, o sea que se evaluaban para {public}, `anon` incluido).
+--
+-- ⚠ bloqueos_select YA NO ES TENANT-ONLY (migración 037): exige permiso. Y NO espeja a
+--   turnos_select —que pide solo `ver_turnos`— sino que acepta CUALQUIERA de los dos
+--   permisos de agenda. Es deliberado: los 12 permisos son booleanos INDEPENDIENTES y nada
+--   obliga a que `gestionar_turnos` implique `ver_turnos`, así que un asistente con
+--   `gestionar_turnos` y SIN `ver_turnos` es configurable hoy. Con un USING que pidiera solo
+--   `ver_turnos`, a ese asistente se le romperían los endpoints de edición y borrado, que
+--   hacen fetch previo y `.select()` de verificación sobre esta misma tabla
+--   (src/app/api/turnero/bloqueos/[id]/route.ts). El OR neutraliza ese riesgo por diseño.
+-- ⚠ EL MISMO HUECO SIGUE ABIERTO EN `turnos`: turnos_select exige solo `ver_turnos`. Ver
+--   PENDIENTES.md → Bloque A → "Agenda y RLS".
 CREATE POLICY "bloqueos_select" ON public.bloqueos_agenda
-  FOR SELECT USING (medico_id = get_medico_id());
+  FOR SELECT TO authenticated USING (
+    medico_id = get_medico_id()
+    AND (
+      public.check_permiso(auth.uid(), 'ver_turnos')
+      OR public.check_permiso(auth.uid(), 'gestionar_turnos')
+    ));
 CREATE POLICY "bloqueos_insert" ON public.bloqueos_agenda
-  FOR INSERT WITH CHECK (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+  FOR INSERT TO authenticated WITH CHECK (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 -- bloqueos_update: CREADA por la 033. Nunca existió desde la 005 — ese era el bug raíz
 -- (editar un bloqueo no persistía nada y la UI daba falso éxito). Espeja turnos_update.
 -- WITH CHECK omitido a propósito, como en turnos_update: en Postgres el USING oficia de
 -- check para la fila nueva, así que nadie puede mover un bloqueo a otro tenant.
 CREATE POLICY "bloqueos_update" ON public.bloqueos_agenda
-  FOR UPDATE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+  FOR UPDATE TO authenticated USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 -- bloqueos_delete: REEMPLAZADA por la 033 (antes solo-médico, con un subquery inline a
 -- profiles en vez de get_user_role(); mismo falso positivo que turnos_delete).
 CREATE POLICY "bloqueos_delete" ON public.bloqueos_agenda
-  FOR DELETE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+  FOR DELETE TO authenticated USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 
 -- ── turnos_audit_log ────────────────────────────────────────────────────────
 -- SELECT permitido al tenant; el INSERT lo hace el trigger (SECURITY DEFINER),
