@@ -14,6 +14,22 @@ export type TurnoEstado =
   | 'reprogramado'
   | 'pendiente_confirmar'
 
+/**
+ * Categorías de un turno. Espeja el CHECK `check_turnos_categoria` de la base
+ * (`categoria IN ('turno_medico','curso','personal','administrativo','recordatorio')`)
+ * y el `z.enum` de `lib/validations/turno.schema.ts`.
+ *
+ * Antes esta unión vivía **inline y duplicada** en `Turno` y en `TurnoInsert`; ahora
+ * las dos apuntan acá, así que un valor nuevo se agrega en un solo lugar.
+ * Los colores de cada categoría viven en `globals.css` (`.categoria-*`, ver DESIGN.md).
+ */
+export type TurnoCategoria =
+  | 'turno_medico'
+  | 'curso'
+  | 'personal'
+  | 'administrativo'
+  | 'recordatorio'
+
 // ── TURNOS ────────────────────────────────────────────────────
 
 export interface Turno {
@@ -29,7 +45,7 @@ export interface Turno {
   recordatorio_enviado: boolean
   medico_id: string                      // tenant key — agenda del médico
   agendado_por: string                   // quien creó el turno (médico o asistente)
-  categoria: 'turno_medico' | 'curso' | 'personal' | 'administrativo' | 'recordatorio'
+  categoria: TurnoCategoria
   origen: 'manual' | 'desde_hc'
   consulta_id: string | null
   created_at: string
@@ -78,7 +94,7 @@ export interface TurnoInsert {
   notas?: string | null
   estado?: TurnoEstado
   color?: string | null
-  categoria?: 'turno_medico' | 'curso' | 'personal' | 'administrativo' | 'recordatorio'
+  categoria?: TurnoCategoria
   origen?: 'manual' | 'desde_hc'
   consulta_id?: string | null
   medico_id: string                      // debe ser get_medico_id() del usuario actual

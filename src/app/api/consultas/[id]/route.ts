@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
+import { buscarSolapamientos, DURACION_TURNO_CONTROL_MS } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import type { PermisosAsistente, UserRole } from '@/types'
 
@@ -151,30 +152,26 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     // ── Validar solapamiento del próximo control ANTES de actualizar ──
     // Va bajo la MISMA condición que la creación: si el turno no se va a crear, un
     // solapamiento no tiene por qué rechazar con 409 el guardado de un borrador.
+    //
+    // El criterio de "franja ocupada" sale de `lib/agenda/solapamiento.ts`, igual que en
+    // los 4 sitios del turnero. ⚠ Eso CAMBIA el criterio que había acá: antes se excluía
+    // solo `cancelado` y se filtraba `categoria = 'turno_medico'`; ahora ocupan los cuatro
+    // estados vivos y choca contra turnos de cualquier categoría. Es intencional — este
+    // endpoint tenía su propia definición de "ocupado", distinta de la del turnero.
     if (debeAgendarTurno) {
       const fechaBase      = new Date(nuevoTurno!)
-      const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
+      const fechaFin       = new Date(fechaBase.getTime() + DURACION_TURNO_CONTROL_MS)
       const fechaIsoInicio = fechaBase.toISOString()
       const fechaIsoFin    = fechaFin.toISOString()
 
-      const [{ data: bloquesSolapados }, { data: turnosSolapados }] = await Promise.all([
-        supabase
-          .from('bloqueos_agenda')
-          .select('id')
-          .eq('medico_id', ctx.tenantMedicoId)
-          .lt('fecha_inicio', fechaIsoFin)
-          .gt('fecha_fin', fechaIsoInicio),
-        supabase
-          .from('turnos')
-          .select('id')
-          .eq('medico_id', ctx.tenantMedicoId)
-          .eq('categoria', 'turno_medico')
-          .not('estado', 'in', '(cancelado)')
-          .lt('fecha_inicio', fechaIsoFin)
-          .gt('fecha_fin', fechaIsoInicio),
-      ])
+      const { hayTurnoSolapado, hayBloqueoSolapado } = await buscarSolapamientos({
+        supabase,
+        medicoId: ctx.tenantMedicoId,
+        inicio: fechaIsoInicio,
+        fin: fechaIsoFin,
+      })
 
-      if ((bloquesSolapados && bloquesSolapados.length > 0) || (turnosSolapados && turnosSolapados.length > 0)) {
+      if (hayTurnoSolapado || hayBloqueoSolapado) {
         return NextResponse.json(
           { error: 'El horario del próximo control se solapa con un bloqueo o turno existente. Elegí otro horario o dejá el campo vacío.' },
           { status: 409 }
@@ -206,7 +203,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     if (debeAgendarTurno) {
       const fechaBase      = new Date(nuevoTurno!)
-      const fechaFin       = new Date(fechaBase.getTime() + 10 * 60 * 1000)
+      const fechaFin       = new Date(fechaBase.getTime() + DURACION_TURNO_CONTROL_MS)
       const fechaIsoInicio = fechaBase.toISOString()
       const fechaIsoFin    = fechaFin.toISOString()
 

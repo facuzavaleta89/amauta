@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { bloqueoAgendaUpdateSchema } from '@/lib/validations/turno.schema'
+import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 interface RouteContext {
@@ -85,30 +86,21 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const inicio = updates.fecha_inicio ?? existing.fecha_inicio
     const fin    = updates.fecha_fin    ?? existing.fecha_fin
 
-    // Los cancelados y los pendientes de confirmar NO ocupan la franja: mismo criterio (y
-    // misma forma) que el POST de /api/turnero. Sin filtro de `categoria`, por lo mismo
-    // que en el POST de bloqueos: un bloqueo pisa turnos de cualquier categoría.
-    const { data: overT } = await supabase
-      .from('turnos')
-      .select('id')
-      .eq('medico_id', tenantMedicoId)
-      .not('estado', 'in', '(pendiente_confirmar,cancelado)')
-      .lt('fecha_inicio', fin)
-      .gt('fecha_fin', inicio)
+    // Criterio único del proyecto: `lib/agenda/solapamiento.ts`. Un bloqueo pisa turnos de
+    // cualquier categoría, y se excluye a sí mismo del chequeo bloqueo-vs-bloqueo.
+    const { hayTurnoSolapado, hayBloqueoSolapado } = await buscarSolapamientos({
+      supabase,
+      medicoId: tenantMedicoId,
+      inicio,
+      fin,
+      excluirBloqueoId: id,
+    })
 
-    if (overT && overT.length > 0) {
+    if (hayTurnoSolapado) {
       return NextResponse.json({ error: 'El bloqueo se solapa con turnos ya agendados.' }, { status: 409 })
     }
 
-    const { data: overB } = await supabase
-      .from('bloqueos_agenda')
-      .select('id')
-      .eq('medico_id', tenantMedicoId)
-      .neq('id', id)
-      .lt('fecha_inicio', fin)
-      .gt('fecha_fin', inicio)
-
-    if (overB && overB.length > 0) {
+    if (hayBloqueoSolapado) {
       return NextResponse.json({ error: 'El bloqueo se solapa con otro bloqueo existente.' }, { status: 409 })
     }
 
@@ -126,8 +118,10 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     // Guarda de "0 filas": existencia y tenant ya se validaron arriba (fetch previo),
     // así que si la RLS filtró la fila el UPDATE no falla — afecta 0 filas en silencio.
     // Sin esto, un fallo de permisos sale como 200 con el cuerpo vacío.
-    // (Nota: .select() también pasa por bloqueos_select; hoy es tenant-only, así que
-    //  si algún día se endurece esa política habría que revisar esta guarda.)
+    // (Nota: el .select() también pasa por `bloqueos_select`, que desde la migración 037
+    //  exige `ver_turnos` OR `gestionar_turnos`. Ese OR está elegido justamente para que
+    //  esta guarda siga siendo correcta: quien pasa el chequeo de permiso del endpoint
+    //  —`gestionar_turnos`— pasa también el SELECT, así que no hay 403 falsos.)
     if (!updated || updated.length === 0) {
       return NextResponse.json(
         { error: 'No se pudo actualizar el bloqueo: la base de datos rechazó la modificación.' },
