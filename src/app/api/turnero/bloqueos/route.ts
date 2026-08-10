@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { bloqueoAgendaSchema } from '@/lib/validations/turno.schema'
+import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 export async function POST(request: NextRequest) {
@@ -52,36 +53,23 @@ export async function POST(request: NextRequest) {
 
     const b = result.data
 
-    // Optionally check if a turn currently falls strictly into this completely new blockage
-    // Los cancelados y los pendientes de confirmar NO ocupan la franja: mismo criterio (y
-    // misma forma) que el POST de /api/turnero. ⚠ A diferencia de aquél, acá NO se filtra
-    // por `categoria`: esto compara bloqueo vs turno, y un bloqueo pisa turnos de cualquier
-    // categoría (curso, personal, administrativo…), no solo los turno_medico.
-    const { data: superpuestosTurnos, error: errT } = await supabase
-      .from('turnos')
-      .select('id')
-      .eq('medico_id', tenantMedicoId)
-      .not('estado', 'in', '(pendiente_confirmar,cancelado)')
-      .lt('fecha_inicio', b.fecha_fin)
-      .gt('fecha_fin', b.fecha_inicio)
+    // ── Verificación de solapamiento ───────────────────────────
+    // Criterio único del proyecto: `lib/agenda/solapamiento.ts`. Un bloqueo pisa turnos de
+    // CUALQUIER categoría (curso, personal, administrativo…), no solo los turno_medico —
+    // eso ya era así acá y el helper lo mantiene, ahora para todos los sitios por igual.
+    // También choca contra otros bloqueos.
+    const { hayTurnoSolapado, hayBloqueoSolapado } = await buscarSolapamientos({
+      supabase,
+      medicoId: tenantMedicoId,
+      inicio: b.fecha_inicio,
+      fin: b.fecha_fin,
+    })
 
-    if (errT) throw errT
-
-    if (superpuestosTurnos && superpuestosTurnos.length > 0) {
+    if (hayTurnoSolapado) {
       return NextResponse.json({ error: 'Este bloqueo se solapa con turnos ya agendados. Cancele o mueva los turnos primero.' }, { status: 409 })
     }
 
-    // Verificar solapamiento con otros bloqueos existentes
-    const { data: superpuestosBloqueos, error: errB } = await supabase
-      .from('bloqueos_agenda')
-      .select('id')
-      .eq('medico_id', tenantMedicoId)
-      .lt('fecha_inicio', b.fecha_fin)
-      .gt('fecha_fin', b.fecha_inicio)
-
-    if (errB) throw errB
-
-    if (superpuestosBloqueos && superpuestosBloqueos.length > 0) {
+    if (hayBloqueoSolapado) {
       return NextResponse.json({ error: 'Este bloqueo se solapa con otro bloqueo ya existente en la agenda.' }, { status: 409 })
     }
 

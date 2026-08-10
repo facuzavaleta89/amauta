@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { turnoSchema } from '@/lib/validations/turno.schema'
+import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { formatFechaAR } from '@/lib/utils/format-date'
 
@@ -121,35 +122,25 @@ export async function POST(request: NextRequest) {
 
     const t = result.data
 
-    // ── Verificación de solapamiento según categoría ──────────
-    // turno_medico: verifica contra otros turno_medico activos (excluye pendiente_confirmar y cancelado)
-    // otras categorías: solo verifica contra bloqueos de agenda
-    if (t.categoria === 'turno_medico') {
-      const { data: superpuestosTurnos, error: errT } = await supabase
-        .from('turnos')
-        .select('id')
-        .eq('medico_id', tenantMedicoId)
-        .eq('categoria', 'turno_medico')
-        .not('estado', 'in', '(pendiente_confirmar,cancelado)')
-        .lt('fecha_inicio', t.fecha_fin)
-        .gt('fecha_fin', t.fecha_inicio)
+    // ── Verificación de solapamiento ───────────────────────────
+    // Criterio único del proyecto: `lib/agenda/solapamiento.ts`. Dos cambios respecto de
+    // lo que había acá inline: los estados que ocupan ahora son una lista de INCLUSIÓN, y
+    // el chequeo turno-vs-turno **ya no filtra por categoría** — la agenda modela la
+    // disponibilidad física del médico, así que un curso o un turno personal ocupan la
+    // franja igual que un turno_medico. Por eso tampoco hay guarda `if (categoria === …)`:
+    // TODAS las categorías se chequean contra turnos y contra bloqueos.
+    const { hayTurnoSolapado, hayBloqueoSolapado } = await buscarSolapamientos({
+      supabase,
+      medicoId: tenantMedicoId,
+      inicio: t.fecha_inicio,
+      fin: t.fecha_fin,
+    })
 
-      if (errT) throw errT
-      if (superpuestosTurnos && superpuestosTurnos.length > 0) {
-        return NextResponse.json({ error: 'El horario seleccionado se solapa con otro turno médico.' }, { status: 409 })
-      }
+    if (hayTurnoSolapado) {
+      return NextResponse.json({ error: 'El horario seleccionado se solapa con otro turno de la agenda.' }, { status: 409 })
     }
 
-    // Todos verifican contra bloqueos
-    const { data: superpuestosBloques, error: errB } = await supabase
-      .from('bloqueos_agenda')
-      .select('id')
-      .eq('medico_id', tenantMedicoId)
-      .lt('fecha_inicio', t.fecha_fin)
-      .gt('fecha_fin', t.fecha_inicio)
-
-    if (errB) throw errB
-    if (superpuestosBloques && superpuestosBloques.length > 0) {
+    if (hayBloqueoSolapado) {
       return NextResponse.json({ error: 'El horario coincide con un bloqueo de la agenda del médico.' }, { status: 409 })
     }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { turnoUpdateWithDatesSchema } from '@/lib/validations/turno.schema'
+import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
@@ -65,33 +66,44 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     const updates = result.data
 
-    // If updating times, check for overlaps
-    if (updates.fecha_inicio && updates.fecha_fin) {
-        // Los turnos cancelados y los pendientes de confirmar NO ocupan la franja:
-        // mismo criterio (y misma forma) que el POST de /api/turnero al crear un turno.
-        const { data: overT } = await supabase
-          .from('turnos')
-          .select('id')
-          .eq('medico_id', tenantMedicoId)
-          .neq('id', id)
-          .not('estado', 'in', '(pendiente_confirmar,cancelado)')
-          .lt('fecha_inicio', updates.fecha_fin)
-          .gt('fecha_fin', updates.fecha_inicio)
+    // ── Verificación de solapamiento si el PATCH toca el horario ───────────────
+    // ⚠ La guarda es `||`, no `&&`. Antes pedía las DOS fechas, así que un PATCH con una
+    // sola (p. ej. alargar un turno moviendo solo `fecha_fin`) salteaba el chequeo por
+    // completo. Ahora, si viene al menos una, la que falta se resuelve desde la fila
+    // existente con `??` — el mismo patrón que ya usaba el PATCH de bloqueos.
+    // Un PATCH que NO toca fechas (cambiar estado, motivo, notas) sigue sin chequear:
+    // no mueve nada en la agenda, y chequear ahí rechazaría con 409 la edición de un
+    // turno que ya convivía con otro.
+    if (updates.fecha_inicio || updates.fecha_fin) {
+      const { data: existing, error: fetchError } = await supabase
+        .from('turnos')
+        .select('fecha_inicio, fecha_fin')
+        .eq('id', id)
+        .eq('medico_id', tenantMedicoId)
+        .single()
 
-        if (overT && overT.length > 0) {
-          return NextResponse.json({ error: 'El horario se solapa con otro turno.' }, { status: 409 })
-        }
+      if (fetchError || !existing) {
+        return NextResponse.json({ error: 'Turno no encontrado o sin permisos' }, { status: 404 })
+      }
 
-        const { data: overB } = await supabase
-          .from('bloqueos_agenda')
-          .select('id')
-          .eq('medico_id', tenantMedicoId)
-          .lt('fecha_inicio', updates.fecha_fin)
-          .gt('fecha_fin', updates.fecha_inicio)
+      const inicio = updates.fecha_inicio ?? existing.fecha_inicio
+      const fin    = updates.fecha_fin    ?? existing.fecha_fin
 
-        if (overB && overB.length > 0) {
-          return NextResponse.json({ error: 'El horario se solapa con un bloqueo.' }, { status: 409 })
-        }
+      const { hayTurnoSolapado, hayBloqueoSolapado } = await buscarSolapamientos({
+        supabase,
+        medicoId: tenantMedicoId,
+        inicio,
+        fin,
+        excluirTurnoId: id,
+      })
+
+      if (hayTurnoSolapado) {
+        return NextResponse.json({ error: 'El horario se solapa con otro turno.' }, { status: 409 })
+      }
+
+      if (hayBloqueoSolapado) {
+        return NextResponse.json({ error: 'El horario se solapa con un bloqueo.' }, { status: 409 })
+      }
     }
 
     const { data: updated, error: updateError } = await supabase
