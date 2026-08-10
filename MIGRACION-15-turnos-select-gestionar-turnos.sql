@@ -1,0 +1,183 @@
+-- Copia ejecutable de supabase/migrations/039_turnos_select_gestionar_turnos.sql
+-- — pegar en el SQL Editor de Supabase y correr UNA sola vez.
+--
+-- ⚠ NO requiere deploy previo ni posterior. El código de aplicación (el helper
+--   src/lib/agenda/solapamiento.ts y los 6 endpoints que lo usan) ya está escrito
+--   para esto y funciona igual antes y después: esta migración sólo AMPLÍA quién
+--   puede leer turnos. No hay orden que respetar entre SQL y app.
+--
+-- ORDEN DE TRABAJO:
+--   PASO 1 → correr el ALTER POLICY de más abajo.
+--   PASO 2 → correr las verificaciones V1–V3 de acá arriba.
+--   PASO 3 → verificación funcional con DOS sesiones (ver abajo). ⚠ Ésta es LA que
+--            importa: es un cambio de permisos, y no hay nada que compilar.
+--
+-- ⚠ Las verificaciones están arriba para tenerlas a mano, pero se corren DESPUÉS
+--   de aplicar. Están comentadas: si pegás el archivo entero, no se ejecutan.
+--
+-- ============================================================================
+-- VERIFICACIONES — correr DESPUÉS de aplicar
+-- ============================================================================
+--
+-- ── V1. Las dos tablas de la agenda, lado a lado ────────────────────────────
+-- Es LA verificación de esta migración: `turnos_select` y `bloqueos_select` tienen
+-- que quedar con el mismo criterio. Esperado: 2 filas, ambas con el OR:
+--   ((medico_id = get_medico_id()) AND (check_permiso(auth.uid(), 'ver_turnos'::text)
+--    OR check_permiso(auth.uid(), 'gestionar_turnos'::text)))
+--
+-- SELECT tablename, policyname, cmd, roles, qual
+-- FROM pg_policies
+-- WHERE schemaname = 'public'
+--   AND tablename IN ('turnos', 'bloqueos_agenda')
+--   AND cmd = 'SELECT'
+-- ORDER BY tablename;
+--
+--
+-- ── V2. Las otras políticas de `turnos` NO se tocaron ───────────────────────
+-- Esperado: insert/update/delete con su `gestionar_turnos` intacto.
+-- ⚠ Mirá también la columna `roles`: si `turnos` aparece con {public} y
+--   `bloqueos_agenda` con {authenticated}, es lo ESPERADO — esta migración no
+--   normaliza el rol a propósito (ver el encabezado de la 039). Queda como trabajo
+--   aparte; no es un fallo de esta migración.
+--
+-- SELECT policyname, cmd, roles, qual, with_check
+-- FROM pg_policies
+-- WHERE schemaname = 'public' AND tablename = 'turnos'
+-- ORDER BY cmd, policyname;
+--
+--
+-- ── V3. Nadie perdió acceso (control de que fue una AMPLIACIÓN) ─────────────
+-- Informativo. Contá los turnos visibles ANTES y DESPUÉS con la misma sesión de
+-- médico: el número tiene que ser IDÉNTICO. Se pasó de `A` a `A OR B`, así que
+-- quien leía sigue leyendo.
+--
+-- SELECT count(*) FROM public.turnos;
+--
+--
+-- ============================================================================
+-- VERIFICACIÓN FUNCIONAL — DOS SESIONES. ⚠ Es la que importa.
+-- ============================================================================
+-- Este cambio existe para UN caso concreto. Probarlo en las cuatro combinaciones:
+--
+--   CASO A — médico (siempre pasa: check_permiso() devuelve TRUE para rol médico):
+--     Abrir el turnero → ✅ los turnos se ven, se crean, se mueven y se borran.
+--     Nada tiene que haber cambiado respecto de antes.
+--
+--   CASO B — asistente con `ver_turnos` (con o sin gestionar_turnos):
+--     Abrir el turnero → ✅ los turnos se ven, igual que antes. Entra por la primera
+--     rama del OR, que es la que ya existía.
+--
+--   CASO C — ⚠ EL CASO CRÍTICO: asistente con `gestionar_turnos` y SIN `ver_turnos`.
+--     Es la combinación que esta migración existe para arreglar. Configurarla desde
+--     /perfil (el médico tilda gestionar_turnos y destilda ver_turnos) y probar:
+--       1. Abrir el turnero → ✅ ahora los turnos SE VEN (antes: agenda vacía).
+--       2. ⚠ LA PRUEBA DE FONDO — el solapamiento vuelve a detectarse:
+--          a. Con el MÉDICO, agendar un turno (p. ej. mañana 10:00–10:30).
+--          b. Con ESE asistente, intentar crear otro turno en la MISMA franja.
+--          c. ✅ Tiene que RECHAZARLO con "El horario seleccionado se solapa con
+--             otro turno de la agenda." (409).
+--          ❌ Si lo deja crear encima, la política sigue filtrando y hay que revisar:
+--             ése es exactamente el bug que esto cierra.
+--       3. Editar un turno existente (arrastrarlo en el calendario) → ✅ guarda, sin
+--          un 404 "Turno no encontrado o sin permisos".
+--       4. Borrar un turno → ✅ borra (ya funcionaba desde la 033; control de que no
+--          se rompió).
+--
+--   CASO D — asistente SIN ningún permiso de agenda:
+--     Abrir el turnero → ✅ NO ve turnos, y la app le corta antes por permiso. Esta
+--     migración no le abre nada: sigue sin pasar ninguna de las dos ramas del OR.
+--
+-- ============================================================================
+
+
+-- ============================================================================
+-- Migration 039 — turnos_select: ver_turnos OR gestionar_turnos
+-- ============================================================================
+-- Cierra el ÚLTIMO hueco de la familia "la política no coincide con lo que el
+-- endpoint permite", y es la pareja exacta de la 037: lo que aquélla hizo con
+-- `bloqueos_select`, ésta lo hace con `turnos_select`. Las dos tablas de la agenda
+-- quedan por fin con el MISMO criterio de lectura.
+--
+-- ── EL PROBLEMA ─────────────────────────────────────────────────────────────
+--   `turnos_select` exige **solo `ver_turnos`** desde la 015. Pero los 12 permisos
+--   son booleanos INDEPENDIENTES (todos `false` por defecto) y nada obliga a que
+--   `gestionar_turnos` implique `ver_turnos`: un asistente con `gestionar_turnos`
+--   y SIN `ver_turnos` es una combinación **configurable hoy** desde /perfil.
+--
+--   Ese asistente **escribe turnos que no puede leer**. Consecuencias medidas:
+--
+--   1. **Falsos negativos de solapamiento — el motivo por el que esta migración
+--      existe ahora.** El helper `src/lib/agenda/solapamiento.ts` (tanda anterior)
+--      consulta `turnos` con el cliente de SESIÓN, así que pasa por esta política.
+--      A ese asistente le devuelve `[]` aunque los turnos existan, y el helper
+--      concluye que la franja está **libre**: lo deja crear un turno **encima de
+--      otro**. ⚠ Unificar el criterio en un helper NO cerró esto —sólo concentró
+--      el bug en un lugar en vez de seis—; se cierra acá, en la base.
+--   2. **404 falsos** en los endpoints que hacen fetch previo o `.select()` de
+--      verificación sobre esta misma tabla (`api/turnero/[id]`, y desde la tanda
+--      del helper también su chequeo de rango).
+--   3. El índice `turnos_consulta_id_unico` (038) ya cubre el duplicado de turno
+--      por consulta sin depender de permisos, pero **no** cubre el solapamiento:
+--      son dos garantías distintas.
+--
+-- ── LA DECISIÓN: `ver_turnos` OR `gestionar_turnos` ─────────────────────────
+--   Es la **Opción (a)** de las dos que PENDIENTES.md dejó planteadas, y sigue el
+--   criterio que la 033 asentó y la 037 aplicó — **"la agenda es una unidad de
+--   permiso"**: quien puede gestionarla puede leerla.
+--
+--   ⚠ La alternativa (b) —que la UI de /perfil no permita esa combinación— arregla
+--   la causa pero **deja la base sin defensa** ante PostgREST directo o un script
+--   futuro. No son excluyentes: ésta no impide hacer también aquélla.
+--
+--   El `USING` resultante es **textualmente el mismo** que la 037 le puso a
+--   `bloqueos_select`. Ése es el punto: que las dos tablas dejen de tener criterios
+--   distintos.
+--
+-- ── POR QUÉ `ALTER POLICY` Y NO DROP + CREATE ───────────────────────────────
+--   La 037 usó DROP+CREATE (envuelto en BEGIN/COMMIT) porque además del `USING`
+--   tenía que cambiarle el ROL a las 4 políticas, y porque eran cuatro. Acá cambia
+--   **una sola expresión de una sola política**: `ALTER POLICY` la modifica EN EL
+--   LUGAR, sin el instante intermedio en que la política no existe. Por eso tampoco
+--   lleva BEGIN/COMMIT: es una única sentencia, ya atómica de por sí.
+--
+-- ── AMPLIACIÓN DE ACCESO, NO RESTRICCIÓN ────────────────────────────────────
+--   Se pasa de `A` a `A OR B`. **Nadie que hoy lee turnos deja de leerlos**: el
+--   médico sigue entrando por `check_permiso()` (que devuelve TRUE para rol médico)
+--   y el asistente con `ver_turnos` entra por la primera rama, igual que antes. Lo
+--   único que cambia es que ADEMÁS entra el asistente con `gestionar_turnos`.
+--   Por lo mismo, es **imposible que los datos existentes violen** la regla nueva.
+--
+-- ── LO QUE ESTA MIGRACIÓN NO TOCA ───────────────────────────────────────────
+--   · `turnos_insert`, `turnos_update`, `turnos_delete`: intactas.
+--   · **NINGÚN código de aplicación.** El helper de solapamiento y los 6 endpoints
+--     ya están escritos para esto; no hay que tocar ni desplegar nada.
+--   · ⚠ **El ROL de la política.** `turnos_select` nació en la 005 y se rehízo en la
+--     015 **sin cláusula `TO`**, y en Postgres eso equivale a `TO PUBLIC`: hoy se
+--     evalúa para todos los roles, `anon` incluido. La 029 normalizó otras tablas y
+--     la 037 normalizó las 4 de `bloqueos_agenda`, pero **`turnos` quedó afuera**.
+--     `ALTER POLICY` sin `TO` **preserva el rol tal como esté**, así que esta
+--     migración lo deja como lo encontró — a propósito, para no mezclar dos cambios.
+--     Sin impacto explotable (la política cuelga de `get_medico_id()`, que para
+--     `anon` no resuelve), pero la normalización de `turnos` a `TO authenticated`
+--     queda como trabajo pendiente aparte. Ver la V2 de la copia suelta.
+--
+-- Reversible: ver el bloque comentado al final.
+-- ============================================================================
+
+ALTER POLICY "turnos_select" ON public.turnos
+  USING (
+    medico_id = get_medico_id()
+    AND (
+      public.check_permiso(auth.uid(), 'ver_turnos')
+      OR public.check_permiso(auth.uid(), 'gestionar_turnos')
+    )
+  );
+
+-- ── REVERSIBLE ──────────────────────────────────────────────────────────────
+-- Restaura el USING previo (solo `ver_turnos`). ⚠ Revertir REABRE el falso negativo
+-- de solapamiento descrito arriba:
+-- ALTER POLICY "turnos_select" ON public.turnos
+--   USING (
+--     medico_id = get_medico_id()
+--     AND public.check_permiso(auth.uid(), 'ver_turnos')
+--   );
