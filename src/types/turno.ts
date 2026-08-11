@@ -137,9 +137,22 @@ export interface BloqueoAgendaInsert {
 
 export interface TurnoAuditLog {
   id: string
-  turno_id: string
+  /** ⚠ NULL cuando el turno ya no existe (migración 040). Dos caminos llevan ahí:
+   *  el `ON DELETE SET NULL` de la FK, que preserva el historial del turno borrado
+   *  en vez de arrasarlo por CASCADE; y la propia fila `'eliminado'`, que nace con
+   *  NULL porque en un trigger AFTER DELETE el turno ya no está y la FK no admite
+   *  referenciarlo. En ambos casos el id del turno vive dentro de `detalle`. */
+  turno_id: string | null
+  /** Tenant, desnormalizado en la migración 040. Es lo que hace visibles las filas
+   *  cuyo turno se borró: `audit_select` filtra por esta columna, no por el join. */
+  medico_id: string
   usuario_id: string
-  accion: 'creado' | 'modificado' | 'cancelado' | 'reprogramado'
-  detalle: Record<string, unknown> | null  // jsonb {antes, despues}
+  accion: 'creado' | 'modificado' | 'cancelado' | 'reprogramado' | 'eliminado'
+  /** jsonb, con TRES formas según la acción:
+   *  · 'creado'    → la fila entera del turno (`to_jsonb(NEW)`)
+   *  · 'eliminado' → la fila entera tal como quedó (`to_jsonb(OLD)`) — ⚠ es la ÚNICA
+   *    copia que sobrevive del turno borrado
+   *  · 'modificado' | 'cancelado' | 'reprogramado' → `{ antes, despues }` */
+  detalle: Record<string, unknown> | null
   created_at: string
 }
