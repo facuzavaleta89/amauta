@@ -87,7 +87,7 @@ del usuario actual.
 | `profiles` | Extiende `auth.users`: rol, `medico_id`, firma/sello, 12 permisos | — |
 | `obras_sociales` | Catálogo (lectura pública autenticada) | — |
 | `pacientes` | Pacientes (DNI único). `archivado_at` → archivar en vez de borrar | `creado_por` |
-| `historia_clinica` | HC base 1:1 por paciente, **vacía** al crear (no es una actuación) | vía `pacientes` |
+| `historia_clinica` | ⚠ **DORMIDA** (modelo viejo de HC: documento único de antecedentes 1:1). **La app ya no la lee ni la escribe**: se dio de baja el endpoint `POST /api/pacientes/[id]/historia` y el insert de fila vacía del alta de pacientes. **La tabla NO se dropeó** (Ley 26.529) y conserva sus filas históricas | vía `pacientes` |
 | `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología). `campos_extra` (JSONB) ad-hoc. `creado_por` = **autor** (mig. 038; ⚠ **NULL** en las anteriores, y **no** es el tenant) | `medico_id` |
 | `estudios` | Archivos adjuntos por paciente (subir/ver/descargar/borrar **implementado**). Bucket privado `estudios` (migración 026), ruta `{medico_id}/{paciente_id}/{uuid}.{ext}` | vía `pacientes` |
 | `evoluciones` | Series de laboratorio/antropometría (legacy, gráficos) | vía `pacientes` |
@@ -247,9 +247,10 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 
 1. **HC inmutable:** una `consulta` en estado `finalizada` no se edita desde la UI.
    Solo el médico finaliza (el asistente con permiso puede crear en `borrador`).
-   La **consulta** es la unidad de actuación clínica (la fila de `historia_clinica`
-   nace vacía y **no** cuenta como actuación). Un `borrador`, en cambio, **sí se puede
-   descartar** — ver regla 13.
+   La **consulta** es la unidad de actuación clínica. ⚠ La tabla `historia_clinica` es el
+   **modelo viejo** y quedó **dormida**: ya no se crea una fila por paciente, y las que
+   quedan (históricas) **no** cuentan como actuación. Un `borrador`, en cambio, **sí se
+   puede descartar** — ver regla 13.
 2. **Médico = acceso total.** Los asistentes solo acceden a lo habilitado explícitamente.
 3. **Tenant aislado:** ninguna data se comparte entre médicos distintos.
 4. **Matrículas:** MP (provincial), MN (nacional), ME (especialidad). Varias posibles,
@@ -273,7 +274,8 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
    (`archivado_at`) los saca de listados y bloquea escritura (editar, emitir documentos,
    **crear consultas**), pero la HC queda de **solo lectura**. El borrado físico real es la
    **excepción**: solo pacientes sin **ninguna** actuación (consultas, estudios, evoluciones,
-   turnos, pedidos, certificados, recetas — la HC vacía no cuenta). Archivar / desarchivar /
+   turnos, pedidos, certificados, recetas — la fila dormida de `historia_clinica`, si la
+   hay, no cuenta). Archivar / desarchivar /
    eliminar es **exclusivo del médico** (validado en el endpoint, no solo por RLS).
    Criterio exacto: `DELETE /api/pacientes/[id]` (conteo con admin client).
 10. **Estudios (archivos adjuntos):** subir/ver/descargar requieren `ver_historia_clinica`
@@ -630,7 +632,7 @@ organización** (no consolidar en un archivo, no crear uno por entidad).
 | `roles.ts` | `UserRole`, `Profile` (+`Insert`/`Update`), `PermisosAsistente`, `PermisoKey`, `PERMISOS_DEFAULT`, `PERMISO_LABELS`, `PERMISOS_GRUPOS`, `Matricula`, `MatriculaTipo`, `TITULOS_DISPONIBLES`, `TituloPreset`, `SolicitudAsistente` (+`Insert`/`Update`), `SolicitudEstado`, **`Asistente`** (se mudó desde `perfil-form.tsx`: es el shape que declara `obtenerAsistentes()` y consume `/perfil`) |
 | `paciente.ts` | `Paciente` (+`Insert`/`Update`), `PacienteWithObraSocial`, `ObraSocial`, **`PacienteBusqueda`** (proyección de `GET /api/pacientes?q=`: **9 campos** + `obras_sociales ( nombre )`; incluye `obra_social_otro` desde el fix de la obra social como texto libre) |
 | `consulta.ts` | `Consulta` (+`Insert`/`Update`), `ConsultaEstado`, `ConsultaConRelaciones`, `CampoExtra`, `CampoExtraSeccion` |
-| `pedido.ts` | ⚠ **seis entidades:** `Pedido`, `Certificado` (+`CertificadoTipo`), `Receta`, `Evolucion`, `HistoriaClinica` y `Estudio` (cada una con sus `Insert`/`Update`), más **`EmisorSnapshot`** (regla de negocio 11) |
+| `pedido.ts` | ⚠ **cinco entidades:** `Pedido`, `Certificado` (+`CertificadoTipo`), `Receta`, `Evolucion` y `Estudio` (cada una con sus `Insert`/`Update`), más **`EmisorSnapshot`** (regla de negocio 11). ⚠ **`HistoriaClinica*` se eliminó** al dar de baja el modelo viejo de HC (eran 6) |
 | `turno.ts` | `Turno` (+`Insert`/`Update`), `TurnoEstado`, `BloqueoAgenda` (+`Insert`), `TurnoAuditLog`, más **dos proyecciones con join**: **`TurnoConPaciente`** (`GET /api/turnero` → `paciente:paciente_id (id, nombre_completo)`) y **`TurnoParaRecordatorio`** (cron → `paciente:paciente_id(nombre_completo, email, telefono)`) |
 | `mensaje.ts` | `MensajeInterno`, `MensajeInsertar`, `MensajeFormValues`, `MensajeNoLeido`, `MensajeLectura` |
 | `notificacion.ts` | `Notificacion`, `NotificacionTipo`, `NotificacionTipoValor`, `ItemPendiente`, `ITEM_TYPE_SOLICITUD`, **`SolicitudPendientePayload`** + el type-guard **`esPayloadSolicitud`** (lo produce `obtenerSolicitudesPendientes()` y lo consume el badge) |
@@ -639,7 +641,7 @@ organización** (no consolidar en un archivo, no crear uno por entidad).
 | `index.ts` | **barrel** — solo `export *`, sin declaraciones propias |
 
 **Trampas al buscar:** el nombre del archivo **no siempre coincide** con la entidad —`Certificado`,
-`Receta`, `HistoriaClinica`, `Estudio` y `Evolucion` están todos en `pedido.ts`; `UserRole` y los
+`Receta`, `Estudio` y `Evolucion` están todos en `pedido.ts`; `UserRole` y los
 permisos en `roles.ts`—, y `MensajeLectura` refleja la **proyección del join** (`user_id`,
 `leido_at`), no la tabla `mensajes_lecturas` completa. Para el mapeo **tabla ↔ tipo**, la referencia
 es `schema.sql`.

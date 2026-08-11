@@ -126,11 +126,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Error del servidor' }, { status: 500 })
     }
 
-    // Crear historia clínica vacía para el paciente
-    await supabase.from('historia_clinica').insert({
-      paciente_id: paciente.id,
-      creado_por: tenantMedicoId   // ← ídem: ID del médico
-    })
+    // ⚠ Acá se creaba una fila VACÍA en `historia_clinica` (modelo viejo de HC: un
+    // documento único de antecedentes por paciente). Se quitó al dar de baja ese modelo:
+    // la historia clínica viva es el conjunto de `consultas`, que nacen del flujo de la HC.
+    // La tabla NO se dropeó —queda dormida por la conservación de la HC (Ley 26.529)—,
+    // pero ya no recibe filas nuevas. No re-agregar este insert.
 
     return NextResponse.json({ data: paciente }, { status: 201 })
   } catch (error) {
