@@ -1286,28 +1286,44 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     (`app/onboarding/actions.ts:285`), cerrando el círculo **productor ↔ consumidor**: ahora los dos
     lados nombran la misma forma.
 
-- **`POST /api/pacientes/[id]/historia` quedó SIN NINGÚN LLAMADOR.** Su único consumidor era el
-  formulario de HC vieja que borró la sub-tanda 2. El endpoint sigue vivo y funcional (hace el upsert
-  sobre `historia_clinica`), y con él **`lib/validations/historia.schema.ts`**, que es su validador y
-  por eso **no** quedó huérfano. Es el **siguiente eslabón de la cadena del modelo viejo de HC**, y
-  arrastra una pregunta que **no es técnica**: ¿la tabla `historia_clinica` y su endpoint se dan de
-  baja del todo? ⚠ **Decisión de producto con implicancias legales** — son datos clínicos (Ley 26.529,
-  conservación de la HC), y hoy la tabla sigue recibiendo una **fila vacía por paciente** al darlo de
-  alta (`POST /api/pacientes`). Los **6 campos de antecedentes** que esa tabla modela
-  (patológicos, quirúrgicos, hábitos tóxicos, actividad física/laboral, perímetro de cintura) **no
-  tienen equivalente en `consultas`**: si se decide que la funcionalidad se discontinúa, conviene
-  dejarlo escrito; si se decide recuperarla, el formulario borrado está en el historial de git.
-  - **⚠ AMPLIACIÓN (2026-08-08) — ese endpoint también escribe en la AGENDA, y el índice único de la
-    038 no lo alcanza.** Además del upsert sobre `historia_clinica`, sincroniza turnos a partir de
-    `historia_clinica.proximo_control`: **inserta** (`route.ts:141-154`), **actualiza**
-    (`:126-134`) y **borra con admin client** (`:166-169`) turnos con `origen = 'desde_hc'`,
-    `estado = 'pendiente_confirmar'` y **`consulta_id` NULL**.
-  - ⚠ **`turnos_consulta_id_unico` (migración 038) es un índice PARCIAL** (`WHERE consulta_id IS NOT
-    NULL`), así que esos turnos **quedan fuera de la garantía de unicidad**: son el único camino que
-    puede volver a meter turnos en la agenda sin que cuelguen de una consulta finalizada.
-  - **Hoy es inofensivo** (cero llamadores), pero **si el endpoint se reactiva, reintroduce por otra
-    puerta el problema que el Grupo 1 cerró** (ver `CLAUDE.md` → nota técnica 22). Es un motivo más
-    para resolver la pregunta de producto de este ítem en vez de dejar el endpoint vivo y mudo.
+- **✅ RESUELTO (2026-08-11) — `POST /api/pacientes/[id]/historia` se dio de baja, y la tabla
+  `historia_clinica` quedó DORMIDA.** El endpoint estaba **sin ningún llamador** (su único consumidor
+  era el formulario de HC vieja que borró la sub-tanda 2, commit `3104d75`), pero seguía **vivo y
+  alcanzable por HTTP directo**, donde escribía en la agenda. La **decisión de producto** que este
+  ítem dejaba abierta se tomó: **la funcionalidad de antecedentes se discontinúa**, y la baja se hizo
+  **reversible** — se borró el código, **no** los datos.
+  - **Qué se borró (solo código de aplicación, sin migración):**
+    `src/app/api/pacientes/[id]/historia/route.ts` (el POST huérfano),
+    `src/lib/validations/historia.schema.ts` (su validador, que por eso dejó de estar acompañado) y
+    los tipos `HistoriaClinica` / `Insert` / `Update` de `src/types/pedido.ts` (que **ya tenían cero
+    consumidores**, verificado por grep con límite de palabra).
+  - **Qué se modificó:** `POST /api/pacientes` **dejó de insertar la fila vacía** (era lo único que
+    seguía escribiendo en la tabla), más los comentarios del barrel `types/index.ts` y las menciones
+    de `CLAUDE.md` (tabla del modelo de datos, reglas 1 y 9, mapa de tipos).
+  - ⚠ **La tabla NO se dropeó, a propósito.** Conserva sus filas históricas por la conservación de la
+    HC (**Ley 26.529**). Queda **sin lectores ni escritores** en la app: es el estado "dormida", no
+    "eliminada". Sus 4 políticas RLS, su trigger y su índice siguen en pie.
+  - **Lo que la baja cerró de paso — el endpoint escribía en la AGENDA.** Además del upsert sobre
+    `historia_clinica`, sincronizaba turnos a partir de `historia_clinica.proximo_control`:
+    **insertaba**, **actualizaba** y **borraba con admin client (bypass RLS)** turnos con
+    `origen = 'desde_hc'`, `estado = 'pendiente_confirmar'` y **`consulta_id` NULL** — sin chequeo de
+    solapamiento. Como `turnos_consulta_id_unico` (mig. 038) es un índice **PARCIAL**
+    (`WHERE consulta_id IS NOT NULL`), esos turnos **quedaban fuera de la garantía de unicidad**: era
+    el único camino que podía volver a meter turnos en la agenda sin colgar de una consulta
+    finalizada, o sea reintroducir por otra puerta el problema que el Grupo 1 cerró (`CLAUDE.md` →
+    nota técnica 22). **Ese camino ya no existe.**
+  - ⚠ **`origen: 'desde_hc'` NO se tocó y NO es residuo** — lo escribe el flujo vivo de consultas
+    (`api/consultas/route.ts` y `api/consultas/[id]/route.ts`) al finalizar una consulta. Se relevó
+    explícitamente antes de la baja: no quitarlo del enum, ni del schema Zod, ni del CHECK.
+  - **Si alguna vez se recupera la funcionalidad de antecedentes:** los **6 campos** que esa tabla
+    modela (patológicos, quirúrgicos, hábitos tóxicos, actividad física/laboral, perímetro de
+    cintura) **no tienen equivalente en `consultas`**, y tanto el formulario como el endpoint, el
+    schema y los tipos están en el **historial de git**.
+  - ⬜ **Queda abierto (auditoría de datos, NO de código):** nadie consultó la base, así que no se
+    sabe si `historia_clinica` tiene **antecedentes reales cargados** ni si quedan **turnos
+    huérfanos** (`origen='desde_hc' AND consulta_id IS NULL`) de cuando el endpoint tenía UI. Son dos
+    `SELECT count(*)` de solo lectura. Si aparecen turnos huérfanos, están **en la agenda real del
+    médico** y su limpieza se decide con él, no por criterio técnico.
 - **✅ RESUELTO (T1, T2 y T6) — los 4 `any` de Route Handlers que NO eran de `catch`.** Quedaron
   deliberadamente afuera de L1 por ser diseño de tipos, y se cerraron en el bloque de tipos de
   dominio: los 2 `(profile as any)[permisoRequerido]` de `consultas` (**T2**), el

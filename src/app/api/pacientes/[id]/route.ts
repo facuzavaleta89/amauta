@@ -192,10 +192,12 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     // el borrado a nivel de FK, así que este conteo es la única barrera real contra la
     // pérdida silenciosa de datos clínicos.
     //
-    // NOTA: historia_clinica NO cuenta como actuación. Se crea vacía (sin consultas)
-    // junto con el paciente, así que siempre hay 1 fila; incluirla bloquearía el
-    // borrado de cualquier paciente. La unidad de actuación clínica es la CONSULTA.
-    // Al hacer el DELETE físico, el FK CASCADE de historia_clinica borra esa fila vacía.
+    // NOTA: historia_clinica NO cuenta como actuación — la unidad de actuación clínica
+    // es la CONSULTA. ⚠ Esa tabla es el modelo VIEJO de HC y quedó dormida: los pacientes
+    // nuevos ya NO reciben la fila vacía que antes se creaba junto con el paciente (por eso
+    // incluirla habría bloqueado el borrado de cualquiera). Los pacientes ANTERIORES a la
+    // baja sí conservan la suya, y por eso sigue sin figurar acá: contarla los volvería
+    // imborrables. Al hacer el DELETE físico, el FK CASCADE se lleva esa fila si existe.
     const admin = createAdminClient()
     const tablasHijas = [
       'consultas',

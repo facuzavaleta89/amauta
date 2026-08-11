@@ -237,55 +237,12 @@ export interface EvolucionUpdate extends Partial<Omit<EvolucionInsert, 'paciente
 }
 
 // ── HISTORIA CLÍNICA ──────────────────────────────────────────
-
-export interface HistoriaClinica {
-  id: string
-  paciente_id: string
-  antecedentes_patologicos: string | null
-  medicacion_diaria: string | null
-  habitos_toxicos: string | null
-  actividad_fisica: string | null
-  actividad_laboral: string | null
-  antecedentes_quirurgicos: string | null
-  clinica_actual: string | null
-  examen_fisico: string | null
-  laboratorio: string | null
-  estudios_complementarios: string | null
-  conducta: string | null
-  proximo_control: string | null    // ISO timestamptz (columna TIMESTAMPTZ desde la migración 016)
-  peso_inicial: number | null
-  talla: number | null
-  perimetro_cintura: number | null
-  creado_por: string
-  updated_by: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface HistoriaClinicaInsert {
-  paciente_id: string
-  antecedentes_patologicos?: string
-  medicacion_diaria?: string
-  habitos_toxicos?: string
-  actividad_fisica?: string
-  actividad_laboral?: string
-  antecedentes_quirurgicos?: string
-  clinica_actual?: string
-  examen_fisico?: string
-  laboratorio?: string
-  estudios_complementarios?: string
-  conducta?: string
-  proximo_control?: string
-  peso_inicial?: number
-  talla?: number
-  perimetro_cintura?: number
-  creado_por: string
-}
-
-export interface HistoriaClinicaUpdate extends Partial<Omit<HistoriaClinicaInsert, 'paciente_id' | 'creado_por'>> {
-  id: string
-  updated_by: string
-}
+// Los tipos `HistoriaClinica` / `Insert` / `Update` se ELIMINARON al dar de baja el
+// modelo viejo de HC (el documento único de antecedentes por paciente). La historia
+// clínica viva es el conjunto de `consultas` — ver `types/consulta.ts`.
+// ⚠ La tabla `historia_clinica` NO se dropeó: queda DORMIDA (sin lectores ni
+// escritores en la app) por la conservación de la HC (Ley 26.529). Si alguna vez se
+// recupera la funcionalidad de antecedentes, estos tipos están en el historial de git.
 
 // ── ESTUDIOS ──────────────────────────────────────────────────
 
