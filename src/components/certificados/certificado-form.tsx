@@ -177,6 +177,11 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
                 {pacienteSeleccionado.nombre_completo}
               </Badge>
               <Badge variant="outline" className="gap-1">DNI: {pacienteSeleccionado.dni}</Badge>
+              {(pacienteSeleccionado.obras_sociales?.nombre ?? (pacienteSeleccionado.obra_social_otro?.trim() || null)) && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  {pacienteSeleccionado.obras_sociales?.nombre ?? pacienteSeleccionado.obra_social_otro?.trim()}
+                </Badge>
+              )}
               {pacienteSeleccionado.numero_afiliado && (
                 <Badge variant="outline" className="text-xs gap-1">
                   Afil. {pacienteSeleccionado.numero_afiliado}
