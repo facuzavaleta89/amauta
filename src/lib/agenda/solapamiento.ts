@@ -107,16 +107,18 @@ export interface Solapamientos {
  * silencioso. Los llamadores tienen `try/catch` y responden 500, que es lo correcto: ante
  * un chequeo que no se pudo hacer, no se puede afirmar que el horario esté disponible.
  *
- * ⚠ **LIMITACIÓN CONOCIDA — falso negativo de solapamiento por RLS (Tanda B, no se
- * arregla acá).** Estas queries corren con el cliente de **sesión**, así que pasan por las
- * políticas de la base. Hoy `turnos_select` exige **solo `ver_turnos`**, mientras que
- * `bloqueos_select` pide `ver_turnos OR gestionar_turnos` (migración 037). Un asistente
- * con **`gestionar_turnos` y SIN `ver_turnos`** —combinación configurable desde `/perfil`—
- * recibe `[]` de la query de turnos aunque los turnos existan, y el helper reporta la
- * franja como **libre**: lo deja crear un turno encima de otro. **Unificar acá no lo
- * cierra** (solo concentra el bug en un lugar en vez de seis). La salida real es endurecer
- * `turnos_select` con el mismo `OR` de la 037, en una **migración aparte**. Ver
- * `PENDIENTES.md` → Bloque A → "Agenda y RLS" y Bloque B → "Aislamiento por tenant".
+ * ⚠ **Corre con el cliente de SESIÓN, así que pasa por RLS — y eso no es un detalle de
+ * implementación.** Es la razón por la que hizo falta la **migración 039**. Hasta ella,
+ * `turnos_select` exigía **solo `ver_turnos`** mientras que `bloqueos_select` ya pedía
+ * `ver_turnos OR gestionar_turnos` (037): al asistente con **`gestionar_turnos` y SIN
+ * `ver_turnos`** —combinación configurable desde `/perfil`— la query de turnos le devolvía
+ * `[]` aunque los turnos existieran, y el helper daba la franja por **libre**, dejándolo
+ * crear un turno encima de otro. **Unificar el criterio acá NO cerraba eso** (solo
+ * concentraba el bug en un lugar en vez de seis): se cerró en la base. Desde la 039 las dos
+ * tablas de la agenda comparten el mismo `USING`, así que quien puede gestionar la agenda
+ * también la lee y el chequeo ve todo lo que tiene que ver. ⚠ **La correctitud de este
+ * helper depende de que `turnos_select` y `bloqueos_select` mantengan el mismo criterio de
+ * lectura.** Ver `CLAUDE.md` → nota técnica 23 y Auth y roles.
  *
  * @throws el error de PostgREST si cualquiera de las dos queries falla.
  */
