@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award, Archive, FolderOpen } from 'lucide-react'
 import Link from 'next/link'
+import { resolverObraSocial } from '@/lib/pacientes/obra-social'
 import { differenceInYears, format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { Metadata } from 'next'
@@ -59,10 +60,7 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
     ? differenceInYears(new Date(), new Date(paciente.fecha_nacimiento))
     : null
 
-  const obraSocialNombre =
-    (paciente.obras_sociales as { nombre: string } | null)?.nombre ??
-    paciente.obra_social_otro ??
-    null
+  const obraSocialNombre = resolverObraSocial(paciente)
 
   if (isEditing) {
     return (

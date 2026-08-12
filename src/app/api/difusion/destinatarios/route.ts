@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-social'
 
 // GET /api/difusion/destinatarios
 // Lista los pacientes del tenant a los que el envío de difusión por email les puede
@@ -51,8 +52,10 @@ export async function GET(request: NextRequest) {
     // Resolver obra social + descartar emails de formato inválido (mismo criterio que /enviar).
     const data = (pacientes ?? [])
       .map((p) => {
-        const os = p.obras_sociales as unknown as { nombre: string } | null
-        const obra_social = os?.nombre ?? (p.obra_social_otro?.trim() || null)
+        // ⚠ La aserción reemplaza al cast que había antes y existe por la misma razón:
+        // sin tipos generados de `Database`, supabase-js infiere el embebido como ARRAY,
+        // pero PostgREST devuelve un OBJETO (la relación es many-to-one vía obra_social_id).
+        const obra_social = resolverObraSocial(p as unknown as ConObraSocial)
         return {
           id: p.id,
           nombre_completo: p.nombre_completo,

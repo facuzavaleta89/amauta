@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 
 import { pedidoSchema, type PedidoFormValues } from '@/lib/validations/pedido.schema'
+import { resolverObraSocial } from '@/lib/pacientes/obra-social'
 import type { PacienteBusqueda } from '@/types'
 
 /**
@@ -107,7 +108,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
     setValue('paciente_nombre', p.nombre_completo)
     setValue('paciente_dni', p.dni)
     setValue('paciente_dob', p.fecha_nacimiento)
-    setValue('obra_social_nombre', p.obras_sociales?.nombre ?? (p.obra_social_otro?.trim() || null))
+    setValue('obra_social_nombre', resolverObraSocial(p))
     setValue('numero_afiliado', p.numero_afiliado ?? null)
     setSearchQuery(p.nombre_completo)
     setShowSugerencias(false)
@@ -135,6 +136,9 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
   }
 
   // ── Render ─────────────────────────────────────────────────
+
+  // Derivada en render: una sola resolución para la tarjeta de resumen.
+  const obraSocialElegida = pacienteSeleccionado ? resolverObraSocial(pacienteSeleccionado) : null
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-w-3xl mx-auto">
@@ -204,9 +208,9 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
               <Badge variant="outline" className="gap-1.5">
                 DNI: {pacienteSeleccionado.dni}
               </Badge>
-              {(pacienteSeleccionado.obras_sociales?.nombre ?? (pacienteSeleccionado.obra_social_otro?.trim() || null)) && (
+              {obraSocialElegida && (
                 <Badge variant="outline" className="text-xs gap-1">
-                  {pacienteSeleccionado.obras_sociales?.nombre ?? pacienteSeleccionado.obra_social_otro?.trim()}
+                  {obraSocialElegida}
                 </Badge>
               )}
               {pacienteSeleccionado.numero_afiliado && (
