@@ -24,9 +24,14 @@ import type { PacienteBusqueda } from '@/types'
  * Subconjunto de `PacienteBusqueda` que se guarda al elegir un paciente: solo lo que la
  * tarjeta de resumen muestra. Se deriva del tipo compartido en vez de redeclararse, para
  * que no pueda volver a desalinearse de lo que el endpoint devuelve.
+ *
+ * ⚠ Lleva el join `obras_sociales` Y `obra_social_otro` porque la tarjeta resuelve la obra
+ * social con el fallback `obras_sociales?.nombre ?? (obra_social_otro?.trim() || null)`: un
+ * paciente puede tenerla cargada como texto libre y en ese caso el join viene NULL.
  */
 type PacienteElegido = Pick<PacienteBusqueda,
-  'id' | 'nombre_completo' | 'dni' | 'obra_social_id' | 'numero_afiliado'
+  'id' | 'nombre_completo' | 'dni' | 'numero_afiliado' |
+  'obras_sociales' | 'obra_social_otro'
 >
 
 interface PedidoFormProps {
@@ -94,8 +99,9 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
       id: p.id,
       nombre_completo: p.nombre_completo,
       dni: p.dni,
-      obra_social_id: p.obra_social_id ?? null,
       numero_afiliado: p.numero_afiliado ?? null,
+      obras_sociales: p.obras_sociales ?? null,
+      obra_social_otro: p.obra_social_otro ?? null,
     })
     setValue('paciente_id', p.id)
     setValue('paciente_nombre', p.nombre_completo)
@@ -198,6 +204,11 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
               <Badge variant="outline" className="gap-1.5">
                 DNI: {pacienteSeleccionado.dni}
               </Badge>
+              {(pacienteSeleccionado.obras_sociales?.nombre ?? (pacienteSeleccionado.obra_social_otro?.trim() || null)) && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  {pacienteSeleccionado.obras_sociales?.nombre ?? pacienteSeleccionado.obra_social_otro?.trim()}
+                </Badge>
+              )}
               {pacienteSeleccionado.numero_afiliado && (
                 <Badge variant="outline" className="text-xs gap-1">
                   Afil. {pacienteSeleccionado.numero_afiliado}
