@@ -3,6 +3,7 @@ import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { notFound, redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { HistoriaClinicaView } from '@/components/pacientes/consultas/historia-clinica-view'
+import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-social'
 import type { Consulta } from '@/types/consulta'
 
 interface Props {
@@ -57,8 +58,6 @@ export default async function HistoriaClinicaPage({ params }: Props) {
     .order('fecha_hora', { ascending: false })
     .limit(50)
 
-  const obrasSociales = paciente.obras_sociales as unknown as { nombre: string } | null
-
   return (
     <div className="flex flex-col h-[calc(100vh-theme(spacing.16))]">
       <HistoriaClinicaView
@@ -67,7 +66,9 @@ export default async function HistoriaClinicaPage({ params }: Props) {
           nombre_completo:    paciente.nombre_completo,
           dni:                paciente.dni,
           fecha_nacimiento:   paciente.fecha_nacimiento,
-          obra_social_nombre: obrasSociales?.nombre ?? paciente.obra_social_otro ?? null,
+          // ⚠ La aserción reemplaza al cast previo: sin tipos generados de `Database`,
+          // supabase-js infiere el embebido como ARRAY y PostgREST devuelve un OBJETO.
+          obra_social_nombre: resolverObraSocial(paciente as unknown as ConObraSocial),
           numero_afiliado:    paciente.numero_afiliado ?? null,
         }}
         archivado={Boolean(paciente.archivado_at)}

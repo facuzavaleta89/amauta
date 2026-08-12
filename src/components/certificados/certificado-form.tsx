@@ -21,6 +21,7 @@ import {
   certificadoSchema,
   type CertificadoFormInput,
 } from '@/lib/validations/pedido.schema'
+import { resolverObraSocial } from '@/lib/pacientes/obra-social'
 import type { PacienteBusqueda } from '@/types'
 
 interface CertificadoFormProps {
@@ -89,7 +90,7 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
     setValue('paciente_nombre', p.nombre_completo)
     setValue('paciente_dni', p.dni)
     setValue('paciente_dob', p.fecha_nacimiento)
-    setValue('obra_social_nombre', p.obras_sociales?.nombre ?? (p.obra_social_otro?.trim() || null))
+    setValue('obra_social_nombre', resolverObraSocial(p))
     setValue('numero_afiliado', p.numero_afiliado ?? null)
     setSearchQuery(p.nombre_completo)
     setShowSugerencias(false)
@@ -115,6 +116,9 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
       setIsSubmitting(false)
     }
   }
+
+  // Derivada en render: una sola resolución para la tarjeta de resumen.
+  const obraSocialElegida = pacienteSeleccionado ? resolverObraSocial(pacienteSeleccionado) : null
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-w-3xl mx-auto">
@@ -177,9 +181,9 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
                 {pacienteSeleccionado.nombre_completo}
               </Badge>
               <Badge variant="outline" className="gap-1">DNI: {pacienteSeleccionado.dni}</Badge>
-              {(pacienteSeleccionado.obras_sociales?.nombre ?? (pacienteSeleccionado.obra_social_otro?.trim() || null)) && (
+              {obraSocialElegida && (
                 <Badge variant="outline" className="text-xs gap-1">
-                  {pacienteSeleccionado.obras_sociales?.nombre ?? pacienteSeleccionado.obra_social_otro?.trim()}
+                  {obraSocialElegida}
                 </Badge>
               )}
               {pacienteSeleccionado.numero_afiliado && (

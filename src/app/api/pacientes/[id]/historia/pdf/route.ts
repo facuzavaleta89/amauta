@@ -6,6 +6,7 @@ import { cargarMedicoFirmante } from '@/lib/pdf/documentos'
 import React from 'react'
 import type { DocumentProps } from '@react-pdf/renderer'
 import { sanitizePdfFilename } from '@/lib/utils'
+import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-social'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -70,12 +71,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       return new NextResponse('No hay consultas finalizadas para exportar', { status: 404 })
     }
 
-    const obra = paciente.obras_sociales as unknown as { nombre: string } | null
     const pacienteData = {
       nombre_completo: paciente.nombre_completo,
       dni: paciente.dni,
       fecha_nacimiento: paciente.fecha_nacimiento,
-      obra_social_nombre: obra?.nombre ?? paciente.obra_social_otro ?? null,
+      // ⚠ La aserción reemplaza al cast previo: sin tipos generados de `Database`,
+      // supabase-js infiere el embebido como ARRAY y PostgREST devuelve un OBJETO.
+      obra_social_nombre: resolverObraSocial(paciente as unknown as ConObraSocial),
       numero_afiliado: paciente.numero_afiliado ?? null,
     }
     // Médico firmante: helper compartido (admin client; ya autorizamos el acceso arriba)

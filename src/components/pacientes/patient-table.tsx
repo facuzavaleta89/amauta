@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Eye, Pencil, FileText, ChevronRight, Archive } from 'lucide-react'
 import type { PacienteWithObraSocial } from '@/types/paciente'
+import { resolverObraSocial } from '@/lib/pacientes/obra-social'
 import { differenceInYears } from 'date-fns'
 
 interface PatientTableProps {
@@ -42,7 +43,7 @@ export function PatientTable({ pacientes }: PatientTableProps) {
           const edad = p.fecha_nacimiento
             ? differenceInYears(new Date(), new Date(p.fecha_nacimiento))
             : null
-          const obraSocial = p.obras_sociales?.nombre ?? p.obra_social_otro ?? null
+          const obraSocial = resolverObraSocial(p)
 
           return (
             <div
@@ -131,7 +132,7 @@ export function PatientTable({ pacientes }: PatientTableProps) {
               const edad = p.fecha_nacimiento
                 ? differenceInYears(new Date(), new Date(p.fecha_nacimiento))
                 : '—'
-              const obraSocial = p.obras_sociales?.nombre ?? p.obra_social_otro ?? '—'
+              const obraSocial = resolverObraSocial(p) ?? '—'
 
               return (
                 <TableRow
