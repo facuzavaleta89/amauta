@@ -68,6 +68,7 @@ Node LTS 20+. Tailwind v4 se configura en `src/app/globals.css` con `@theme`
   /hooks             → stubs vacíos (la lógica vive en Server Components/Actions)
   /lib
     /supabase        → client.ts (browser) · server.ts (RSC/actions) · admin.ts (service role, bypass RLS)
+    /agenda          → solapamiento.ts (criterio ÚNICO de "franja ocupada" — ver nota 23)
     /pdf /email /whatsapp /validations (schemas Zod) /utils · rate-limit.ts
   /types             → tipos por dominio + index.ts (barrel). Ver sección Tipos.
   proxy.ts           → middleware de Next (⚠ NO crear middleware.ts, ver nota 8)
@@ -93,7 +94,7 @@ del usuario actual.
 | `evoluciones` | Series de laboratorio/antropometría (legacy, gráficos) | vía `pacientes` |
 | `turnos` | Agenda. `categoria`, `origen`, `consulta_id` (Bloque 4). Índice único **parcial** `turnos_consulta_id_unico` (mig. 038): **un turno por consulta** | `medico_id` |
 | `bloqueos_agenda` | Bloqueos de horario. `updated_at` + trigger (mig. 036); RLS con permiso y a `authenticated` (mig. 037) | `medico_id` |
-| `turnos_audit_log` | Log de cambios de turnos (trigger) | vía `turnos` |
+| `turnos_audit_log` | Log de cambios de turnos (trigger `turno_audit_trigger`, **AFTER INSERT/UPDATE/DELETE**). Desde la mig. **040 audita también los BORRADOS**: `medico_id` desnormalizado (es el tenant real — la RLS ya **no** hace JOIN al turno), `turno_id` **nullable** con FK `ON DELETE SET NULL` (antes `CASCADE` borraba el historial entero). La fila `'eliminado'` nace con `turno_id NULL` y el id del turno queda en `detalle` | `medico_id` |
 | `pedidos` | Pedidos de estudios + PDF + QR (`codigo_verificacion`, `estado`). PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
 | `certificados` | Certificados + PDF + QR + `valido_hasta`. PDF **congelado al emitir** en bucket `documentos` (`pdf_path`), + `emisor_snapshot` (JSONB, mig. 028) | vía `pacientes` |
 | `recetas` | Estructura lista; emisión **bloqueada** (ANMAT pendiente) | vía `pacientes` |
@@ -138,17 +139,20 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 > reservado al médico (contrastar con pacientes → regla 9, estudios → regla 10, documentos →
 > regla 5).
 
-> ⚠ **Agenda — LEER bloqueos exige permiso (desde la migración `037`, 2026-08-07).**
-> `bloqueos_select` era **tenant-only** y ahora pide **`ver_turnos` OR `gestionar_turnos`**; las 4
-> políticas de `bloqueos_agenda` quedaron en `TO authenticated`. **El `OR` es deliberado y no
-> espeja a `turnos_select`** (que pide solo `ver_turnos`): los 12 permisos son **independientes**,
-> así que un asistente con `gestionar_turnos` y **sin** `ver_turnos` es configurable, y con un
-> `USING` que pidiera solo `ver_turnos` se le romperían los endpoints de edición y borrado, que
-> hacen fetch previo sobre esa misma tabla.
-> ⚠ **El mismo hueco sigue ABIERTO en `turnos`:** `turnos_select` exige solo `ver_turnos`, así que
-> ese asistente **escribe turnos que no puede leer** — 404 falsos y falsos negativos de
-> solapamiento. Las dos tablas de la agenda quedaron con criterios distintos: ver `PENDIENTES.md`
-> → Bloque A → "Agenda y RLS".
+> ⚠ **Agenda — LEER exige permiso en las DOS tablas, con el MISMO criterio
+> (`bloqueos_agenda` desde la migración `037`; `turnos` desde la `039`).** Ambas piden
+> **`ver_turnos` OR `gestionar_turnos`**. **El `OR` es deliberado:** los 12 permisos son
+> **independientes**, así que un asistente con `gestionar_turnos` y **sin** `ver_turnos` es
+> configurable desde `/perfil`, y con un `USING` que pidiera solo `ver_turnos` se le romperían los
+> endpoints de edición y borrado, que hacen fetch previo sobre esas mismas tablas.
+> **Lo que cerró la `039`** (el hueco que quedaba en `turnos`): ese asistente **escribía turnos que
+> no podía leer**, lo que además de 404 falsos producía **falsos negativos de solapamiento** — el
+> helper de solapamiento consulta con el **cliente de sesión**, recibía `[]` y daba la franja por
+> libre, dejando crear un turno encima de otro (ver **nota técnica 23**).
+> ⚠ **Lo único que todavía las diferencia es el ROL:** las 4 de `bloqueos_agenda` están en
+> `TO authenticated` (037) y las de `turnos` siguen en `{public}` — la 039 usó `ALTER POLICY`, que
+> **preserva el rol**. No es explotable (las políticas cuelgan de `get_medico_id()`, que para `anon`
+> no resuelve), pero la normalización queda pendiente: ver `PENDIENTES.md` → Bloque B.
 
 ---
 
@@ -593,12 +597,33 @@ momento en que se crea el turno de la agenda, ver nota técnica 22):
    cuándo; las filas existentes se sembraron con `created_at`, no con `now()`). La **037** hizo que
    `bloqueos_select` exija **`ver_turnos` OR `gestionar_turnos`** y normalizó las 4 políticas a
    `TO authenticated`. Y el chequeo de solapamiento dejó de contar los turnos `cancelado` y
-   `pendiente_confirmar` en **4 sitios** del turnero.
+   `pendiente_confirmar` en **4 sitios** del turnero. ⚠ **Ese último criterio lo SUPERSEDIÓ el
+   Grupo 2:** hoy `pendiente_confirmar` **sí ocupa** la franja — ver **nota técnica 23**.
 6. **Migración 038 — descartar borradores + el turno solo al finalizar.** Columna
    `consultas.creado_por`, `consultas_delete` reescrita (tenant + `estado='borrador'` + médico OR
    autor) e índice único `turnos_consulta_id_unico`. En código: el descarte de borradores (autoría,
    paciente archivado, guarda de "0 filas") y **el turno `desde_hc` pasó a crearse SOLO al
    finalizar la consulta**, no al guardar un borrador. Ver **regla de negocio 13** y **nota 22**.
+
+**GRUPO 2 — cuatro tandas, migraciones 039–040** (2026-08-10/11). Cierra los seguimientos de agenda
+que dejó el Grupo 1 y da de baja el último eslabón del modelo viejo de HC:
+1. **Criterio único de "franja ocupada" (sin migración).** Nuevo helper
+   **`src/lib/agenda/solapamiento.ts`**: consolidó **12 queries de solapamiento en 6 endpoints** en
+   una implementación. Estados que ocupan como **lista de inclusión**, **"nada se pisa con nada"**
+   (turno-vs-turno ya no filtra por `categoria`), **propagación del error** (cerró un fail-open en 8
+   de las 12 queries) y un **fetch previo** en el PATCH de turnos que cerró el agujero de "una sola
+   fecha". Tipo nuevo `TurnoCategoria`. Ver **nota técnica 23**.
+2. **Migración 039 — `turnos_select` acepta `ver_turnos` OR `gestionar_turnos`**, espejando a
+   `bloqueos_select` (037). Cierra en la base el **falso negativo de solapamiento** que el helper no
+   podía cerrar por sí solo. Ver **Auth y roles**.
+3. **Migración 040 — `turnos_audit_log` audita los DELETE.** `medico_id` desnormalizado (backfill +
+   NOT NULL), `turno_id` nullable con FK `ON DELETE SET NULL`, rama `DELETE` en `log_turno_cambio`,
+   trigger recreado como **AFTER INSERT OR UPDATE OR DELETE** (cierra la discrepancia histórica
+   BEFORE/AFTER) y `audit_select` sin JOIN al turno. Tipo `TurnoAuditLog` actualizado.
+4. **Baja del modelo viejo de HC (sin migración).** Se eliminaron `POST /api/pacientes/[id]/historia`,
+   `lib/validations/historia.schema.ts`, los tipos `HistoriaClinica*` y el insert de fila vacía del
+   alta de pacientes. **La tabla `historia_clinica` quedó DORMIDA**, no dropeada. ⚠ El valor
+   `origen='desde_hc'` **se conservó**: lo usa el flujo vivo de consultas.
 
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
@@ -918,8 +943,37 @@ es `schema.sql`.
       insert de la notificación en `api/turnero/route.ts`: el acto principal ya ocurrió, el
       secundario no puede tumbarlo.
     - **Un turno por consulta lo garantiza la BASE** (`turnos_consulta_id_unico`, migración 038). La
-      guarda por `consulta_id` que hay en el código pasa por `turnos_select` y por lo tanto **depende
-      de `ver_turnos`**: sin ese permiso devuelve `null` aunque el turno exista.
+      guarda por `consulta_id` que hay en el código pasa por `turnos_select`, así que **depende de
+      los permisos de lectura de la agenda** (desde la 039, `ver_turnos` OR `gestionar_turnos`): sin
+      ninguno de los dos devuelve `null` aunque el turno exista. El índice no depende de permisos.
     - ⚠ **Lo que NO cambió:** el turno se sigue insertando con **`paciente_id` y SIN
       `paciente_nombre_libre`** (el dato canónico es el id; duplicar el nombre lo desactualizaría).
       `turno-form.tsx` asume esa forma al precargar el buscador.
+23. **"Franja ocupada" se pregunta en UN solo lugar: `buscarSolapamientos` de
+    `src/lib/agenda/solapamiento.ts`. No escribir una query de solapamiento nueva.** Antes el
+    criterio vivía **duplicado en 12 queries repartidas por 6 endpoints**, con tres criterios
+    distintos de `estado` y tres de `categoria` conviviendo en la misma app.
+    - **Qué exporta:** `buscarSolapamientos({ supabase, medicoId, inicio, fin, excluirTurnoId?,
+      excluirBloqueoId? })` → `{ hayTurnoSolapado, hayBloqueoSolapado }`, que mira **las dos** tablas
+      (`turnos` y `bloqueos_agenda`) en paralelo; los tipos `BuscarSolapamientosArgs` / `Solapamientos`;
+      y la constante **`DURACION_TURNO_CONTROL_MS`** (⚠ **no unificar** con `MIN_DURATION_MS` de
+      `turno.schema.ts`: aquélla es la duración **mínima válida** de cualquier turno, ésta la
+      duración **fija** del turno de control — hoy coinciden en 10 min por casualidad).
+    - **Los estados que ocupan son una lista de INCLUSIÓN**, derivada de un
+      `Record<TurnoEstado, boolean>` exhaustivo: ocupan `pendiente`, `confirmado`, `presente` y
+      `pendiente_confirmar`; **no** ocupan `cancelado`, `ausente` y `reprogramado`. ⚠ El `Record` es
+      a propósito: si se suma un valor al ENUM, **deja de compilar** hasta que alguien decida si
+      ocupa. Antes se usaba `.not(... in ...)`, o sea que **todo estado nuevo ocupaba por default**.
+    - **Nada se pisa con nada:** el chequeo turno-vs-turno **no filtra por `categoria`** — la agenda
+      modela la disponibilidad física del médico, así que un `curso` o un turno `personal` ocupan
+      igual que un `turno_medico`.
+    - **Intervalos semiabiertos:** `fila.fecha_inicio < fin AND fila.fecha_fin > inicio`. Los bordes
+      que se tocan **no** solapan (uno que termina 10:00 y otro que empieza 10:00 conviven).
+    - **Falla, nunca miente:** cada query chequea su `error` y lo relanza. Antes **8 de las 12**
+      lo descartaban, así que un fallo de red dejaba `data` en `undefined` y el endpoint concluía
+      **"franja libre"** — un fail-open silencioso. Los llamadores responden 500, que es lo correcto.
+    - ⚠ **Corre con el cliente de SESIÓN, así que pasa por RLS** — no es un detalle de
+      implementación: es la razón por la que hizo falta la **migración 039**. Con `turnos_select`
+      exigiendo solo `ver_turnos`, al asistente con `gestionar_turnos` y sin `ver_turnos` la query le
+      devolvía `[]` y el helper daba la franja por **libre**. **Unificar el criterio en un helper NO
+      cerró eso** —solo concentró el bug en un lugar en vez de seis—; se cerró en la base.

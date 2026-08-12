@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→038).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→040).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -62,7 +62,24 @@
 -- reescrita —tenant + estado='borrador' + rol médico OR autor, TO authenticated—, que
 -- habilita el descarte de borradores por su autor y deja a las consultas FINALIZADAS
 -- imborrables desde la base; + índice único parcial `turnos_consulta_id_unico`, que
--- garantiza UN turno por consulta sin depender de ningún permiso).
+-- garantiza UN turno por consulta sin depender de ningún permiso),
+-- 039 (`turnos_select` pasa de exigir solo `ver_turnos` a aceptar `ver_turnos` OR
+-- `gestionar_turnos`, con el MISMO USING que la 037 le puso a `bloqueos_select`: las dos
+-- tablas de la agenda quedan por fin con el mismo criterio de lectura. Cierra el falso
+-- negativo de solapamiento del asistente con `gestionar_turnos` y SIN `ver_turnos`, que
+-- escribía turnos que no podía leer. Es AMPLIACIÓN de acceso [A → A OR B]: nadie que hoy
+-- lea turnos deja de leerlos. ⚠ Se hizo con ALTER POLICY, que preserva el rol, así que
+-- `turnos_select` sigue en {public} — la normalización a TO authenticated de las 4
+-- políticas de `turnos` queda pendiente aparte),
+-- 040 (`turnos_audit_log` registra también los DELETE: columna `medico_id` [tenant
+-- DESNORMALIZADO, backfilleado, NOT NULL] + índice; `turno_id` pasa a NULLABLE y su FK de
+-- ON DELETE CASCADE a ON DELETE SET NULL —el CASCADE borraba el historial completo del
+-- turno—; `log_turno_cambio()` suma la rama DELETE [`turno_id` NULL, `detalle` =
+-- to_jsonb(OLD), acción 'eliminado']; el trigger se recrea como AFTER INSERT OR UPDATE OR
+-- DELETE, fijando la dirección de forma explícita y cerrando la discrepancia histórica
+-- BEFORE/AFTER; y `audit_select` deja de resolver el tenant por JOIN al turno —que hacía
+-- invisibles las filas huérfanas— para leer `medico_id` de la propia fila, normalizada a
+-- TO authenticated).
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -384,11 +401,14 @@ CREATE INDEX idx_turnos_estado   ON public.turnos(estado);
 CREATE INDEX idx_turnos_medico   ON public.turnos(medico_id);
 -- migración 038 — UN turno por consulta. Lo único que evitaba el duplicado era un SELECT
 -- previo en el código de los endpoints de consultas, que pasa por `turnos_select` y por lo
--- tanto DEPENDE de `ver_turnos`: un asistente sin ese permiso recibía `null` aunque el turno
--- existiera e insertaba un duplicado. El índice lo cierra en la base, sin depender de ningún
--- permiso. Es PARCIAL porque los turnos manuales —la mayoría— tienen consulta_id NULL.
--- ⚠ Por eso mismo NO alcanza a los turnos que crea POST /api/pacientes/[id]/historia (HC
---   vieja, hoy sin llamadores), que nacen con consulta_id NULL. Ver PENDIENTES.md.
+-- tanto dependía de los permisos de lectura: un asistente sin ellos recibía `null` aunque
+-- el turno existiera e insertaba un duplicado. El índice lo cierra en la base, sin depender
+-- de ningún permiso. Es PARCIAL porque los turnos manuales —la mayoría— tienen
+-- consulta_id NULL. (La 039 cerró aparte el lado de los permisos; son dos garantías
+-- distintas: ésta cubre el duplicado por consulta, aquélla el solapamiento.)
+-- ⚠ Por eso mismo NO alcanza a ningún turno con consulta_id NULL. El único camino que los
+--   creaba fuera del flujo de consultas era POST /api/pacientes/[id]/historia (HC vieja),
+--   DADO DE BAJA en 2026-08-11 junto con la tabla `historia_clinica`, que quedó dormida.
 CREATE UNIQUE INDEX turnos_consulta_id_unico ON public.turnos(consulta_id) WHERE consulta_id IS NOT NULL;
 
 -- ── bloqueos_agenda ─────────────────────────────────────────────────────────
@@ -413,17 +433,33 @@ CREATE TABLE public.bloqueos_agenda (
 CREATE INDEX idx_bloqueos_medico ON public.bloqueos_agenda(medico_id);
 
 -- ── turnos_audit_log ────────────────────────────────────────────────────────
--- Log automático (vía trigger) de cambios en turnos.
+-- Log automático (vía trigger) de cambios en turnos. Desde la migración 040 cubre
+-- también los DELETE (antes el borrado no dejaba ningún rastro).
 CREATE TABLE public.turnos_audit_log (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  turno_id    UUID NOT NULL REFERENCES public.turnos(id) ON DELETE CASCADE,
+  -- migración 040 — NULLABLE, y la FK pasó de ON DELETE CASCADE a ON DELETE SET NULL.
+  -- ⚠ Los dos cambios son el corazón de esa migración: con CASCADE, borrar un turno
+  -- borraba TODO su historial de auditoría, así que auditar el DELETE habría sido
+  -- escribir una fila que se autodestruye en el mismo statement.
+  -- Hay DOS caminos que dejan esta columna en NULL:
+  --   1. el SET NULL de la FK, que preserva las filas históricas del turno borrado;
+  --   2. la propia fila 'eliminado', que NACE con NULL — en un trigger AFTER DELETE el
+  --      turno ya no existe y un INSERT que lo referenciara violaría la FK y abortaría
+  --      el borrado entero. El id del turno queda dentro de `detalle` (to_jsonb(OLD)).
+  turno_id    UUID REFERENCES public.turnos(id) ON DELETE SET NULL,
+  -- migración 040 — TENANT DESNORMALIZADO (backfilleado desde turnos, luego NOT NULL).
+  -- Es lo que hace visibles las filas cuyo turno ya no existe: `audit_select` filtra por
+  -- esta columna en vez de hacer JOIN contra `turnos`.
+  medico_id   UUID NOT NULL,
   usuario_id  UUID NOT NULL REFERENCES public.profiles(id),
-  accion      TEXT NOT NULL,                  -- 'creado' | 'modificado' | 'cancelado' | 'reprogramado'
-  detalle     JSONB,                          -- {antes, despues}
+  accion      TEXT NOT NULL,                  -- 'creado' | 'modificado' | 'cancelado' | 'reprogramado' | 'eliminado'
+  detalle     JSONB,                          -- {antes, despues} · en 'creado'/'eliminado': la fila entera
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_audit_turno   ON public.turnos_audit_log(turno_id);
 CREATE INDEX idx_audit_usuario ON public.turnos_audit_log(usuario_id);
+-- migración 040 — la RLS nueva filtra por medico_id en cada SELECT.
+CREATE INDEX idx_turnos_audit_medico ON public.turnos_audit_log(medico_id);
 
 -- ── pedidos ─────────────────────────────────────────────────────────────────
 -- Pedidos de estudios complementarios con PDF y verificación por QR.
@@ -766,18 +802,24 @@ CREATE OR REPLACE FUNCTION public.check_asistente_editar_agenda(user_id uuid)
 RETURNS boolean AS $$ SELECT public.check_permiso(user_id, 'ver_turnos'); $$
 LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public;
 
--- Trigger: registra en turnos_audit_log cada alta/cambio de un turno.
+-- Trigger: registra en turnos_audit_log cada alta/cambio/BORRADO de un turno.
 -- SECURITY DEFINER con search_path fijo (migración 025).
+-- Reescrita por la migración 040: se sumó la rama DELETE y la columna `medico_id` a los
+-- tres INSERT (es NOT NULL: sin ella el trigger fallaría en la primera alta). Las ramas
+-- INSERT y UPDATE conservan su semántica EXACTA (mismo actor, mismo CASE, mismo detalle).
 CREATE OR REPLACE FUNCTION public.log_turno_cambio()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    INSERT INTO public.turnos_audit_log (turno_id, usuario_id, accion, detalle)
-    VALUES (NEW.id, NEW.agendado_por, 'creado', to_jsonb(NEW));
+    INSERT INTO public.turnos_audit_log (turno_id, medico_id, usuario_id, accion, detalle)
+    VALUES (NEW.id, NEW.medico_id, NEW.agendado_por, 'creado', to_jsonb(NEW));
+    RETURN NEW;
+
   ELSIF TG_OP = 'UPDATE' THEN
-    INSERT INTO public.turnos_audit_log (turno_id, usuario_id, accion, detalle)
+    INSERT INTO public.turnos_audit_log (turno_id, medico_id, usuario_id, accion, detalle)
     VALUES (
       NEW.id,
+      NEW.medico_id,
       COALESCE(auth.uid(), NEW.agendado_por),
       CASE
         WHEN NEW.estado = 'cancelado'             THEN 'cancelado'
@@ -786,7 +828,28 @@ BEGIN
       END,
       jsonb_build_object('antes', to_jsonb(OLD), 'despues', to_jsonb(NEW))
     );
+    RETURN NEW;
+
+  ELSIF TG_OP = 'DELETE' THEN
+    -- ⚠ `turno_id` va NULL, NO `OLD.id`: en un trigger AFTER DELETE el turno ya no
+    -- existe, y un INSERT que lo referencie viola la FK y aborta el borrado entero.
+    -- `ON DELETE SET NULL` gobierna las filas hijas que YA existen; no habilita insertar
+    -- una hija nueva apuntando a un padre que se fue. El id del turno queda en `detalle`.
+    INSERT INTO public.turnos_audit_log (turno_id, medico_id, usuario_id, accion, detalle)
+    VALUES (
+      NULL,
+      OLD.medico_id,
+      -- Red de seguridad: si el borrado lo hace el admin client (service_role, sin
+      -- sesión), auth.uid() es NULL y usuario_id es NOT NULL → el INSERT fallaría y se
+      -- llevaría puesto el DELETE. Cae en quien agendó el turno. Mismo patrón que UPDATE.
+      COALESCE(auth.uid(), OLD.agendado_por),
+      'eliminado',
+      to_jsonb(OLD)
+    );
+    -- En un trigger AFTER el retorno se ignora, pero por corrección devuelve OLD.
+    RETURN OLD;
   END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -863,20 +926,16 @@ CREATE TRIGGER difusion_updated_at        BEFORE UPDATE ON public.difusion_posts
 CREATE TRIGGER solicitudes_updated_at     BEFORE UPDATE ON public.solicitudes_asistente FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
 CREATE TRIGGER set_notas_updated_at       BEFORE UPDATE ON public.notas                FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- ⚠ ES `BEFORE`, NO `AFTER` — verificado contra la BASE REAL (2026-08-08). Este archivo
---   decía `AFTER` y la MIGRACIÓN FUENTE `005_turnos.sql:176` TAMBIÉN lo dice, así que hay
---   una discrepancia real entre las migraciones y la base: o se cambió a mano en algún
---   momento, o hay que re-verificar. `005_turnos.sql` NO se toca (es historia ya aplicada);
---   la verdad observada vive acá. PENDIENTE de re-verificar — ver PENDIENTES.md →
---   "turnos_audit_log no registra los DELETE".
---   Por qué importa la dirección: con `AFTER DELETE` la fila de auditoría no se podría
---   insertar (violaría la FK turno_id NOT NULL → el turno ya no existe), mientras que con
---   `BEFORE DELETE` la fila todavía está. O sea que sumar `OR DELETE` es VIABLE; lo que lo
---   bloquea es otra cosa (el ON DELETE CASCADE de turnos_audit_log y la política
---   audit_select, que esconde las filas huérfanas).
+-- ✅ LA DISCREPANCIA BEFORE/AFTER QUEDÓ CERRADA (migración 040). Durante años este
+--   archivo y la migración fuente `005_turnos.sql:176` no coincidían con lo observado en
+--   la base. La 040 hace DROP + CREATE del trigger, así que **fija la dirección de forma
+--   explícita**: es AFTER, y ya no depende de a quién se le crea. `005_turnos.sql` NO se
+--   toca (es historia ya aplicada).
+-- ⚠ Que sea AFTER es lo que obligó a la forma de la rama DELETE: con la fila ya borrada,
+--   la de auditoría no puede referenciar el turno (ver `log_turno_cambio` más arriba).
 CREATE TRIGGER turno_audit_trigger
-  BEFORE INSERT OR UPDATE ON public.turnos
-  FOR EACH ROW EXECUTE PROCEDURE public.log_turno_cambio();
+  AFTER INSERT OR UPDATE OR DELETE ON public.turnos
+  FOR EACH ROW EXECUTE FUNCTION public.log_turno_cambio();
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
@@ -1024,8 +1083,31 @@ CREATE POLICY "evoluciones_delete" ON public.evoluciones
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = public.get_medico_id()));
 
 -- ── turnos ──────────────────────────────────────────────────────────────────
+-- ⚠ turnos_select YA NO EXIGE SOLO `ver_turnos` (migración 039): acepta CUALQUIERA de los
+--   dos permisos de agenda, con el MISMO USING que la 037 le puso a `bloqueos_select`. Las
+--   dos tablas de la agenda quedan con el mismo criterio de lectura — que era exactamente
+--   la diferencia que quedaba abierta.
+--   El motivo concreto: los 12 permisos son booleanos INDEPENDIENTES, así que un asistente
+--   con `gestionar_turnos` y SIN `ver_turnos` es configurable desde /perfil, y ese asistente
+--   ESCRIBÍA TURNOS QUE NO PODÍA LEER. Consecuencia peor que los 404 falsos: el helper
+--   `src/lib/agenda/solapamiento.ts` consulta con el cliente de SESIÓN, así que pasaba por
+--   esta política, recibía [] y concluía que la franja estaba LIBRE → dejaba crear un turno
+--   ENCIMA de otro. Unificar el criterio en el helper no cerraba esto (solo concentraba el
+--   bug); se cierra acá, en la base.
+--   Es AMPLIACIÓN de acceso (A → A OR B): nadie que ya leyera turnos dejó de leerlos.
+-- ⚠ ROL: la 039 usó ALTER POLICY (cambia el USING EN EL LUGAR, sin el instante en que la
+--   política no existe) y `ALTER POLICY` sin `TO` PRESERVA el rol, así que esta política
+--   sigue en {public} — a diferencia de las 4 de bloqueos_agenda, ya en `authenticated`
+--   desde la 037. Sin impacto explotable (cuelga de get_medico_id(), que para `anon` no
+--   resuelve), pero la normalización de las 4 de `turnos` queda PENDIENTE. Ver PENDIENTES.md.
 CREATE POLICY "turnos_select" ON public.turnos
-  FOR SELECT USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'ver_turnos'));
+  FOR SELECT USING (
+    medico_id = get_medico_id()
+    AND (
+      public.check_permiso(auth.uid(), 'ver_turnos')
+      OR public.check_permiso(auth.uid(), 'gestionar_turnos')
+    )
+  );
 CREATE POLICY "turnos_insert" ON public.turnos
   FOR INSERT WITH CHECK (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 CREATE POLICY "turnos_update" ON public.turnos
@@ -1042,16 +1124,18 @@ CREATE POLICY "turnos_delete" ON public.turnos
 -- la migración 033. Las CUATRO están en `TO authenticated` desde la 037 (antes ninguna
 -- declaraba TO, o sea que se evaluaban para {public}, `anon` incluido).
 --
--- ⚠ bloqueos_select YA NO ES TENANT-ONLY (migración 037): exige permiso. Y NO espeja a
---   turnos_select —que pide solo `ver_turnos`— sino que acepta CUALQUIERA de los dos
---   permisos de agenda. Es deliberado: los 12 permisos son booleanos INDEPENDIENTES y nada
---   obliga a que `gestionar_turnos` implique `ver_turnos`, así que un asistente con
---   `gestionar_turnos` y SIN `ver_turnos` es configurable hoy. Con un USING que pidiera solo
---   `ver_turnos`, a ese asistente se le romperían los endpoints de edición y borrado, que
---   hacen fetch previo y `.select()` de verificación sobre esta misma tabla
+-- ⚠ bloqueos_select YA NO ES TENANT-ONLY (migración 037): exige permiso, y acepta
+--   CUALQUIERA de los dos permisos de agenda. Es deliberado: los 12 permisos son booleanos
+--   INDEPENDIENTES y nada obliga a que `gestionar_turnos` implique `ver_turnos`, así que un
+--   asistente con `gestionar_turnos` y SIN `ver_turnos` es configurable hoy. Con un USING
+--   que pidiera solo `ver_turnos`, a ese asistente se le romperían los endpoints de edición
+--   y borrado, que hacen fetch previo y `.select()` de verificación sobre esta misma tabla
 --   (src/app/api/turnero/bloqueos/[id]/route.ts). El OR neutraliza ese riesgo por diseño.
--- ⚠ EL MISMO HUECO SIGUE ABIERTO EN `turnos`: turnos_select exige solo `ver_turnos`. Ver
---   PENDIENTES.md → Bloque A → "Agenda y RLS".
+-- ✅ `turnos_select` YA ESPEJA ESTE CRITERIO (migración 039): durante dos migraciones esta
+--   política y la de `turnos` tuvieron criterios distintos, y ese hueco quedó cerrado. Las
+--   dos tablas de la agenda leen con el mismo USING. Lo único que todavía las diferencia es
+--   el ROL: las 4 de acá están en `authenticated` (037) y las de `turnos` siguen en
+--   {public} — ver la nota de turnos_select y PENDIENTES.md.
 CREATE POLICY "bloqueos_select" ON public.bloqueos_agenda
   FOR SELECT TO authenticated USING (
     medico_id = get_medico_id()
@@ -1075,8 +1159,14 @@ CREATE POLICY "bloqueos_delete" ON public.bloqueos_agenda
 -- ── turnos_audit_log ────────────────────────────────────────────────────────
 -- SELECT permitido al tenant; el INSERT lo hace el trigger (SECURITY DEFINER),
 -- no hay política de INSERT para clientes (revocada en la migración 014).
+-- ⚠ REESCRITA por la migración 040. Antes resolvía el tenant CON UN JOIN al turno
+--   (`EXISTS (SELECT 1 FROM turnos WHERE id = turnos_audit_log.turno_id …)`), así que una
+--   fila cuyo turno ya no existe quedaba INVISIBLE PARA TODOS — justo las filas que la 040
+--   crea al auditar los DELETE. Ahora lee `medico_id` de la propia fila (desnormalizado).
+--   Normalizada además a TO authenticated, siguiendo lo que la 037 hizo con bloqueos_agenda
+--   (la política vieja no declaraba TO, o sea que se evaluaba para {public}).
 CREATE POLICY "audit_select" ON public.turnos_audit_log
-  FOR SELECT USING (EXISTS (SELECT 1 FROM public.turnos WHERE id = turnos_audit_log.turno_id AND medico_id = get_medico_id()));
+  FOR SELECT TO authenticated USING (medico_id = get_medico_id());
 
 -- ── pedidos ─────────────────────────────────────────────────────────────────
 CREATE POLICY "pedidos_select" ON public.pedidos

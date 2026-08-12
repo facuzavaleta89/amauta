@@ -253,34 +253,36 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     deuda ya anotada como *"extraer el helper a `lib/`"* (ver "Lint preexistente" → los 4 `any`
     no-catch de Route Handlers); tocarla implica ~14 endpoints, así que sigue siendo **otra tanda**.
 
-- **`turnos_audit_log` no registra los DELETE.** El trigger `turno_audit_trigger` solo cubre
-  INSERT y UPDATE: **el borrado no deja rastro**. Antes importaba poco —en la práctica solo el médico
-  llegaba a borrar, porque al asistente la política se lo filtraba en silencio—, pero **desde la
-  migración 033 el asistente con `gestionar_turnos` borra turnos de verdad y no queda registro de
-  quién lo hizo**. La función `log_turno_cambio` ya contempla el literal `'cancelado'` entre sus
-  acciones. Es **cambio de esquema** (migración nueva) y conviene decidirlo con el médico: también hay
-  que definir qué se guarda en `detalle` cuando la fila deja de existir.
-  - ⚠ **CORRECCIÓN (2026-08-08) — el trigger es `BEFORE`, no `AFTER`; la versión anterior de este
-    ítem afirmaba lo contrario y eso cambiaba el tamaño del trabajo.** Verificado contra la **base
-    viva**: `turno_audit_trigger` es `BEFORE INSERT OR UPDATE ON public.turnos`. Importa porque con
-    `AFTER DELETE` la fila de auditoría **no se podría insertar** —violaría la FK
-    `turno_id NOT NULL REFERENCES turnos(id)`, ya que el turno dejó de existir—, mientras que con
-    `BEFORE DELETE` la fila **todavía está** y el INSERT entra sin problema. **El bloqueador que
-    parecía impedirlo no existe: sumar `OR DELETE` es viable.**
-  - ⚠ **La discrepancia es de TRES archivos, no de esta nota:** `schema.sql` decía `AFTER` (corregido
-    en el pase de docs del Grupo 1) y la **migración fuente `005_turnos.sql:176` también lo dice**.
-    O la base se cambió a mano en algún momento, o hay que **re-verificar**. `005_turnos.sql` **no se
-    toca** —es historia ya aplicada—, así que la verdad vive en `schema.sql` con su nota.
-  - **Los DOS obstáculos REALES que quedan** (son los que hay que resolver, no la dirección del trigger):
-    1. **`ON DELETE CASCADE` en `turnos_audit_log.turno_id`** (`schema.sql` → TABLAS): al borrar el
-       turno, Postgres **borra su historial completo**. Auditar el DELETE sin tocar esto es escribir
-       una fila que se autodestruye en el mismo statement.
-    2. **La política `audit_select`** resuelve el tenant con
-       `EXISTS (SELECT 1 FROM turnos WHERE id = turnos_audit_log.turno_id …)`: sin el turno, la fila
-       huérfana queda **invisible para todos**.
-  - **Salida natural:** **desnormalizar `medico_id`** en `turnos_audit_log` (y pasar la FK a
-    `ON DELETE SET NULL`, o quitarla). **Volumen verificado: 178 filas / 71 turnos**, así que el
-    backfill de esa columna es trivial.
+- **✅ RESUELTO (migración 040, 2026-08-11) — `turnos_audit_log` no registraba los DELETE.** El
+  trigger cubría solo INSERT y UPDATE, así que **el borrado no dejaba rastro**. Importaba desde la
+  033: el asistente con `gestionar_turnos` borra turnos de verdad y **no quedaba registro de quién**.
+  Se aplicó exactamente la **"salida natural"** que este ítem había identificado —desnormalizar el
+  tenant y soltar la FK—, más la rama nueva en la función y el trigger.
+  - **Qué hizo la 040, en orden** (todo en una transacción; el orden importa): columna `medico_id`
+    nullable → **backfill** por JOIN contra `turnos` **mientras la FK seguía viva** → `SET NOT NULL`
+    → índice `idx_turnos_audit_medico` → `turno_id` a nullable y su FK de **`ON DELETE CASCADE` a
+    `ON DELETE SET NULL`** → `log_turno_cambio()` con **rama DELETE** → trigger recreado como
+    **`AFTER INSERT OR UPDATE OR DELETE`** → `audit_select` reescrita.
+  - **Los DOS obstáculos que el ítem listaba quedaron resueltos:** el `CASCADE` (que borraba el
+    historial completo del turno) pasó a `SET NULL`, y `audit_select` dejó de resolver el tenant por
+    **JOIN al turno** —lo que hacía invisibles justo las filas huérfanas— para leer `medico_id` de la
+    propia fila. De paso se normalizó a `TO authenticated` (antes no declaraba `TO`, o sea `{public}`).
+  - ⚠ **La fila `'eliminado'` nace con `turno_id NULL`, NO con `OLD.id`** — y no es una
+    simplificación: `ON DELETE SET NULL` gobierna las filas hijas que **ya existen**, no habilita
+    insertar una hija nueva apuntando a un padre que se fue. En un AFTER DELETE ese INSERT violaría
+    la FK y **abortaría el borrado entero**. El id del turno queda dentro de `detalle`
+    (`to_jsonb(OLD)`), así que no se pierde información.
+  - ✅ **LA DISCREPANCIA `BEFORE`/`AFTER` QUEDÓ CERRADA, y conviene dejar escrito cómo.** Este ítem
+    afirmaba —verificado contra la base viva en 2026-08-08— que el trigger era **BEFORE**, mientras
+    que `schema.sql` y la migración fuente `005_turnos.sql:176` decían **AFTER**. La 040 hace
+    **DROP + CREATE** del trigger, así que **fija la dirección de forma explícita**: es **AFTER**, y
+    la ambigüedad se termina ahí. `005_turnos.sql` no se tocó (historia ya aplicada) y `schema.sql`
+    quedó alineado en el pase de docs del Grupo 2.
+  - ⚠ **La atribución del actor tiene una red de seguridad, y hay que saber leerla:** `usuario_id` es
+    NOT NULL, así que la rama DELETE usa `COALESCE(auth.uid(), OLD.agendado_por)`. Si el borrado lo
+    hiciera el admin client (service_role, sin sesión), `auth.uid()` es NULL y la fila **atribuiría el
+    borrado a quien AGENDÓ el turno**, no a quien lo borró. Ver el ítem de la baja del endpoint
+    `historia` más abajo: ese camino ya no existe.
 - **✅ RESUELTO (migración 036, 2026-08-07) — `bloqueos_agenda` no tenía `updated_at` ni trigger.**
   La tabla solo definía `created_at` (`005_turnos.sql`), mientras que `turnos` tenía ambos
   (`turnos_updated_at`). Desde la 033 los bloqueos **son editables de verdad**, así que dejó de ser
@@ -330,40 +332,49 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - ⚠ **Dejó una asimetría nueva:** los **2 sitios de `consultas`** quedaron con `(cancelado)` a
     secas. Ver el ítem *"el solapamiento de consultas quedó desalineado"*, más abajo.
 
-- **⚠ PENDIENTE NUEVO (2026-08-08) — `turnos_select` no exige `gestionar_turnos`: es el mismo hueco
-  que la 037 cerró en bloqueos, todavía abierto en `turnos`.** Las dos tablas de la agenda quedaron
-  con **criterios distintos**: `bloqueos_select` ya pide `ver_turnos OR gestionar_turnos`, mientras que
-  `turnos_select` sigue pidiendo **solo `ver_turnos`**.
-  - **El síntoma:** un asistente con **`gestionar_turnos` y SIN `ver_turnos`** puede **escribir** turnos
-    pero **no leerlos**. Eso produce **404 falsos** (los endpoints hacen fetch previo o `.select()` de
-    verificación) y, más grave, **falsos negativos de solapamiento**: la query de solape pasa por
-    `turnos_select`, así que devuelve vacío y **deja crear un turno encima de otro**.
-  - ⚠ **La decisión de raíz no es la política, es el modelo de permisos:** definir si
-    **`gestionar_turnos` debe implicar `ver_turnos`**. Dos salidas, y conviene elegir a conciencia:
-    **(a)** replicar el `OR` de la 037 en `turnos_select` — barato y consistente con *"la agenda es una
-    unidad de permiso"* (033); **(b)** que la UI de `/perfil` **no permita** esa combinación — arregla
-    la causa pero deja la base sin defensa. La (a) no excluye a la (b).
-  - Ver también Bloque B → *"Aislamiento por tenant a nivel base de datos"*.
-- **⚠ PENDIENTE NUEVO (2026-08-08) — el PATCH de turnos no filtra `categoria` en el solapamiento
-  turno-vs-turno.** `turnero/[id]/route.ts:73-80` busca turnos solapados filtrando por `medico_id`,
-  `id ≠` y `estado`, pero **sin `categoria`**: un turno médico choca contra un `curso`, un `personal`
-  o un `administrativo`. **El POST sí lo hace** — `turnero/route.ts:127-135` entra al chequeo solo
-  `if (t.categoria === 'turno_medico')` y filtra `.eq('categoria', 'turno_medico')`.
-  - ⚠ **El comentario del PATCH (`:70-71`) afirma "mismo criterio (y misma forma) que el POST"**: es
-    cierto para `estado` (lo alineó `6cd48c2`) y **falso para `categoria`**.
-  - **Decidir antes de tocar:** ¿un curso debe bloquear un turno médico? Si la respuesta es sí, el que
-    está mal es el **POST**, no el PATCH. Conviene resolverlo junto con el ítem que sigue.
-- **⚠ PENDIENTE NUEVO (2026-08-08) — el solapamiento de `consultas` quedó desalineado con el del
-  turnero.** El commit `6cd48c2` alineó **4** sitios a
-  `.not('estado','in','(pendiente_confirmar,cancelado)')`, pero los **2 de consultas quedaron atrás**
-  con `(cancelado)` a secas: **`api/consultas/route.ts:179`** y **`api/consultas/[id]/route.ts:172`**.
-  - **Consecuencia:** al finalizar una consulta con próximo control, un turno en
-    **`pendiente_confirmar`** en esa franja la **rechaza con 409**, aunque el turnero ya considere esa
-    franja libre. **Dos criterios distintos de "franja ocupada" conviviendo en la misma app.**
-  - ⚠ **Es la asimetría INVERSA del ítem anterior**, y por eso conviene resolverlos juntos: los de
-    consultas **sí** filtran `categoria` y **no** el estado completo; el PATCH del turnero **sí**
-    filtra el estado completo y **no** `categoria`. La salida sana es **un criterio único de "franja
-    ocupada" escrito en un solo lugar** (helper compartido), en vez de seguir parchando 6 sitios.
+- **✅ RESUELTO (migración 039, 2026-08-11) — `turnos_select` no exigía `gestionar_turnos`: era el
+  mismo hueco que la 037 había cerrado en bloqueos.** Las dos tablas de la agenda tenían **criterios
+  distintos** de lectura; ahora comparten el **mismo `USING`**, textualmente.
+  - **Se eligió la salida (a)** de las dos que este ítem planteaba: replicar el `OR` de la 037 en
+    `turnos_select`, consistente con *"la agenda es una unidad de permiso"* (033). ⚠ **La (b)** —que
+    la UI de `/perfil` no permita la combinación— **sigue disponible y no queda excluida**: arregla la
+    causa en la UI, pero por sí sola dejaría la base sin defensa ante PostgREST directo o un script.
+  - **El síntoma que cerró:** un asistente con `gestionar_turnos` y **sin** `ver_turnos` **escribía
+    turnos que no podía leer** → 404 falsos y, más grave, **falsos negativos de solapamiento** (la
+    query de solape pasa por esta política, devolvía vacío y **dejaba crear un turno encima de otro**).
+  - ⚠ **Es defensa en profundidad, no el único arreglo:** la Tanda A ya había unificado el criterio en
+    `src/lib/agenda/solapamiento.ts`, pero **eso no cerraba este bug** —solo lo concentraba en un
+    lugar en vez de seis—, porque el helper consulta con el **cliente de sesión** y pasa por RLS.
+  - **Se hizo con `ALTER POLICY`** (modifica el `USING` **en el lugar**, sin el instante intermedio en
+    que la política no existe). Es **ampliación** de acceso (`A` → `A OR B`), así que era imposible que
+    los datos existentes la violaran y **nadie que ya leyera turnos dejó de leerlos**.
+  - ⚠ **Dejó abierto el ROL** — ver el ítem nuevo de normalización a `TO authenticated`, más abajo.
+- **✅ RESUELTOS JUNTOS (Tanda A del Grupo 2, 2026-08-10, sin migración) — las DOS asimetrías
+  inversas del chequeo de solapamiento.** Eran dos fichas separadas —(1) el PATCH de turnos no
+  filtraba `categoria`; (2) los 2 sitios de `consultas` habían quedado con `(cancelado)` a secas
+  mientras el turnero excluía también `pendiente_confirmar`— y se cerraron con **la salida que ambas
+  proponían**: *"un criterio único de 'franja ocupada' escrito en un solo lugar"*, en vez de seguir
+  parchando 6 sitios.
+  - **El helper:** `src/lib/agenda/solapamiento.ts` → `buscarSolapamientos(...)`. Consolidó **12
+    queries en 6 endpoints** en una sola implementación, que mira `turnos` y `bloqueos_agenda` en
+    paralelo. Ver `CLAUDE.md` → **nota técnica 23**.
+  - **Cómo se resolvió cada asimetría, y qué criterio ganó:**
+    - **`categoria`: "nada se pisa con nada".** El chequeo turno-vs-turno **ya no filtra por
+      categoría** — la agenda modela la **disponibilidad física del médico**, así que un `curso`, un
+      `personal` o un `administrativo` ocupan igual que un `turno_medico`. O sea que, de las dos
+      opciones que la ficha planteaba, **el que estaba mal era el POST**, no el PATCH.
+    - **`estado`: `pendiente_confirmar` SÍ ocupa.** Acá el criterio **cambió respecto de los dos
+      lados**: no ganó ni el del turnero ni el de consultas. Ocupan `pendiente`, `confirmado`,
+      `presente` y `pendiente_confirmar`; **no** ocupan `cancelado`, `ausente` y `reprogramado`.
+      ⚠ Esto **supersede** al commit `6cd48c2`, que había excluido `pendiente_confirmar` en 4 sitios.
+  - ⚠ **De inclusión, no de exclusión.** Se pasó de `.not('estado','in',(…))` a `.in(...)`, derivado
+    de un `Record<TurnoEstado, boolean>` **exhaustivo**. Invierte el default: antes **todo estado
+    nuevo ocupaba** sin que nadie lo decidiera; ahora un valor nuevo en el ENUM **rompe la
+    compilación** hasta que alguien elija. Es la parte del fix que evita que la asimetría vuelva.
+  - **Dos arreglos que la tanda encontró de paso** (no estaban en ninguna ficha): se **propaga el
+    error** de cada query —**8 de las 12** lo descartaban, así que un fallo de red daba `data`
+    `undefined` y el endpoint concluía **"franja libre"**, un *fail-open* silencioso—, y se cerró el
+    agujero de **"una sola fecha"** en el PATCH de turnos con un fetch previo.
 - **⚠ PENDIENTE NUEVO (2026-08-08) — comentario desactualizado en el PATCH de bloqueos.** Deuda de
   comentario, no de código: `src/app/api/turnero/bloqueos/[id]/route.ts:128-130` dice que
   `bloqueos_select` *"hoy es tenant-only, así que si algún día se endurece esa política habría que
@@ -372,6 +383,37 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     de la 037 fue elegido **exactamente** para que esta guarda siga siendo correcta — quien pasa el
     chequeo del endpoint (`gestionar_turnos`) pasa también el SELECT, así que **no hay 403 falsos**.
     Eso es lo que debería decir.
+
+- **⚠ PENDIENTE NUEVO (2026-08-11) — las 4 políticas de `turnos` siguen en `{public}`; falta
+  normalizarlas a `TO authenticated`. Severidad BAJA, defensa en profundidad.** Lo destapó la 039.
+  - **El estado:** `turnos_select` nació en la 005 y se rehízo en la 015 **sin cláusula `TO`**, y en
+    Postgres eso equivale a **`TO PUBLIC`**: la política se evalúa para todos los roles, `anon`
+    incluido. La **029** normalizó otras tablas y la **037** normalizó las **4** de
+    `bloqueos_agenda`, pero **`turnos` quedó afuera de las dos**.
+  - ⚠ **La 039 lo dejó así A PROPÓSITO, no por descuido:** usó `ALTER POLICY`, y `ALTER POLICY` sin
+    `TO` **preserva el rol tal como esté**. Se eligió no mezclar dos cambios en una migración cuyo
+    objetivo era el `USING`. Está documentado en el encabezado de la propia migración.
+  - **No es explotable hoy:** las políticas cuelgan de `get_medico_id()`, que para `anon` no resuelve.
+  - **Salida:** una migración de **normalización de RLS** que las lleve a `TO authenticated`. ⚠ Conviene
+    hacerla **de una sola vez y barriendo el proyecto entero** (no solo `turnos`): son 4 políticas acá,
+    y vale auditar de paso qué otras tablas quedaron sin `TO`. Requiere **DROP + CREATE** de cada una
+    —`ALTER POLICY` no cambia el rol—, así que hay que re-emitir cada expresión **textualmente**, como
+    hizo la 037. Ver Bloque B → *"Aislamiento por tenant a nivel base de datos"*.
+
+- **📌 NOTA DE DECISIÓN (2026-08-11), no es un pendiente que espere input — `historia_clinica` queda
+  DORMIDA.** Se registra acá para que no se reabra como pregunta abierta en una futura tanda.
+  - **Qué se decidió:** la funcionalidad de **antecedentes** del modelo viejo de HC **se
+    discontinúa**. La historia clínica viva es el conjunto de `consultas`.
+  - **La baja es REVERSIBLE y de código, no de datos:** se borraron el endpoint, su schema Zod y sus
+    tipos, y se quitó el insert de fila vacía del alta de pacientes. **La tabla NO se dropeó** y
+    conserva sus filas, con sus 4 políticas RLS, su trigger y su índice intactos.
+  - **Por qué no se dropeó:** conservación de la HC (**Ley 26.529**). ⚠ **Los datos de esa tabla son
+    de prueba** —no hay antecedentes reales cargados—, así que la decisión no destruye información
+    clínica; el criterio conservador se mantiene igual por si el modelo cambia.
+  - **Si el criterio de producto cambia:** el formulario, el endpoint, el schema y los tipos están en
+    el **historial de git**. Los **6 campos** que la tabla modela (patológicos, quirúrgicos, hábitos
+    tóxicos, actividad física/laboral, perímetro de cintura) **no tienen equivalente en `consultas`**,
+    así que recuperarlos es traer de vuelta la funcionalidad, no mapear columnas.
 
 ### Modelo de datos — reglas de unicidad (DECIDIDO, sin aplicar)
 
@@ -1319,11 +1361,24 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     modela (patológicos, quirúrgicos, hábitos tóxicos, actividad física/laboral, perímetro de
     cintura) **no tienen equivalente en `consultas`**, y tanto el formulario como el endpoint, el
     schema y los tipos están en el **historial de git**.
-  - ⬜ **Queda abierto (auditoría de datos, NO de código):** nadie consultó la base, así que no se
-    sabe si `historia_clinica` tiene **antecedentes reales cargados** ni si quedan **turnos
-    huérfanos** (`origen='desde_hc' AND consulta_id IS NULL`) de cuando el endpoint tenía UI. Son dos
-    `SELECT count(*)` de solo lectura. Si aparecen turnos huérfanos, están **en la agenda real del
-    médico** y su limpieza se decide con él, no por criterio técnico.
+  - ✅ **CERRÓ DE RAÍZ la atribución del actor en el borrado con admin client.** La migración **040**
+    (auditoría de DELETE) dejó una **red de seguridad** en la rama DELETE de `log_turno_cambio`:
+    `COALESCE(auth.uid(), OLD.agendado_por)`, porque `usuario_id` es NOT NULL y un borrado por
+    service_role no tiene `auth.uid()`. Esa red **atribuye el borrado a quien AGENDÓ el turno**, no a
+    quien lo borró — y su encabezado señalaba como raíz pendiente *"que `POST /api/pacientes/[id]/
+    historia` deje de borrar con admin client"*. **Ese endpoint era el ÚNICO que borraba turnos con
+    admin client en todo el repo, y ya no existe**, así que la raíz quedó cerrada por eliminación:
+    hoy todo borrado de turnos pasa por el cliente de sesión y `auth.uid()` resuelve.
+    ⚠ **La red de seguridad se conserva** (es correcta como defensa), pero ya no hay ningún camino
+    conocido que la active. ⚠ **El comentario de la migración 040 quedó desactualizado** y **no se
+    toca**: las migraciones son historia aplicada. La verdad vive acá.
+  - ⬜ **Queda abierto (auditoría de datos, NO de código) — reducido a UNA consulta.** Sobre
+    `historia_clinica` **ya está confirmado que los datos son de prueba** (ver la nota de decisión en
+    "Agenda y RLS"), así que esa parte se cierra. Lo que **sí** sigue sin verificar es si quedaron
+    **turnos huérfanos** de cuando el endpoint tenía UI:
+    `SELECT count(*) FROM turnos WHERE origen='desde_hc' AND consulta_id IS NULL;` — un `SELECT` de
+    solo lectura. ⚠ Si devuelve filas, **están en la agenda real del médico** y su limpieza se decide
+    con él, no por criterio técnico.
 - **✅ RESUELTO (T1, T2 y T6) — los 4 `any` de Route Handlers que NO eran de `catch`.** Quedaron
   deliberadamente afuera de L1 por ser diseño de tipos, y se cerraron en el bloque de tipos de
   dominio: los 2 `(profile as any)[permisoRequerido]` de `consultas` (**T2**), el
@@ -1738,11 +1793,16 @@ Unificación visual y pulido de interfaz. Detalle y ubicaciones en `DESIGN.md`
 - **Contraste / accesibilidad:** verificar contraste de los tintes de categoría del
   turnero (10–12% de opacidad) y de `muted-foreground` sobre `muted`, sobre todo en la
   página pública de verificación.
-- **⚠ COSMÉTICO NUEVO (2026-08-08) — un bloqueo creado sobre un turno cancelado se dibuja a MEDIA
-  FRANJA. Severidad MUY BAJA.** Efecto secundario visible del fix de solapamiento (`6cd48c2`): desde
-  que los turnos `cancelado` y `pendiente_confirmar` **ya no ocupan la franja**, se puede crear un
-  bloqueo encima de uno de ellos — y cuando eso pasa, **FullCalendar apila los eventos solapados** y
-  el bloqueo se pinta con la mitad del ancho, como si cubriera medio horario.
+- **⚠ COSMÉTICO (2026-08-08, ampliado 2026-08-11) — un bloqueo creado sobre un turno que NO ocupa la
+  franja se dibuja a MEDIA FRANJA. Severidad MUY BAJA.** Efecto secundario visible del criterio de
+  solapamiento: cuando un turno no ocupa, se puede crear un bloqueo encima de él, y ahí
+  **FullCalendar apila los eventos solapados** y el bloqueo se pinta con la mitad del ancho, como si
+  cubriera medio horario.
+  - **⚠ La SUPERFICIE se amplió con la Tanda A del Grupo 2 (2026-08-10), y el conjunto cambió — no
+    solo creció.** Antes (`6cd48c2`) los estados que no ocupaban eran **dos**: `cancelado` y
+    `pendiente_confirmar`. Ahora son **tres**: **`cancelado`, `ausente` y `reprogramado`** — y
+    **`pendiente_confirmar` volvió a OCUPAR**, así que ese camino al bug desapareció y aparecieron
+    dos nuevos. Fuente única del criterio: `src/lib/agenda/solapamiento.ts` (`CLAUDE.md` → nota 23).
   - **Es solo pintura:** el bloqueo cubre el rango completo y se respeta al agendar; lo único raro es
     el ancho del evento.
   - **Salidas posibles:** `eventOverlap` / `slotEventOverlap` en la config del calendario, o un
