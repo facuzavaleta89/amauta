@@ -3,15 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { difusionBaseSchema } from '@/lib/validations/difusion.schema'
 import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
-
-async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', userId)
-    .single()
-  return profile?.role === 'medico' ? userId : profile?.medico_id ?? null
-}
+import { resolverTenant } from '@/lib/auth/tenant'
 
 export async function GET(
   request: NextRequest,
@@ -32,7 +24,7 @@ export async function GET(
     const rl = await rateLimit(request, { key: `difusion_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const { data, error } = await supabase
@@ -72,7 +64,7 @@ export async function PATCH(
     const rl = await rateLimit(request, { key: `difusion_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     // Verificar pertenencia al tenant antes de actualizar
@@ -132,7 +124,7 @@ export async function DELETE(
     const rl = await rateLimit(request, { key: `difusion_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     // Verificar pertenencia antes de eliminar

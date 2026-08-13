@@ -3,18 +3,10 @@ import { createClient } from '@/lib/supabase/server'
 import * as z from 'zod'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { uuidSchema, isValidDateStr } from '@/lib/validations/shared'
+import { resolverTenant } from '@/lib/auth/tenant'
 
 interface RouteParams {
   params: Promise<{ id: string }>
-}
-
-async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', userId)
-    .single()
-  return profile?.role === 'medico' ? userId : profile?.medico_id ?? null
 }
 
 // ── GET /api/certificados/[id] ────────────────────────────────
@@ -35,7 +27,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const rl = await rateLimit(request, { key: `certificados_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const { data, error } = await supabase
@@ -73,7 +65,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const rl = await rateLimit(request, { key: `certificados_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     // Verificar tenant

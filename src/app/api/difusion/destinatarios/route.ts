@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-social'
+import { resolverTenant } from '@/lib/auth/tenant'
 
 // GET /api/difusion/destinatarios
 // Lista los pacientes del tenant a los que el envío de difusión por email les puede
@@ -13,15 +14,6 @@ import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-soc
 const emailFormat = z.string().email()
 
 // Mismo patrón que el resto de /api/difusion.
-async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', userId)
-    .single()
-  return profile?.role === 'medico' ? userId : profile?.medico_id ?? null
-}
-
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient()
@@ -32,7 +24,7 @@ export async function GET(request: NextRequest) {
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     // Tenant-only, sin chequeo de rol.
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     // Sin .limit(): un consultorio unipersonal entra entero. Orden por nombre.

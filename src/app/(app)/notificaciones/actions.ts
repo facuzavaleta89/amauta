@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { resolverTenant } from '@/lib/auth/tenant'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
@@ -30,15 +31,7 @@ export async function enviarMensaje(formData: {
   if (!parsed.success) return { error: parsed.error.issues[0].message }
 
   // Obtener medico_id del remitente
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile) return { error: 'Perfil no encontrado' }
-
-  const medicoId = profile.role === 'medico' ? user.id : profile.medico_id
+  const medicoId = await resolverTenant(supabase, user.id)
   if (!medicoId) return { error: 'Sin médico vinculado' }
 
   // Validar que el destinatario pertenezca al mismo tenant (si es individual)
@@ -139,15 +132,7 @@ export async function obtenerUsuariosTenant() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { data: [], error: 'No autenticado' }
 
-  const { data: myProfile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', user.id)
-    .single()
-
-  if (!myProfile) return { data: [], error: 'Perfil no encontrado' }
-
-  const medicoId = myProfile.role === 'medico' ? user.id : myProfile.medico_id
+  const medicoId = await resolverTenant(supabase, user.id)
   if (!medicoId) return { data: [], error: 'Sin médico vinculado' }
 
   // Traer: el médico + todos sus asistentes, excluyendo el usuario actual
@@ -179,13 +164,7 @@ export async function contarMensajesNoLeidos(): Promise<number> {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return 0
 
-    const { data: myProfile } = await supabase
-      .from('profiles')
-      .select('role, medico_id')
-      .eq('id', user.id)
-      .single()
-
-    const medicoId = myProfile?.role === 'medico' ? user.id : myProfile?.medico_id
+    const medicoId = await resolverTenant(supabase, user.id)
     if (!medicoId) return 0
 
     // 1) No leídos individuales (destinatario = yo, leido = false)
@@ -232,13 +211,7 @@ export async function obtenerMensajesNoLeidos(): Promise<MensajeNoLeido[]> {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return []
 
-    const { data: myProfile } = await supabase
-      .from('profiles')
-      .select('role, medico_id')
-      .eq('id', user.id)
-      .single()
-
-    const medicoId = myProfile?.role === 'medico' ? user.id : myProfile?.medico_id
+    const medicoId = await resolverTenant(supabase, user.id)
     if (!medicoId) return []
 
     const cols = 'id, parent_id, asunto, remitente_id, es_grupal, created_at'

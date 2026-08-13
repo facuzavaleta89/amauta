@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { tenantDeProfile } from '@/lib/auth/tenant'
 import type { MensajeInterno } from '@/types/mensaje'
 import { revalidatePath } from 'next/cache'
 
@@ -34,7 +35,10 @@ export async function obtenerBandeja(): Promise<{
   const tieneAcceso = isMedico || (profile.acceso_mensajeria ?? false)
   if (!tieneAcceso) return { threads: [], currentUserId: user.id, error: 'Sin acceso a mensajería' }
 
-  const medicoId = isMedico ? user.id : (profile.medico_id ?? '')
+  // ⚠ `tenantDeProfile` y no `resolverTenant`: el `profile` de arriba se sigue
+  // usando (`acceso_mensajeria`), así que una query interna sería una segunda
+  // lectura de la misma fila.
+  const medicoId = tenantDeProfile(profile, user.id)
   if (!medicoId) return { threads: [], currentUserId: user.id, error: 'Sin médico vinculado' }
 
   // Paso 1: mensajes raíz sin join a profiles

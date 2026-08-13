@@ -1,4 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
+import { resolverTenant } from '@/lib/auth/tenant'
+import { redirect } from 'next/navigation'
 import { Plus, Search, Megaphone } from 'lucide-react'
 import Link from 'next/link'
 
@@ -24,13 +26,8 @@ export default async function DifusionPage(props: {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', user.id)
-    .single()
-
-  const tenantMedicoId = profile?.role === 'medico' ? user.id : profile?.medico_id
+  const tenantMedicoId = await resolverTenant(supabase, user.id)
+  if (!tenantMedicoId) redirect('/onboarding')
 
   // Obtener posts
   let query = supabase

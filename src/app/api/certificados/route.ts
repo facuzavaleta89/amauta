@@ -4,15 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { certificadoSchema } from '@/lib/validations/pedido.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { congelarPdfDocumento, getBaseUrl, construirEmisorSnapshot } from '@/lib/pdf/documentos'
-
-async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', userId)
-    .single()
-  return profile?.role === 'medico' ? userId : profile?.medico_id ?? null
-}
+import { resolverTenant } from '@/lib/auth/tenant'
 
 // ── GET /api/certificados ─────────────────────────────────────
 
@@ -25,7 +17,7 @@ export async function GET(request: NextRequest) {
     const rl = await rateLimit(request, { key: `certificados_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const { searchParams } = new URL(request.url)
@@ -70,7 +62,7 @@ export async function POST(request: NextRequest) {
     const rl = await rateLimit(request, { key: `certificados_post:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const body = await request.json()

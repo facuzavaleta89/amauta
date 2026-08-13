@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { resolverTenant } from '@/lib/auth/tenant'
 import { DifusionForm } from '@/components/difusion/difusion-form'
 import Link from 'next/link'
 import { ChevronLeft } from 'lucide-react'
@@ -28,13 +29,7 @@ export default async function EditarDifusionPage({ params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', user.id)
-    .single()
-
-  const tenantMedicoId = profile?.role === 'medico' ? user.id : profile?.medico_id
+  const tenantMedicoId = await resolverTenant(supabase, user.id)
   if (!tenantMedicoId) redirect('/onboarding')
 
   const { data: post, error } = await supabase

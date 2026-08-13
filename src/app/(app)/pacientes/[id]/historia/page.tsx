@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { resolverTenant } from '@/lib/auth/tenant'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { notFound, redirect } from 'next/navigation'
 import type { Metadata } from 'next'
@@ -26,17 +27,7 @@ export default async function HistoriaClinicaPage({ params }: Props) {
   if (!user) notFound()
 
   // Perfil y permisos
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', user.id)
-    .single()
-
-
-  const tenantMedicoId =
-    profile?.role === 'medico'    ? user.id :
-    profile?.role === 'asistente' ? profile?.medico_id :
-    null
+  const tenantMedicoId = await resolverTenant(supabase, user.id)
 
   if (!tenantMedicoId) redirect('/dashboard')
 
