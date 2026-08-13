@@ -28,12 +28,14 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
   const defaultValues: Partial<PacienteFormValues> = initialData
     ? {
         ...initialData,
-        obra_social_id: initialData.obra_social_id ?? undefined,
+        // `null` y no `undefined`: si el usuario NO toca el selector, el campo tiene que
+        // viajar igual en el PATCH (ver el comentario de handleObraSocialChange).
+        obra_social_id: initialData.obra_social_id ?? null,
         telefono: initialData.telefono ?? '',
         email: initialData.email ?? '',
         provincia: initialData.provincia ?? '',
         ciudad: initialData.ciudad ?? '',
-        obra_social_otro: initialData.obra_social_otro ?? '',
+        obra_social_otro: initialData.obra_social_otro ?? null,
         numero_afiliado: initialData.numero_afiliado ?? '',
       }
     : {
@@ -67,23 +69,39 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
     getInitialObraSocialSelector()
   )
 
+  // ⚠ Los campos que se sueltan van en `null` EXPLÍCITO, nunca en `undefined`.
+  // `JSON.stringify` (el submit de abajo) DESCARTA las propiedades `undefined`, así que la
+  // clave no llegaba al PATCH, no entraba en el UPDATE y la columna conservaba el valor
+  // viejo: era imposible sacarle a un paciente la obra social del catálogo. Con `null` la
+  // clave viaja, el schema la acepta (es `.nullable()`) y la columna se limpia de verdad.
+  //
+  // ⚠ El número de afiliado se REINICIA en CUALQUIER cambio de obra social: pertenece a la obra social
+  // anterior, así que al cambiarla (incluso entre dos del catálogo) deja de aplicar y no
+  // puede quedar colgado. Va en `''` y NO en `null`: a diferencia de los dos campos de
+  // obra social, `numero_afiliado` NO es nullable en el schema
+  // (`.optional().or(z.literal(''))`), así que un `null` se rechazaría con 400.
   function handleObraSocialChange(value: string) {
     setObraSocialSelector(value)
+    setValue('numero_afiliado', '') // se reinicia siempre: el afiliado pertenece a la obra social anterior
     if (value === 'particular') {
-      setValue('obra_social_id', undefined)
-      setValue('obra_social_otro', '')
+      setValue('obra_social_id', null)
+      setValue('obra_social_otro', null)
     } else if (value === 'otra') {
-      setValue('obra_social_id', undefined)
+      setValue('obra_social_id', null)
       // obra_social_otro se completa manualmente
     } else if (value === '') {
-      setValue('obra_social_id', undefined)
-      setValue('obra_social_otro', '')
+      setValue('obra_social_id', null)
+      setValue('obra_social_otro', null)
     } else {
       // OS del catálogo
       setValue('obra_social_id', Number(value))
-      setValue('obra_social_otro', '')
+      setValue('obra_social_otro', null)
     }
   }
+
+  // Derivada en render: el afiliado depende de que el paciente TENGA obra social, no de
+  // que esté en el catálogo — con "otra" (texto libre) el número sigue aplicando.
+  const sinObraSocial = obraSocialSelector === 'particular' || obraSocialSelector === ''
 
   async function onSubmit(data: PacienteFormValues) {
     setIsSubmitting(true)
@@ -259,7 +277,11 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
             {/* Número de afiliado */}
             <div className="space-y-2">
               <Label htmlFor="numero_afiliado">Número de Afiliado</Label>
-              <Input id="numero_afiliado" {...register('numero_afiliado')} />
+              <Input
+                id="numero_afiliado"
+                {...register('numero_afiliado')}
+                disabled={sinObraSocial}
+              />
             </div>
 
             {/* Campo de texto libre — solo visible cuando se elige "Otra" */}
