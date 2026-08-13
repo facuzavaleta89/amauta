@@ -55,14 +55,14 @@ async function getTenantContext(
 
 // ── GET /api/consultas/[id] ───────────────────────────────────
 
-export async function GET(_request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = await rateLimit(_request, { key: `consulta_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `consulta_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id, 'ver_historia_clinica')
@@ -272,14 +272,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 // ── DELETE /api/consultas/[id] ────────────────────────────────
 // Solo permite eliminar borradores
 
-export async function DELETE(_request: NextRequest, { params }: RouteContext) {
+export async function DELETE(request: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-    const rl = await rateLimit(_request, { key: `consulta_delete:${user.id}`, limit: 10, windowMs: 60_000 })
+    const rl = await rateLimit(request, { key: `consulta_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     const ctx = await getTenantContext(supabase, user.id, 'crear_consultas')
