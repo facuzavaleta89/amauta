@@ -6,6 +6,7 @@ import { difusionEnvioSchema } from '@/lib/validations/difusion.schema'
 import { DIFUSION_LIMITE_DIARIO } from '@/constants/difusion'
 import { sendEmail } from '@/lib/email/resend'
 import { renderDifusionEmailHtml } from '@/lib/email/difusion-template'
+import { resolverTenant } from '@/lib/auth/tenant'
 
 // El SDK de Resend requiere runtime Node (no Edge).
 export const runtime = 'nodejs'
@@ -17,15 +18,6 @@ const emailFormat = z.string().email()
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // Mismo patrón que src/app/api/difusion/route.ts y [id]/route.ts.
-async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', userId)
-    .single()
-  return profile?.role === 'medico' ? userId : profile?.medico_id ?? null
-}
-
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
@@ -36,7 +28,7 @@ export async function POST(request: NextRequest) {
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
     // Control tenant-only (cualquier miembro del tenant puede enviar; sin chequeo de rol).
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     // ── Validar body ─────────────────────────────────────────────

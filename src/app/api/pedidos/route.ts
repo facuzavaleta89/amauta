@@ -4,19 +4,9 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { pedidoSchema } from '@/lib/validations/pedido.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { congelarPdfDocumento, getBaseUrl, construirEmisorSnapshot } from '@/lib/pdf/documentos'
+import { resolverTenant } from '@/lib/auth/tenant'
 
 // ── Helpers ──────────────────────────────────────────────────
-
-async function getTenantMedicoId(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', userId)
-    .single()
-
-  if (!profile) return null
-  return profile.role === 'medico' ? userId : profile.medico_id ?? null
-}
 
 // ── GET /api/pedidos ──────────────────────────────────────────
 
@@ -29,7 +19,7 @@ export async function GET(request: NextRequest) {
     const rl = await rateLimit(request, { key: `pedidos_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const { searchParams } = new URL(request.url)
@@ -79,7 +69,7 @@ export async function POST(request: NextRequest) {
     const rl = await rateLimit(request, { key: `pedidos_post:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await getTenantMedicoId(supabase, user.id)
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
     if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
 
     const body = await request.json()

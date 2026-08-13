@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { pacienteSchema } from '@/lib/validations/paciente.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { resolverTenant } from '@/lib/auth/tenant'
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,16 +22,7 @@ export async function GET(request: NextRequest) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id')
-      .eq('id', user.id)
-      .single()
-
-    const tenantMedicoId =
-      profile?.role === 'medico'    ? user.id :
-      profile?.role === 'asistente' ? profile.medico_id :
-      null
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
 
     if (!tenantMedicoId) {
       return NextResponse.json({ error: 'No autorizado: sin tenant asignado' }, { status: 403 })
@@ -79,16 +71,7 @@ export async function POST(request: NextRequest) {
     // Determinar el medico_id del tenant:
     // - Si es médico: su propio id
     // - Si es asistente: el medico_id al que está vinculado
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id')
-      .eq('id', user.id)
-      .single()
-
-    const tenantMedicoId =
-      profile?.role === 'medico'    ? user.id :
-      profile?.role === 'asistente' ? profile.medico_id :
-      null
+    const tenantMedicoId = await resolverTenant(supabase, user.id)
 
     if (!tenantMedicoId) {
       return NextResponse.json({ error: 'No autorizado: sin tenant asignado' }, { status: 403 })

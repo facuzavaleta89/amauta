@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { tenantDeProfile } from '@/lib/auth/tenant'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
@@ -33,10 +34,10 @@ export default async function EstudiosPage({ params }: Props) {
     .eq('id', user.id)
     .single()
 
-  const tenantMedicoId =
-    profile?.role === 'medico'    ? user.id :
-    profile?.role === 'asistente' ? profile?.medico_id :
-    null
+  // ⚠ `tenantDeProfile` y no `resolverTenant`: el `profile` de arriba se sigue
+  // usando abajo (`esMedico`), así que una query interna sería una segunda lectura
+  // de la misma fila.
+  const tenantMedicoId = tenantDeProfile(profile, user.id)
 
   if (!tenantMedicoId) redirect('/dashboard')
 
