@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PlusCircle, ClipboardList, FileText, Calendar, Search, X, Ban } from 'lucide-react'
 import Link from 'next/link'
-import { formatFecha } from '@/lib/utils'
+import { formatFecha } from '@/lib/utils/format-date'
 
 export const metadata = {
   title: 'Pedidos de Estudios — Amauta',

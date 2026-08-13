@@ -27,7 +27,8 @@ import {
   type DifusionEstado,
   type DifusionCanal,
 } from '@/lib/validations/difusion.schema'
-import { formatFecha, cn } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { formatFecha } from '@/lib/utils/format-date'
 import { EnviarModal } from '@/components/difusion/enviar-modal'
 
 // Tipo explícito del post de difusión

@@ -6,8 +6,7 @@ import {
   StyleSheet,
   Image,
 } from '@react-pdf/renderer'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { formatFechaLarga } from '@/lib/utils/format-date'
 import type { Matricula } from '@/types/roles'
 
 const VERDE_PRIMARIO = '#3d7a5c'
@@ -309,12 +308,6 @@ interface CertificadoPDFProps {
   qrCodeUrl?: string | null
 }
 
-function formatFecha(dateStr: string) {
-  try {
-    return format(new Date(dateStr + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })
-  } catch { return dateStr }
-}
-
 function calcEdad(dob: string): string {
   try {
     const birth = new Date(dob + 'T12:00:00')
@@ -368,7 +361,7 @@ export function CertificadoPDFTemplate({ certificado, medico, qrCodeUrl }: Certi
             {/* Fecha de emisión en encabezado */}
             <View style={s.fechaBadge}>
               <Text style={s.fechaBadgeLabel}>Fecha de emisión</Text>
-              <Text style={s.fechaBadgeValue}>{formatFecha(certificado.fecha_certificado)}</Text>
+              <Text style={s.fechaBadgeValue}>{formatFechaLarga(certificado.fecha_certificado)}</Text>
             </View>
           </View>
         </View>
@@ -392,7 +385,7 @@ export function CertificadoPDFTemplate({ certificado, medico, qrCodeUrl }: Certi
             </View>
             <View style={s.row}>
               <Text style={s.label}>Fecha de Nac.:</Text>
-              <Text style={s.value}>{formatFecha(certificado.paciente_dob)}{edad ? ` (${edad})` : ''}</Text>
+              <Text style={s.value}>{formatFechaLarga(certificado.paciente_dob)}{edad ? ` (${edad})` : ''}</Text>
             </View>
             {certificado.obra_social_nombre && (
               <View style={s.row}>
@@ -424,7 +417,7 @@ export function CertificadoPDFTemplate({ certificado, medico, qrCodeUrl }: Certi
               <View style={s.reposoItem}>
                 <Text style={s.reposoLabel}>Inicio</Text>
                 <Text style={[s.reposoValue, { fontSize: 10, marginTop: 4 }]}>
-                  {formatFecha(certificado.fecha_inicio_reposo)}
+                  {formatFechaLarga(certificado.fecha_inicio_reposo)}
                 </Text>
               </View>
             )}
@@ -435,7 +428,7 @@ export function CertificadoPDFTemplate({ certificado, medico, qrCodeUrl }: Certi
         {certificado.valido_hasta && (
           <View style={s.validezBox}>
             <Text style={s.validezText}>
-              Válido hasta: {formatFecha(certificado.valido_hasta)}
+              Válido hasta: {formatFechaLarga(certificado.valido_hasta)}
             </Text>
           </View>
         )}
@@ -468,7 +461,7 @@ export function CertificadoPDFTemplate({ certificado, medico, qrCodeUrl }: Certi
 
         {/* Footer */}
         <View style={s.footer} fixed>
-          <Text style={s.footerText}>{formatFecha(certificado.fecha_certificado)}</Text>
+          <Text style={s.footerText}>{formatFechaLarga(certificado.fecha_certificado)}</Text>
           <Text style={s.footerBrand}>AMAUTA</Text>
           <Text style={s.footerText}>Doc. ID: {certificado.id.slice(0, 8).toUpperCase()}</Text>
         </View>

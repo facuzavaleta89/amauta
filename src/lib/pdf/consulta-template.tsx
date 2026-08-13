@@ -8,6 +8,7 @@ import {
 } from '@react-pdf/renderer'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { formatFechaAR } from '@/lib/utils/format-date'
 import type { Consulta } from '@/types/consulta'
 import type { Matricula } from '@/types/roles'
 
@@ -90,9 +91,15 @@ const s = StyleSheet.create({
 
 // ── Helpers ───────────────────────────────────────────────────
 
+// ⚠ Recibe `consulta.fecha_hora`, que es TIMESTAMPTZ: hay que fijar la zona de
+// salida. Con el `format()` anterior se renderizaba en la zona del RUNTIME (UTC en
+// Vercel), así que día Y hora salían corridos +3 h y una consulta nocturna quedaba
+// impresa en el PDF con la fecha del día siguiente. Ver CLAUDE.md → nota técnica 18.
+// El try/catch se conserva (estaba antes): degrada al string crudo en vez de
+// romper la generación del PDF.
 function fmtFecha(str: string) {
   try {
-    return format(new Date(str), "d 'de' MMMM 'de' yyyy — HH:mm 'hs'", { locale: es })
+    return formatFechaAR(str, "d 'de' MMMM 'de' yyyy — HH:mm 'hs'")
   } catch { return str }
 }
 
@@ -325,7 +332,7 @@ export function ConsultaIndividualPDF({ consulta, paciente, medico }: ConsultaPD
         <View style={s.footer} fixed>
           <Text style={s.footerText}>Consulta ID: {consulta.id.slice(0, 8).toUpperCase()}</Text>
           <Text style={s.footerBrand}>AMAUTA</Text>
-          <Text style={s.footerText}>Documento generado el {format(new Date(), "dd/MM/yyyy", { locale: es })}</Text>
+          <Text style={s.footerText}>Documento generado el {formatFechaAR(new Date(), 'dd/MM/yyyy')}</Text>
         </View>
       </Page>
     </Document>

@@ -1,20 +1,11 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { rateLimitAction, getIpFromHeaders } from '@/lib/rate-limit'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { formatFechaLarga } from '@/lib/utils/format-date'
 import { XCircle, AlertTriangle, ShieldCheck, User, Calendar, FileText, Award, Clock } from 'lucide-react'
 import React from 'react'
 
 interface PageProps {
   params: Promise<{ codigo: string }>
-}
-
-function formatFechaLarga(dateStr: string) {
-  try {
-    return format(new Date(dateStr + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })
-  } catch {
-    return dateStr
-  }
 }
 
 interface Matricula {

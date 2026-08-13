@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
 import { buscarSolapamientos, DURACION_TURNO_CONTROL_MS } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { formatFechaAR } from '@/lib/utils/format-date'
 import type { PermisosAsistente, UserRole } from '@/types'
 
 interface RouteContext {
@@ -222,7 +223,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           .maybeSingle()
 
         if (!existente) {
-          const fechaConsulta = new Date(pacienteRes.data.fecha_hora).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          // ⚠ Zona AR fija: este texto se PERSISTE en `turnos.notas`. Ver el mismo
+          // bloque en `api/consultas/route.ts` — `dd/MM/yyyy` replica la forma que
+          // producía el `toLocaleDateString('es-AR', …)` anterior (13/08/2026), que
+          // formateaba en la zona del runtime (UTC en Vercel).
+          const fechaConsulta = formatFechaAR(pacienteRes.data.fecha_hora, 'dd/MM/yyyy')
           const { error: insertTurnoError } = await supabase.from('turnos').insert({
             paciente_id:  pacienteRes.data.paciente_id,
             fecha_inicio: fechaIsoInicio,

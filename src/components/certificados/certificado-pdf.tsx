@@ -8,7 +8,7 @@ import {
   User, Calendar, Award, Clock, Ban, AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { formatFechaLarga } from '@/lib/utils'
+import { formatFechaLarga } from '@/lib/utils/format-date'
 import { buildDocumentoFilename } from '@/lib/pdf/filename'
 
 import { Button } from '@/components/ui/button'
