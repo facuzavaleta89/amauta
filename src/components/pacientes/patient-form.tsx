@@ -13,7 +13,11 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
-import { pacienteSchema, type PacienteFormValues } from '@/lib/validations/paciente.schema'
+import {
+  pacienteSchema,
+  type PacienteFormValues,
+  type PacienteFormInput,
+} from '@/lib/validations/paciente.schema'
 import type { ObraSocial, Paciente } from '@/types/paciente'
 
 interface PatientFormProps {
@@ -25,7 +29,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const defaultValues: Partial<PacienteFormValues> = initialData
+  const defaultValues: Partial<PacienteFormInput> = initialData
     ? {
         ...initialData,
         // `null` y no `undefined`: si el usuario NO toca el selector, el campo tiene que
@@ -52,7 +56,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
     control,
     setValue,
     formState: { errors },
-  } = useForm<PacienteFormValues>({
+  } = useForm<PacienteFormInput, unknown, PacienteFormValues>({
     resolver: zodResolver(pacienteSchema),
     defaultValues,
   })

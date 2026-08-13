@@ -76,18 +76,25 @@ export const pacienteSchema = z.object({
   // viejo — el UPDATE no la incluye. Era un bug real: el cambio no persistía y el toast
   // decía "Paciente actualizado".
   obra_social_id: z.number().nullable().optional(),
+  // El `.transform()` normaliza en la ESCRITURA (patrón de `receta.schema.ts` →
+  // `indicaciones`/`diagnostico`): recorta los espacios de BORDE y colapsa a `null` lo que
+  // quede vacío, así un texto de solo espacios no entra sucio a la base. ⚠ El trim es de
+  // bordes: un nombre real con espacios internos ("Obra Social del Personal Rural") se
+  // guarda entero.
   obra_social_otro: z
     .string()
     .max(100, 'El nombre no puede superar los 100 caracteres')
     .nullable()
     .optional()
-    .or(z.literal('')),
+    .or(z.literal(''))
+    .transform((val) => val?.trim() || null),
   numero_afiliado: z.string().max(50).optional().or(z.literal('')),
 }).refine(
   (data) => {
-    // Si no hay obra_social_id y hay texto en obra_social_otro, debe tener al menos 2 chars
-    if (!data.obra_social_id && data.obra_social_otro && data.obra_social_otro.trim().length > 0) {
-      return data.obra_social_otro.trim().length >= 2
+    // Si no hay obra_social_id y hay texto en obra_social_otro, debe tener al menos 2 chars.
+    // Sin `.trim()`: el valor ya llega recortado por el `.transform()` del campo.
+    if (!data.obra_social_id && data.obra_social_otro && data.obra_social_otro.length > 0) {
+      return data.obra_social_otro.length >= 2
     }
     return true
   },
@@ -97,4 +104,8 @@ export const pacienteSchema = z.object({
   }
 )
 
+// ⚠ Dos tipos porque el `.transform()` de `obra_social_otro` hace que ENTRADA y SALIDA
+// difieran: el form se tipa con el INPUT y `handleSubmit` entrega el OUTPUT. Ver el
+// `useForm` de tres genéricos en `patient-form.tsx` (mismo patrón que `consulta-detail.tsx`).
 export type PacienteFormValues = z.infer<typeof pacienteSchema>
+export type PacienteFormInput  = z.input<typeof pacienteSchema>
