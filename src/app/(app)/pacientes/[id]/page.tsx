@@ -10,6 +10,7 @@ import Link from 'next/link'
 import { resolverObraSocial } from '@/lib/pacientes/obra-social'
 import { differenceInYears, format } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { formatFecha } from '@/lib/utils/format-date'
 import type { Metadata } from 'next'
 
 interface Props {
@@ -172,7 +173,10 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
             <div className="flex justify-between items-center text-sm">
               <span className="text-muted-foreground">Registrado</span>
               <span className="text-muted-foreground">
-                {format(new Date(paciente.created_at), "d MMM yyyy", { locale: es })}
+                {/* `created_at` es TIMESTAMPTZ: zona AR fija (antes salía en la del
+                    runtime, UTC en Vercel, y después de las 21:00 ART mostraba el día
+                    siguiente). `formatFecha` ya usa "d MMM yyyy" por defecto. */}
+                {formatFecha(paciente.created_at)}
               </span>
             </div>
           </CardContent>

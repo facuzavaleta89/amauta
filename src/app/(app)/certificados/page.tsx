@@ -3,7 +3,7 @@ import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { Button } from '@/components/ui/button'
 import { PlusCircle, Award, Calendar, Ban, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
-import { formatFecha } from '@/lib/utils'
+import { formatFecha } from '@/lib/utils/format-date'
 import { CertificadosFiltros } from '@/components/certificados/certificados-filtros'
 import { Suspense } from 'react'
 

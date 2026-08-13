@@ -6,8 +6,7 @@ import {
   StyleSheet,
   Image,
 } from '@react-pdf/renderer'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { formatFechaLarga } from '@/lib/utils/format-date'
 import type { Matricula } from '@/types/roles'
 
 const VERDE_PRIMARIO = '#3d7a5c'
@@ -271,12 +270,6 @@ interface PedidoPDFProps {
   qrCodeUrl?: string | null
 }
 
-function formatFecha(dateStr: string) {
-  try {
-    return format(new Date(dateStr + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })
-  } catch { return dateStr }
-}
-
 function calcEdad(dob: string): string {
   try {
     const birth = new Date(dob + 'T12:00:00')
@@ -293,8 +286,8 @@ function formatMatriculas(matriculas?: Matricula[]): string | null {
 
 export function PedidoPDFTemplate({ pedido, medico, qrCodeUrl }: PedidoPDFProps) {
   const edad = calcEdad(pedido.paciente_dob)
-  const fechaFormateada = formatFecha(pedido.fecha_pedido)
-  const nacFormateado = formatFecha(pedido.paciente_dob)
+  const fechaFormateada = formatFechaLarga(pedido.fecha_pedido)
+  const nacFormateado = formatFechaLarga(pedido.paciente_dob)
   const matriculasStr = formatMatriculas(medico.matriculas)
   const displayName = medico.titulo ? `${medico.titulo} ${medico.full_name}` : medico.full_name
 

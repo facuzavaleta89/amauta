@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { consultaSchema } from '@/lib/validations/consulta.schema'
 import { buscarSolapamientos, DURACION_TURNO_CONTROL_MS } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { formatFechaAR } from '@/lib/utils/format-date'
 import type { PermisosAsistente, UserRole } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -228,7 +229,12 @@ export async function POST(request: NextRequest) {
         .maybeSingle()
 
       if (!existente) {
-        const fechaConsulta = new Date(consulta.fecha_hora).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        // ⚠ Zona AR fija: este texto se PERSISTE en `turnos.notas`. Con el
+        // `toLocaleDateString` anterior se formateaba en la zona del runtime (UTC en
+        // Vercel), así que una consulta cargada después de las 21:00 ART quedaba con la
+        // fecha del día siguiente escrita en la nota, para siempre. `dd/MM/yyyy` replica
+        // exactamente la forma que producía es-AR con day/month '2-digit' (13/08/2026).
+        const fechaConsulta = formatFechaAR(consulta.fecha_hora, 'dd/MM/yyyy')
         const { error: insertTurnoError } = await supabase.from('turnos').insert({
           paciente_id:  consulta.paciente_id,
           fecha_inicio: fechaIsoInicio,
