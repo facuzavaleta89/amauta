@@ -69,10 +69,17 @@ export const pacienteSchema = z.object({
   provincia: z.string().max(50).optional().or(z.literal('')),
   ciudad: z.string().max(50).optional().or(z.literal('')),
 
-  obra_social_id: z.number().optional(),
+  // ⚠ Los dos campos de obra social aceptan NULL a propósito, y no es cosmético:
+  // SOLTAR la obra social del catálogo (pasar a texto libre o a "particular") exige
+  // mandar `obra_social_id: null` EXPLÍCITO. Con `undefined` la clave se pierde en el
+  // `JSON.stringify` del formulario, nunca llega al PATCH y la columna conserva el valor
+  // viejo — el UPDATE no la incluye. Era un bug real: el cambio no persistía y el toast
+  // decía "Paciente actualizado".
+  obra_social_id: z.number().nullable().optional(),
   obra_social_otro: z
     .string()
     .max(100, 'El nombre no puede superar los 100 caracteres')
+    .nullable()
     .optional()
     .or(z.literal('')),
   numero_afiliado: z.string().max(50).optional().or(z.literal('')),
