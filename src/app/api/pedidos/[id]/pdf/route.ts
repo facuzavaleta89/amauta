@@ -9,7 +9,7 @@ interface RouteParams {
   params: Promise<{ id: string }>
 }
 
-export async function GET(_req: NextRequest, { params }: RouteParams) {
+export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params
     const supabase = await createClient()
@@ -50,7 +50,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 
     // ── 2) Fallback: regenerar al vuelo. NO se escribe pdf_path (sin backfill). ──
-    const buffer = await generarPdfDocumento('pedido', pedido as Pedido, getBaseUrl(_req))
+    const buffer = await generarPdfDocumento('pedido', pedido as Pedido, getBaseUrl(req))
     return new NextResponse(new Uint8Array(buffer), { status: 200, headers })
   } catch (err) {
     console.error('[GET /api/pedidos/[id]/pdf]', err)

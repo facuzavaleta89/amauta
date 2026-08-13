@@ -9,7 +9,7 @@ interface RouteParams {
   params: Promise<{ id: string }>
 }
 
-export async function GET(_req: NextRequest, { params }: RouteParams) {
+export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params
     const supabase = await createClient()
@@ -54,7 +54,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 
     // ── 2) Fallback: regenerar al vuelo. NO se escribe pdf_path (sin backfill). ──
-    const buffer = await generarPdfDocumento('certificado', certificado as Certificado, getBaseUrl(_req))
+    const buffer = await generarPdfDocumento('certificado', certificado as Certificado, getBaseUrl(req))
     return new NextResponse(new Uint8Array(buffer), { status: 200, headers })
   } catch (err) {
     console.error('[GET /api/certificados/[id]/pdf]', err)
