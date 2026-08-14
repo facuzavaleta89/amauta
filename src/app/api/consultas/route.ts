@@ -5,57 +5,11 @@ import { consultaSchema } from '@/lib/validations/consulta.schema'
 import { buscarSolapamientos, DURACION_TURNO_CONTROL_MS } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { formatFechaAR } from '@/lib/utils/format-date'
-import type { PermisosAsistente, UserRole } from '@/types'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 export const dynamic = 'force-dynamic'
 
 // ── Helpers ────────────────────────────────────────────────────
-
-/**
- * Los permisos que el `select` de `getTenantContext` REALMENTE proyecta: 11 de los 12.
- *
- * ⚠ `acceso_mensajeria` se omite a propósito, porque no está en la proyección. Tipar la fila
- * con `PermisosAsistente` completo mentiría, y dejar `permisoRequerido: PermisoKey` habilitaría
- * pedir una clave que la query no trajo: el chequeo leería `undefined` y **denegaría en
- * silencio**. Si alguna vez hace falta ese permiso acá, hay que sumarlo al `select` (cambio de
- * runtime), no ensanchar el tipo.
- */
-type PermisosProyectados = Omit<PermisosAsistente, 'acceso_mensajeria'>
-
-/** Permisos que este helper puede exigir: solo los proyectados. */
-type PermisoProyectado = keyof PermisosProyectados
-
-/** Fila devuelta por el `select` de abajo: rol, tenant y los 11 permisos proyectados. */
-type ProfileTenantRow = PermisosProyectados & {
-  role: UserRole
-  medico_id: string | null
-}
-
-async function getTenantContext(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  permisoRequerido: PermisoProyectado
-) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id, ver_pacientes, editar_pacientes, ver_historia_clinica, crear_consultas, finalizar_consultas, ver_turnos, gestionar_turnos, ver_pedidos, crear_pedidos, ver_certificados, crear_certificados')
-    .eq('id', userId)
-    .single<ProfileTenantRow>()
-
-  if (!profile) return null
-
-  // Si es asistente y no tiene el permiso requerido
-  if (profile.role === 'asistente' && !profile[permisoRequerido]) {
-    return null
-  }
-
-  const tenantMedicoId =
-    profile.role === 'medico'    ? userId :
-    profile.role === 'asistente' ? profile.medico_id :
-    null
-
-  return tenantMedicoId ? { tenantMedicoId, role: profile.role } : null
-}
 
 // ── GET /api/consultas?paciente_id=&page=&limit= ───────────────
 
@@ -68,8 +22,13 @@ export async function GET(request: NextRequest) {
     const rl = await rateLimit(request, { key: `consultas_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id, 'ver_historia_clinica')
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos para ver historias clínicas' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para ver historias clínicas'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     const { searchParams } = new URL(request.url)
     const pacienteId = searchParams.get('paciente_id')
@@ -86,7 +45,7 @@ export async function GET(request: NextRequest) {
       .from('consultas')
       .select('*', { count: 'exact' })
       .eq('paciente_id', pacienteId)
-      .eq('medico_id', ctx.tenantMedicoId)
+      .eq('medico_id', acceso.tenantMedicoId)
       .order('fecha_hora', { ascending: false })
       .range(from, to)
 
@@ -113,8 +72,13 @@ export async function POST(request: NextRequest) {
     const rl = await rateLimit(request, { key: `consultas_post:${user.id}`, limit: 20, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id, 'crear_consultas')
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos para registrar consultas' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'crear_consultas')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para registrar consultas'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     const body = await request.json()
     const result = consultaSchema.safeParse(body)
@@ -137,7 +101,7 @@ export async function POST(request: NextRequest) {
       .from('pacientes')
       .select('archivado_at')
       .eq('id', consulta.paciente_id)
-      .eq('creado_por', ctx.tenantMedicoId)
+      .eq('creado_por', acceso.tenantMedicoId)
       .single()
 
     if (pacError || !pac) {
@@ -174,7 +138,7 @@ export async function POST(request: NextRequest) {
 
       const { hayTurnoSolapado, hayBloqueoSolapado } = await buscarSolapamientos({
         supabase,
-        medicoId: ctx.tenantMedicoId,
+        medicoId: acceso.tenantMedicoId,
         inicio: fechaIsoInicio,
         fin: fechaIsoFin,
       })
@@ -192,7 +156,7 @@ export async function POST(request: NextRequest) {
       .from('consultas')
       .insert({
         ...consulta,
-        medico_id: ctx.tenantMedicoId,
+        medico_id: acceso.tenantMedicoId,
         // Autor de la consulta (migración 038). `medico_id` es el TENANT, no quién
         // la escribió: sin esta columna la regla "descarta el médico o el asistente
         // que lo creó" no se puede expresar. Lo fija el servidor, nunca el cliente.
@@ -245,7 +209,7 @@ export async function POST(request: NextRequest) {
           categoria:    'turno_medico',
           origen:       'desde_hc',
           consulta_id:  nueva.id,
-          medico_id:    ctx.tenantMedicoId,
+          medico_id:    acceso.tenantMedicoId,
           agendado_por: user.id,
         })
 

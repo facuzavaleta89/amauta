@@ -4,35 +4,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { estudioMetadataSchema, validateEstudioFile } from '@/lib/validations/estudio.schema'
 import { ESTUDIOS_BUCKET, buildEstudioPath } from '@/lib/supabase/storage'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 export const dynamic = 'force-dynamic'
 
 // ── Helpers ────────────────────────────────────────────────────
-
-/**
- * Resuelve el tenant del usuario y valida ver_historia_clinica.
- * Médico → siempre; asistente → solo con el permiso. Null si no está autorizado.
- */
-async function getTenantContext(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id, ver_historia_clinica')
-    .eq('id', userId)
-    .single()
-
-  if (!profile) return null
-  if (profile.role === 'asistente' && !profile.ver_historia_clinica) return null
-
-  const tenantMedicoId =
-    profile.role === 'medico'    ? userId :
-    profile.role === 'asistente' ? profile.medico_id :
-    null
-
-  return tenantMedicoId ? { tenantMedicoId, role: profile.role as 'medico' | 'asistente' } : null
-}
 
 // ── GET /api/estudios?paciente_id= ─────────────────────────────
 // Lista los estudios de un paciente (orden: fecha_estudio desc, created_at desc).
@@ -46,8 +22,13 @@ export async function GET(request: NextRequest) {
     const rl = await rateLimit(request, { key: `estudios_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos para ver estudios' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para ver estudios'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     const pacienteId = new URL(request.url).searchParams.get('paciente_id')
     if (!pacienteId) {
@@ -60,7 +41,7 @@ export async function GET(request: NextRequest) {
       .from('pacientes')
       .select('id')
       .eq('id', pacienteId)
-      .eq('creado_por', ctx.tenantMedicoId)
+      .eq('creado_por', acceso.tenantMedicoId)
       .single()
     if (!pac) return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
 
@@ -92,8 +73,13 @@ export async function POST(request: NextRequest) {
     const rl = await rateLimit(request, { key: `estudios_post:${user.id}`, limit: 20, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos para subir estudios' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para subir estudios'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     // ── Parseo del FormData ────────────────────────────────────
     const formData = await request.formData()
@@ -126,7 +112,7 @@ export async function POST(request: NextRequest) {
       .from('pacientes')
       .select('archivado_at')
       .eq('id', meta.data.paciente_id)
-      .eq('creado_por', ctx.tenantMedicoId)
+      .eq('creado_por', acceso.tenantMedicoId)
       .single()
 
     if (pacError || !pac) {
@@ -141,7 +127,7 @@ export async function POST(request: NextRequest) {
 
     // ── Subida a Storage (cliente de sesión → RLS aísla por tenant) ──
     const storagePath = buildEstudioPath(
-      ctx.tenantMedicoId,
+      acceso.tenantMedicoId,
       meta.data.paciente_id,
       file.name,
       file.type,

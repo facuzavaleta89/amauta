@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { resolverTenant } from '@/lib/auth/tenant'
-import { verificarPermiso } from '@/lib/utils/verificar-permiso'
+import { resolverAcceso } from '@/lib/auth/tenant'
 import { notFound, redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { HistoriaClinicaView } from '@/components/pacientes/consultas/historia-clinica-view'
@@ -16,9 +15,6 @@ export const metadata: Metadata = {
 }
 
 export default async function HistoriaClinicaPage({ params }: Props) {
-  // Guard: redirecciona a /sin-acceso si es asistente sin permiso ver_historia_clinica
-  await verificarPermiso('ver_historia_clinica')
-
   const { id } = await params
   const supabase = await createClient()
 
@@ -26,10 +22,16 @@ export default async function HistoriaClinicaPage({ params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) notFound()
 
-  // Perfil y permisos
-  const tenantMedicoId = await resolverTenant(supabase, user.id)
-
-  if (!tenantMedicoId) redirect('/dashboard')
+  // Permiso + tenant en UNA sola lectura de `profiles`. Antes eran dos:
+  // `verificarPermiso` hacía su propia query y `resolverTenant` otra.
+  // Los destinos de redirect son los mismos que antes, uno por motivo.
+  const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+  if (!acceso.ok) {
+    if (acceso.motivo === 'sin-permiso') redirect('/sin-acceso')
+    if (acceso.motivo === 'sin-tenant') redirect('/dashboard')
+    redirect('/login')
+  }
+  const tenantMedicoId = acceso.tenantMedicoId
 
   // Paciente
   const { data: paciente, error: pacienteError } = await supabase

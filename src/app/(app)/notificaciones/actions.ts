@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import { resolverTenant } from '@/lib/auth/tenant'
+import { resolverTenant, tenantDeProfile } from '@/lib/auth/tenant'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
@@ -44,8 +44,7 @@ export async function enviarMensaje(formData: {
 
     if (!destProfile) return { error: 'El destinatario no existe' }
 
-    const destMedicoId =
-      destProfile.role === 'medico' ? parsed.data.destinatario_id : destProfile.medico_id
+    const destMedicoId = tenantDeProfile(destProfile, parsed.data.destinatario_id)
 
     if (destMedicoId !== medicoId) {
       return { error: 'El destinatario no pertenece al mismo consultorio' }
