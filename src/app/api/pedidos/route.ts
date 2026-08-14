@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { pedidoSchema } from '@/lib/validations/pedido.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { congelarPdfDocumento, getBaseUrl, construirEmisorSnapshot } from '@/lib/pdf/documentos'
-import { resolverTenant } from '@/lib/auth/tenant'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -19,8 +19,13 @@ export async function GET(request: NextRequest) {
     const rl = await rateLimit(request, { key: `pedidos_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_pedidos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para ver pedidos'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     const { searchParams } = new URL(request.url)
     const pacienteId = searchParams.get('paciente_id')
@@ -36,8 +41,12 @@ export async function GET(request: NextRequest) {
       `)
       .order('fecha_pedido', { ascending: false })
 
-    // Filtrar por tenant (via pacientes.creado_por)
-    // RLS ya filtra, pero añadimos explícito para el join
+    // ⚠ El aislamiento por tenant de esta query NO lo hace la aplicación: no hay
+    // ningún filtro de tenant acá. Lo garantiza la RLS `pedidos_select`, que exige
+    // `check_permiso(auth.uid(), 'ver_pedidos')` Y que el pedido pertenezca a un
+    // paciente del médico (`EXISTS … pacientes … creado_por = get_medico_id()`).
+    // Ver `schema.sql` → sección de políticas de `pedidos`.
+    // Los dos filtros de abajo son solo acotamiento por query params, no de tenant.
     if (pacienteId) {
       query = query.eq('paciente_id', pacienteId)
     }
@@ -69,8 +78,14 @@ export async function POST(request: NextRequest) {
     const rl = await rateLimit(request, { key: `pedidos_post:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'crear_pedidos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para emitir pedidos'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const body = await request.json()
     const result = pedidoSchema.safeParse(body)

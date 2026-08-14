@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { pacienteSchema } from '@/lib/validations/paciente.schema'
 import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
-import { resolverTenant } from '@/lib/auth/tenant'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -30,10 +30,14 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     const rl = await rateLimit(request, { key: `paciente_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_pacientes')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para ver pacientes'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const { data: paciente, error } = await supabase
       .from('pacientes')
@@ -73,10 +77,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const rl = await rateLimit(request, { key: `paciente_patch:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'editar_pacientes')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para editar pacientes'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     // Verificar pertenencia al tenant antes de actualizar
     const { data: existing, error: findError } = await supabase
