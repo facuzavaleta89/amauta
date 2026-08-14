@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { certificadoSchema } from '@/lib/validations/pedido.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { congelarPdfDocumento, getBaseUrl, construirEmisorSnapshot } from '@/lib/pdf/documentos'
-import { resolverTenant } from '@/lib/auth/tenant'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 // ── GET /api/certificados ─────────────────────────────────────
 
@@ -17,8 +17,14 @@ export async function GET(request: NextRequest) {
     const rl = await rateLimit(request, { key: `certificados_get:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_certificados')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para ver certificados'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const { searchParams } = new URL(request.url)
     const pacienteId = searchParams.get('paciente_id')
@@ -62,8 +68,14 @@ export async function POST(request: NextRequest) {
     const rl = await rateLimit(request, { key: `certificados_post:${user.id}`, limit: 30, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-    if (!tenantMedicoId) return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'crear_certificados')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para emitir certificados'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const body = await request.json()
     const result = certificadoSchema.safeParse(body)
