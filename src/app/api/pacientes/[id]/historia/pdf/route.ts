@@ -7,34 +7,10 @@ import React from 'react'
 import type { DocumentProps } from '@react-pdf/renderer'
 import { sanitizePdfFilename } from '@/lib/utils'
 import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-social'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 interface RouteParams {
   params: Promise<{ id: string }>
-}
-
-/**
- * Resuelve el tenant del usuario y valida el permiso ver_historia_clinica.
- * Devuelve null si no está autorizado (médico → siempre; asistente → solo con el permiso).
- */
-async function getTenantContext(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id, ver_historia_clinica')
-    .eq('id', userId)
-    .single()
-
-  if (!profile) return null
-  if (profile.role === 'asistente' && !profile.ver_historia_clinica) return null
-
-  const tenantMedicoId =
-    profile.role === 'medico' ? userId :
-    profile.role === 'asistente' ? profile.medico_id :
-    null
-
-  return tenantMedicoId ? { tenantMedicoId } : null
 }
 
 // GET /api/pacientes/[id]/historia/pdf — PDF de la HC completa (consultas finalizadas)
@@ -46,8 +22,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return new NextResponse('No autorizado', { status: 401 })
 
-    const ctx = await getTenantContext(supabase, user.id)
-    if (!ctx) return new NextResponse('Sin permisos', { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return new NextResponse(msg, { status: 403 })
+    }
 
     // Paciente (cliente de sesión → RLS activa: aísla por tenant)
     const { data: paciente } = await supabase
@@ -63,7 +44,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       .from('consultas')
       .select('*')
       .eq('paciente_id', id)
-      .eq('medico_id', ctx.tenantMedicoId)
+      .eq('medico_id', acceso.tenantMedicoId)
       .eq('estado', 'finalizada')
       .order('fecha_hora', { ascending: true })
 
@@ -81,7 +62,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       numero_afiliado: paciente.numero_afiliado ?? null,
     }
     // Médico firmante: helper compartido (admin client; ya autorizamos el acceso arriba)
-    const medicoData = await cargarMedicoFirmante(ctx.tenantMedicoId)
+    const medicoData = await cargarMedicoFirmante(acceso.tenantMedicoId)
 
     const buffer = await renderToBuffer(
       React.createElement(HCCompletaPDF, {

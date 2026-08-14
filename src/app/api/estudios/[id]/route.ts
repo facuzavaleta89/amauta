@@ -4,36 +4,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { ESTUDIOS_BUCKET } from '@/lib/supabase/storage'
 import { sanitizePdfFilename } from '@/lib/utils'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 export const dynamic = 'force-dynamic'
 
 interface RouteParams {
   params: Promise<{ id: string }>
-}
-
-/**
- * Resuelve el tenant del usuario y valida ver_historia_clinica.
- * Médico → siempre; asistente → solo con el permiso. Null si no está autorizado.
- */
-async function getTenantContext(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id, ver_historia_clinica')
-    .eq('id', userId)
-    .single()
-
-  if (!profile) return null
-  if (profile.role === 'asistente' && !profile.ver_historia_clinica) return null
-
-  const tenantMedicoId =
-    profile.role === 'medico'    ? userId :
-    profile.role === 'asistente' ? profile.medico_id :
-    null
-
-  return tenantMedicoId ? { tenantMedicoId, role: profile.role as 'medico' | 'asistente' } : null
 }
 
 // ── GET /api/estudios/[id]?disposition=inline|attachment ──────────
@@ -52,8 +28,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const rl = await rateLimit(request, { key: `estudio_file:${user.id}`, limit: 60, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos para ver estudios' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para ver estudios'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     const dispositionParam = new URL(request.url).searchParams.get('disposition')
     const disposition = dispositionParam === 'inline' ? 'inline' : 'attachment'
@@ -108,11 +89,16 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const rl = await rateLimit(request, { key: `estudio_delete:${user.id}`, limit: 20, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id)
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     // Borrar es exclusivo del médico (validación explícita, además de la RLS).
-    if (ctx.role !== 'medico') {
+    if (acceso.role !== 'medico') {
       return NextResponse.json({ error: 'Solo el médico puede eliminar estudios' }, { status: 403 })
     }
 
@@ -134,7 +120,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       .from('pacientes')
       .select('archivado_at')
       .eq('id', estudio.paciente_id)
-      .eq('creado_por', ctx.tenantMedicoId)
+      .eq('creado_por', acceso.tenantMedicoId)
       .single()
 
     if (pac?.archivado_at) {

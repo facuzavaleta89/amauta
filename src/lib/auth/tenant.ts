@@ -36,6 +36,7 @@
 // ============================================================================
 
 import type { createClient } from '@/lib/supabase/server'
+import type { PermisoKey, PermisosAsistente, UserRole } from '@/types/roles'
 
 /**
  * Cliente de **sesión** (el de `@/lib/supabase/server`), no el admin.
@@ -95,4 +96,95 @@ export async function resolverTenant(
     .single()
 
   return tenantDeProfile(profile, userId)
+}
+
+/**
+ * Fila de `profiles` que proyecta `resolverAcceso`: rol, tenant y los **12**
+ * permisos. Se declara para poder indexar por `PermisoKey` sin castear.
+ */
+type ProfileAcceso = PermisosAsistente & {
+  role: UserRole
+  medico_id: string | null
+}
+
+/**
+ * Resultado de `resolverAcceso`: unión discriminada por `ok`.
+ *
+ * ⚠ **`motivo` y no `null`**, a diferencia de `resolverTenant`. La razón es
+ * concreta: los llamadores necesitan distinguir **"no tiene el permiso"** de
+ * **"no tiene médico vinculado"** para responder la verdad. Con un `null` que
+ * colapsa las tres causas, un asistente sin `medico_id` recibía *"Sin permisos
+ * para ver estudios"* — un mensaje falso, porque el permiso lo tenía.
+ */
+export type Acceso =
+  | { ok: true; tenantMedicoId: string; role: UserRole }
+  | { ok: false; motivo: 'sin-perfil' | 'sin-permiso' | 'sin-tenant' }
+
+/**
+ * Resuelve el tenant **y** chequea un permiso granular, en UNA sola query.
+ *
+ * Es el canon de los endpoints que hacen las dos cosas. Para los que solo
+ * necesitan el tenant, `resolverTenant` sigue siendo el correcto.
+ *
+ * ── ORDEN DE LOS CHEQUEOS (importa) ─────────────────────────────────────────
+ * perfil → **permiso** → tenant. Ese orden es parte del contrato: si el
+ * resultado es `'sin-tenant'`, significa que el chequeo de permiso **ya pasó**.
+ * De eso depende `verificarPermiso` (`lib/utils/verificar-permiso.ts`), que
+ * pregunta solo por el permiso y trata `'sin-tenant'` como "pasa".
+ *
+ * ── CRITERIO DEL PERMISO: FAIL-CLOSED ───────────────────────────────────────
+ * Se usa `!profile[permiso]`, **nunca `permiso === false`**. Ante un valor
+ * inesperado (`null`/`undefined`) deniega en vez de permitir. Hoy las 12
+ * columnas son `BOOLEAN NOT NULL DEFAULT FALSE`, así que los dos criterios
+ * coinciden — pero el `=== false` sería seguro por una constraint de la base y
+ * no por el código. El **médico no chequea permiso**: tiene acceso total (misma
+ * regla que `check_permiso()` en la base, `schema.sql:768`).
+ *
+ * ── NO RESPONDE, DEVUELVE ───────────────────────────────────────────────────
+ * Igual que `resolverTenant`: ni `NextResponse` ni `redirect()`. Los llamadores
+ * reaccionan distinto —403 JSON, 403 texto plano, `redirect('/sin-acceso')`,
+ * `redirect('/dashboard')`— y esa variedad es correcta en cada contexto.
+ *
+ * ⚠ La proyección de permisos es **FIJA**: los 12 se listan explícitamente en el
+ * `.select()`. No se interpola `permiso` en la query, a propósito — evita armar
+ * el select por concatenación y hace que la forma de la query no dependa del
+ * argumento.
+ *
+ * @param supabase - Cliente de sesión.
+ * @param userId   - `auth.uid()` del usuario actual.
+ * @param permiso  - Permiso granular exigido. Es un parámetro y no una constante
+ *                   porque hay endpoints que lo eligen en runtime (el PATCH de
+ *                   consultas pide `finalizar_consultas` o `crear_consultas`
+ *                   según el body — regla de negocio 1).
+ */
+export async function resolverAcceso(
+  supabase: SupabaseSesion,
+  userId: string,
+  permiso: PermisoKey
+): Promise<Acceso> {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select(
+      'role, medico_id, ' +
+      'ver_pacientes, editar_pacientes, ' +
+      'ver_historia_clinica, crear_consultas, finalizar_consultas, ' +
+      'ver_turnos, gestionar_turnos, ' +
+      'ver_pedidos, crear_pedidos, ' +
+      'ver_certificados, crear_certificados, ' +
+      'acceso_mensajeria'
+    )
+    .eq('id', userId)
+    .single<ProfileAcceso>()
+
+  if (!profile) return { ok: false, motivo: 'sin-perfil' }
+
+  // El médico tiene acceso total; al asistente se le exige el permiso.
+  if (profile.role === 'asistente' && !profile[permiso]) {
+    return { ok: false, motivo: 'sin-permiso' }
+  }
+
+  const tenantMedicoId = tenantDeProfile(profile, userId)
+  if (!tenantMedicoId) return { ok: false, motivo: 'sin-tenant' }
+
+  return { ok: true, tenantMedicoId, role: profile.role }
 }

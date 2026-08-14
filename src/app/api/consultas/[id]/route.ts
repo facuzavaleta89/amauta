@@ -5,52 +5,10 @@ import { consultaSchema } from '@/lib/validations/consulta.schema'
 import { buscarSolapamientos, DURACION_TURNO_CONTROL_MS } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { formatFechaAR } from '@/lib/utils/format-date'
-import type { PermisosAsistente, UserRole } from '@/types'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 interface RouteContext {
   params: Promise<{ id: string }>
-}
-
-/**
- * Los permisos que el `select` de `getTenantContext` REALMENTE proyecta: 11 de los 12.
- *
- * ⚠ `acceso_mensajeria` se omite a propósito, porque no está en la proyección. Tipar la fila
- * con `PermisosAsistente` completo mentiría, y dejar `permisoRequerido: PermisoKey` habilitaría
- * pedir una clave que la query no trajo: el chequeo leería `undefined` y **denegaría en
- * silencio**. Si alguna vez hace falta ese permiso acá, hay que sumarlo al `select` (cambio de
- * runtime), no ensanchar el tipo.
- */
-type PermisosProyectados = Omit<PermisosAsistente, 'acceso_mensajeria'>
-
-/** Permisos que este helper puede exigir: solo los proyectados. */
-type PermisoProyectado = keyof PermisosProyectados
-
-/** Fila devuelta por el `select` de abajo: rol, tenant y los 11 permisos proyectados. */
-type ProfileTenantRow = PermisosProyectados & {
-  role: UserRole
-  medico_id: string | null
-}
-
-async function getTenantContext(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  permisoRequerido: PermisoProyectado
-) {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id, ver_pacientes, editar_pacientes, ver_historia_clinica, crear_consultas, finalizar_consultas, ver_turnos, gestionar_turnos, ver_pedidos, crear_pedidos, ver_certificados, crear_certificados')
-    .eq('id', userId)
-    .single<ProfileTenantRow>()
-
-  if (!profile) return null
-  if (profile.role === 'asistente' && !profile[permisoRequerido]) return null
-
-  const tenantMedicoId =
-    profile.role === 'medico'    ? userId :
-    profile.role === 'asistente' ? profile.medico_id :
-    null
-
-  return tenantMedicoId ? { tenantMedicoId, role: profile.role } : null
 }
 
 // ── GET /api/consultas/[id] ───────────────────────────────────
@@ -65,14 +23,19 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     const rl = await rateLimit(request, { key: `consulta_get_one:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id, 'ver_historia_clinica')
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     const { data, error } = await supabase
       .from('consultas')
       .select('*')
       .eq('id', id)
-      .eq('medico_id', ctx.tenantMedicoId)
+      .eq('medico_id', acceso.tenantMedicoId)
       .single()
 
     if (error || !data) return NextResponse.json({ error: 'Consulta no encontrada' }, { status: 404 })
@@ -100,8 +63,13 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     const requiereFinalizar = body.estado === 'finalizada'
     const permiso = requiereFinalizar ? 'finalizar_consultas' : 'crear_consultas'
 
-    const ctx = await getTenantContext(supabase, user.id, permiso)
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, permiso)
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     // Verificar que la consulta existe y pertenece al tenant
     const { data: existing, error: fetchError } = await supabase
@@ -110,7 +78,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       // `turnoHaCambiado`, y esa comparación no decide nada ahora (decide finalizar).
       .select('id, estado')
       .eq('id', id)
-      .eq('medico_id', ctx.tenantMedicoId)
+      .eq('medico_id', acceso.tenantMedicoId)
       .single()
 
     if (fetchError || !existing) {
@@ -167,7 +135,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
       const { hayTurnoSolapado, hayBloqueoSolapado } = await buscarSolapamientos({
         supabase,
-        medicoId: ctx.tenantMedicoId,
+        medicoId: acceso.tenantMedicoId,
         inicio: fechaIsoInicio,
         fin: fechaIsoFin,
       })
@@ -238,7 +206,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
             categoria:    'turno_medico',
             origen:       'desde_hc',
             consulta_id:  id,
-            medico_id:    ctx.tenantMedicoId,
+            medico_id:    acceso.tenantMedicoId,
             agendado_por: user.id,
           })
 
@@ -282,14 +250,19 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     const rl = await rateLimit(request, { key: `consulta_delete:${user.id}`, limit: 10, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const ctx = await getTenantContext(supabase, user.id, 'crear_consultas')
-    if (!ctx) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'crear_consultas')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos'
+                : acceso.motivo === 'sin-tenant'  ? 'No tenés un médico asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
+    }
 
     const { data: existing } = await supabase
       .from('consultas')
       .select('id, estado, creado_por, paciente_id')
       .eq('id', id)
-      .eq('medico_id', ctx.tenantMedicoId)
+      .eq('medico_id', acceso.tenantMedicoId)
       .single()
 
     if (!existing) return NextResponse.json({ error: 'Consulta no encontrada' }, { status: 404 })
@@ -302,7 +275,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     // creó. Validación explícita además de la RLS (migración 038), mismo criterio que el
     // DELETE de estudios. ⚠ `creado_por` es NULL en los borradores anteriores a esa
     // migración: sin autor conocido, solo el médico puede descartarlos.
-    if (ctx.role !== 'medico' && existing.creado_por !== user.id) {
+    if (acceso.role !== 'medico' && existing.creado_por !== user.id) {
       return NextResponse.json(
         { error: 'Solo el médico o quien creó el borrador puede descartarlo' },
         { status: 403 }
@@ -317,7 +290,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       .from('pacientes')
       .select('archivado_at')
       .eq('id', existing.paciente_id)
-      .eq('creado_por', ctx.tenantMedicoId)
+      .eq('creado_por', acceso.tenantMedicoId)
       .single()
 
     if (pac?.archivado_at) {
@@ -334,7 +307,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       .from('consultas')
       .delete()
       .eq('id', id)
-      .eq('medico_id', ctx.tenantMedicoId)
+      .eq('medico_id', acceso.tenantMedicoId)
       .select('id')
       .maybeSingle()
 

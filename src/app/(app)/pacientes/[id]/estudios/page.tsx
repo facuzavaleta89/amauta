@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { tenantDeProfile } from '@/lib/auth/tenant'
-import { verificarPermiso } from '@/lib/utils/verificar-permiso'
+import { resolverAcceso } from '@/lib/auth/tenant'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ChevronLeft } from 'lucide-react'
@@ -19,29 +18,24 @@ export const metadata: Metadata = {
 }
 
 export default async function EstudiosPage({ params }: Props) {
-  // Guard: redirige a /sin-acceso si es asistente sin ver_historia_clinica.
-  await verificarPermiso('ver_historia_clinica')
-
   const { id } = await params
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) notFound()
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, medico_id')
-    .eq('id', user.id)
-    .single()
+  // Permiso + tenant + rol en UNA sola lectura de `profiles`. Antes eran dos:
+  // `verificarPermiso` hacía su propia query y acá se leía el profile de nuevo.
+  // Los destinos de redirect son los mismos que antes, uno por motivo.
+  const acceso = await resolverAcceso(supabase, user.id, 'ver_historia_clinica')
+  if (!acceso.ok) {
+    if (acceso.motivo === 'sin-permiso') redirect('/sin-acceso')
+    if (acceso.motivo === 'sin-tenant') redirect('/dashboard')
+    redirect('/login')
+  }
 
-  // ⚠ `tenantDeProfile` y no `resolverTenant`: el `profile` de arriba se sigue
-  // usando abajo (`esMedico`), así que una query interna sería una segunda lectura
-  // de la misma fila.
-  const tenantMedicoId = tenantDeProfile(profile, user.id)
-
-  if (!tenantMedicoId) redirect('/dashboard')
-
-  const esMedico = profile?.role === 'medico'
+  // Mismo valor que antes: el rol sale del profile que ya leyó `resolverAcceso`.
+  const esMedico = acceso.role === 'medico'
 
   // Paciente (RLS aísla por tenant).
   const { data: paciente, error: pacienteError } = await supabase
