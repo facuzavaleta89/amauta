@@ -47,10 +47,14 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
   const { data: { user } } = await supabase.auth.getUser()
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, ver_historia_clinica')
     .eq('id', user!.id)
     .single()
   const esMedico = profile?.role === 'medico'
+  // Solo UX: decide si los botones de Historia clínica / Estudios se ven habilitados.
+  // El médico siempre puede; el asistente, según su permiso. La protección real la
+  // hacen las páginas destino (403 / redirect a /sin-acceso) y no depende de esto.
+  const puedeVerHistoria = esMedico || !!profile?.ver_historia_clinica
 
   const archivado = Boolean(paciente.archivado_at)
 
@@ -276,19 +280,35 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
             </Link>
           </Button>
         )}
-        <Button variant="default" className="gap-2" asChild>
-          <Link href={`/pacientes/${id}/historia`}>
+        {/* Sin `ver_historia_clinica` los dos botones se muestran deshabilitados y SIN
+            <Link>: un <a> no se apaga con `disabled`, así que hay que sacar el link. */}
+        {puedeVerHistoria ? (
+          <Button variant="default" className="gap-2" asChild>
+            <Link href={`/pacientes/${id}/historia`}>
+              <FileText className="h-4 w-4" />
+              Historia clínica
+            </Link>
+          </Button>
+        ) : (
+          <Button variant="default" className="gap-2" disabled>
             <FileText className="h-4 w-4" />
             Historia clínica
-          </Link>
-        </Button>
+          </Button>
+        )}
         {/* Estudios: se pueden ver aun archivado (la subida se bloquea dentro de la página). */}
-        <Button variant="outline" className="gap-2" asChild>
-          <Link href={`/pacientes/${id}/estudios`}>
+        {puedeVerHistoria ? (
+          <Button variant="outline" className="gap-2" asChild>
+            <Link href={`/pacientes/${id}/estudios`}>
+              <FolderOpen className="h-4 w-4" />
+              Estudios
+            </Link>
+          </Button>
+        ) : (
+          <Button variant="outline" className="gap-2" disabled>
             <FolderOpen className="h-4 w-4" />
             Estudios
-          </Link>
-        </Button>
+          </Button>
+        )}
       </div>
     </div>
   )

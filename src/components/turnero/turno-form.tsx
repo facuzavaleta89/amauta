@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
 import { reformatDateForInput } from '@/lib/utils/fecha-input'
+import { usePermisos } from '@/contexts/permisos-context'
 import type { PacienteBusqueda, TurnoConPaciente } from '@/types'
 
 import {
@@ -84,6 +85,11 @@ function formatDateToIsoOutput(localString: string) {
 
 export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, onSaved, onSwitchToBlock }: TurnoFormModalProps) {
   const [isLoading, setIsLoading] = useState(false)
+
+  // Solo UX: sin el permiso, el atajo a la historia clínica se muestra apagado en vez
+  // de rebotar contra /sin-acceso. La protección real es server-side y no cambia.
+  const { tienePermiso } = usePermisos()
+  const puedeVerHistoria = tienePermiso('ver_historia_clinica')
 
   const form = useForm<TurnoFormData>({
     resolver: zodResolver(turnoSchema),
@@ -328,14 +334,29 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                     <div className="flex items-center justify-between">
                       <FormLabel>Paciente <span className="text-destructive">*</span></FormLabel>
                       {initialData?.paciente_id && (
-                        <Link
-                          href={`/pacientes/${initialData.paciente_id}/historia`}
-                          className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
-                          target="_blank"
-                        >
-                          <FileText className="h-3 w-3" />
-                          Ver historia clínica
-                        </Link>
+                        puedeVerHistoria ? (
+                          <Link
+                            href={`/pacientes/${initialData.paciente_id}/historia`}
+                            className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
+                            target="_blank"
+                          >
+                            <FileText className="h-3 w-3" />
+                            Ver historia clínica
+                          </Link>
+                        ) : (
+                          /* Sin permiso: mismo texto, apagado y sin navegación.
+                             ⚠ Acá NO se usa <Button disabled> como en los otros sitios: este
+                             atajo es un LINK DE TEXTO dentro de la fila del label, y meterle un
+                             botón rompería el bloque. El equivalente visual de "deshabilitado"
+                             para un link de texto es texto muted sin hover ni underline. */
+                          <span
+                            aria-disabled="true"
+                            className="text-xs text-muted-foreground/50 font-medium flex items-center gap-1 cursor-not-allowed select-none"
+                          >
+                            <FileText className="h-3 w-3" />
+                            Ver historia clínica
+                          </span>
+                        )
                       )}
                     </div>
                     <FormControl>

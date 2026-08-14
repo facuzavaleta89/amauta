@@ -13,6 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Eye, Pencil, FileText, ChevronRight, Archive } from 'lucide-react'
+import { usePermisos } from '@/contexts/permisos-context'
 import type { PacienteWithObraSocial } from '@/types/paciente'
 import { resolverObraSocial } from '@/lib/pacientes/obra-social'
 import { differenceInYears } from 'date-fns'
@@ -23,6 +24,13 @@ interface PatientTableProps {
 
 export function PatientTable({ pacientes }: PatientTableProps) {
   const router = useRouter()
+
+  // Solo UX: si el asistente no tiene el permiso, el botón se ve deshabilitado en vez
+  // de dejarlo clickear y rebotar contra /sin-acceso. La protección real vive en el
+  // servidor (la página hace su propio chequeo) y no depende de esto.
+  // ⚠ El hook va ANTES del early return de abajo (reglas de los hooks).
+  const { tienePermiso } = usePermisos()
+  const puedeVerHistoria = tienePermiso('ver_historia_clinica')
 
   if (pacientes.length === 0) {
     return (
@@ -88,16 +96,30 @@ export function PatientTable({ pacientes }: PatientTableProps) {
 
               {/* Acciones rápidas */}
               <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                <Button
-                  asChild
-                  variant="ghost"
-                  size="sm"
-                  className="h-9 w-9 p-0 text-muted-foreground hover:text-primary"
-                >
-                  <Link href={`/pacientes/${p.id}/historia`} aria-label="Historia clínica">
+                {puedeVerHistoria ? (
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 w-9 p-0 text-muted-foreground hover:text-primary"
+                  >
+                    <Link href={`/pacientes/${p.id}/historia`} aria-label="Historia clínica">
+                      <FileText className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                ) : (
+                  /* Sin permiso: mismo botón pero deshabilitado y SIN <Link> — un <a> no
+                     se deshabilita con `disabled`, así que hay que sacar el link. */
+                  <Button
+                    disabled
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 w-9 p-0 text-muted-foreground"
+                    aria-label="Historia clínica (requiere permiso)"
+                  >
                     <FileText className="h-4 w-4" />
-                  </Link>
-                </Button>
+                  </Button>
+                )}
                 <Button
                   asChild
                   variant="ghost"
@@ -201,20 +223,33 @@ export function PatientTable({ pacientes }: PatientTableProps) {
                           <Pencil className="h-4 w-4" />
                         </Link>
                       </Button>
-                      <Button
-                        asChild
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-primary relative z-10"
-                      >
-                        <Link
-                          href={`/pacientes/${p.id}/historia`}
-                          aria-label="Historia clínica"
-                          onClick={(e) => e.stopPropagation()}
+                      {puedeVerHistoria ? (
+                        <Button
+                          asChild
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-muted-foreground hover:text-primary relative z-10"
+                        >
+                          <Link
+                            href={`/pacientes/${p.id}/historia`}
+                            aria-label="Historia clínica"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                      ) : (
+                        /* Sin permiso: deshabilitado y sin <Link> (ver nota en la vista mosaico). */
+                        <Button
+                          disabled
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-muted-foreground relative z-10"
+                          aria-label="Historia clínica (requiere permiso)"
                         >
                           <FileText className="h-4 w-4" />
-                        </Link>
-                      </Button>
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
