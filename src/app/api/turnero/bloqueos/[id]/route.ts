@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { bloqueoAgendaUpdateSchema } from '@/lib/validations/turno.schema'
 import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -28,24 +29,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     // 1. Obtener perfil
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id, gestionar_turnos')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
-      return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'gestionar_turnos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'No tenés permisos para modificar la agenda.'
+                : acceso.motivo === 'sin-tenant'  ? 'Error: No se encontró un médico asociado a tu perfil.'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
-
-    const tenantMedicoId =
-      profile?.role === 'medico' ? user.id :
-      profile?.role === 'asistente' ? profile?.medico_id :
-      null
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Error: No se encontró un médico asociado a tu perfil.' }, { status: 403 })
-    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const body = await request.json()
     const result = bloqueoAgendaUpdateSchema.safeParse(body)
@@ -75,7 +66,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
        console.error('[API VERIFICATION FAIL]', {
          request_tenant: tenantMedicoId,
          db_row_tenant: existing.medico_id,
-         role: profile?.role
+         role: acceso.role
        });
        return NextResponse.json({
          error: 'Permiso denegado: este bloqueo pertenece a otra agenda.',
@@ -155,24 +146,14 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id, gestionar_turnos')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
-      return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'gestionar_turnos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'No tenés permisos para modificar la agenda.'
+                : acceso.motivo === 'sin-tenant'  ? 'Tenant inválido'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
-
-    const tenantMedicoId =
-      profile?.role === 'medico' ? user.id :
-      profile?.role === 'asistente' ? profile?.medico_id :
-      null
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Tenant inválido' }, { status: 403 })
-    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     // 1. Fetch previo para ver si existe y a quién pertenece
     const { data: existing, error: fetchError } = await supabase

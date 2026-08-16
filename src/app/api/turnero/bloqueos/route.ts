@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { bloqueoAgendaSchema } from '@/lib/validations/turno.schema'
 import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,24 +23,14 @@ export async function POST(request: NextRequest) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id, gestionar_turnos')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
-      return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'gestionar_turnos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'No tenés permisos para modificar la agenda.'
+                : acceso.motivo === 'sin-tenant'  ? 'Tenant inválido'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
-
-    const tenantMedicoId =
-      profile?.role === 'medico' ? user.id :
-      profile?.role === 'asistente' ? profile?.medico_id :
-      null
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Tenant inválido' }, { status: 403 })
-    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const body = await request.json()
     const result = bloqueoAgendaSchema.safeParse(body)

@@ -140,6 +140,17 @@ export type Acceso =
  * no por el código. El **médico no chequea permiso**: tiene acceso total (misma
  * regla que `check_permiso()` en la base, `schema.sql:768`).
  *
+ * ── UN PERMISO O UN ARRAY (OR) ──────────────────────────────────────────────
+ * `permiso` acepta una clave sola o un **array**, y con array alcanza tener
+ * **CUALQUIERA** de ellos (OR, no AND). Existe para la lectura de la agenda: la
+ * RLS `turnos_select` / `bloqueos_select` exige `ver_turnos OR gestionar_turnos`
+ * desde las migraciones 037 y 039 —*"la agenda es una unidad de permiso"*—, y el
+ * endpoint tiene que pedir lo mismo que la base.
+ * ⚠ El OR **no cuesta una query extra**: el `select` de abajo ya proyecta los 12
+ * permisos, así que preguntar por dos es gratis.
+ * ⚠ **Sigue siendo fail-closed:** el `.some()` corre sobre `!!profile[p]`, así
+ * que un array vacío deniega y un permiso `null` no habilita.
+ *
  * ── NO RESPONDE, DEVUELVE ───────────────────────────────────────────────────
  * Igual que `resolverTenant`: ni `NextResponse` ni `redirect()`. Los llamadores
  * reaccionan distinto —403 JSON, 403 texto plano, `redirect('/sin-acceso')`,
@@ -152,15 +163,16 @@ export type Acceso =
  *
  * @param supabase - Cliente de sesión.
  * @param userId   - `auth.uid()` del usuario actual.
- * @param permiso  - Permiso granular exigido. Es un parámetro y no una constante
- *                   porque hay endpoints que lo eligen en runtime (el PATCH de
- *                   consultas pide `finalizar_consultas` o `crear_consultas`
- *                   según el body — regla de negocio 1).
+ * @param permiso  - Permiso granular exigido, o un **array** de permisos de los
+ *                   que alcanza tener **uno** (OR). Es un parámetro y no una
+ *                   constante porque hay endpoints que lo eligen en runtime (el
+ *                   PATCH de consultas pide `finalizar_consultas` o
+ *                   `crear_consultas` según el body — regla de negocio 1).
  */
 export async function resolverAcceso(
   supabase: SupabaseSesion,
   userId: string,
-  permiso: PermisoKey
+  permiso: PermisoKey | PermisoKey[]
 ): Promise<Acceso> {
   const { data: profile } = await supabase
     .from('profiles')
@@ -178,8 +190,10 @@ export async function resolverAcceso(
 
   if (!profile) return { ok: false, motivo: 'sin-perfil' }
 
-  // El médico tiene acceso total; al asistente se le exige el permiso.
-  if (profile.role === 'asistente' && !profile[permiso]) {
+  // El médico tiene acceso total; al asistente se le exige el permiso —o, con un
+  // array, CUALQUIERA de los pedidos. `!!` mantiene el criterio fail-closed.
+  const permisos = Array.isArray(permiso) ? permiso : [permiso]
+  if (profile.role === 'asistente' && !permisos.some((p) => !!profile[p])) {
     return { ok: false, motivo: 'sin-permiso' }
   }
 

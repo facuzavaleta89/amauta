@@ -4,6 +4,7 @@ import { turnoSchema } from '@/lib/validations/turno.schema'
 import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { formatFechaAR } from '@/lib/utils/format-date'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,24 +20,14 @@ export async function GET(request: NextRequest) {
     const rl = await rateLimit(request, { key: `turnero_get:${user.id}`, limit: 120, windowMs: 60_000 })
     if (!rl.success) return rateLimitResponse(rl.retryAfter!)
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id, ver_turnos')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.role === 'asistente' && profile?.ver_turnos === false) {
-      return NextResponse.json({ error: 'No tenés permisos para ver los turnos.' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, ['ver_turnos', 'gestionar_turnos'])
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'No tenés permisos para ver los turnos.'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
-
-    const tenantMedicoId =
-      profile?.role === 'medico' ? user.id :
-      profile?.role === 'asistente' ? profile?.medico_id :
-      null
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
-    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const { searchParams } = new URL(request.url)
     const startDate = searchParams.get('start')
@@ -91,24 +82,14 @@ export async function POST(request: NextRequest) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id, gestionar_turnos')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
-      return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'gestionar_turnos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'No tenés permisos para modificar la agenda.'
+                : acceso.motivo === 'sin-tenant'  ? 'Sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
-
-    const tenantMedicoId =
-      profile?.role === 'medico' ? user.id :
-      profile?.role === 'asistente' ? profile?.medico_id :
-      null
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Sin tenant asignado' }, { status: 403 })
-    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const body = await request.json()
     const result = turnoSchema.safeParse(body)
@@ -167,7 +148,8 @@ export async function POST(request: NextRequest) {
     if (insertError) throw insertError
 
     // -- INICIO NOTIFICACIONES --
-    if (profile?.role === 'asistente') {
+    // El rol sale del mismo profile que ya leyó `resolverAcceso`.
+    if (acceso.role === 'asistente') {
       const asistenteName = user.user_metadata?.nombre_completo || user.email || 'Un asistente';
       const pacienteInfo = t.paciente_nombre_libre || 'un paciente';
       const fechaCorta = formatFechaAR(t.fecha_inicio, 'dd/MM/yyyy HH:mm');
