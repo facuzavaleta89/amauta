@@ -244,6 +244,13 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   Preferí importar tipos desde `@/types` (barrel `index.ts`).
 - Al tocar tipos, mantené la organización por dominio existente (no consolidar en
   un archivo). Valores fijos como uniones de literales, no `string`.
+- **Se arregla ahora o muere ahora.** Un hallazgo colateral **inofensivo** —un comentario que miente,
+  un import huérfano, un nombre que dice lo contrario de lo que hace— se **resuelve en el momento** o
+  se **descarta**: no se anota en `PENDIENTES.md` "para después". **Anotar queda reservado para lo
+  importante que no entra en la tanda actual** (lo que cambia comportamiento, necesita una decisión
+  de producto, o pide su propia verificación). El motivo es concreto: los ítems chicos anotados
+  envejecen mal y terminan **mintiendo** —el comentario del PATCH de bloqueos figuró como pendiente
+  meses después de estar arreglado—, y un `PENDIENTES.md` con ruido esconde lo que sí importa.
 
 ---
 
@@ -685,6 +692,21 @@ es `schema.sql`.
 
 ---
 
+## Mapa de helpers compartidos
+
+Criterios que viven en **un solo lugar**. Antes de escribir uno nuevo, mirar si ya está acá: los
+cuatro nacieron de encontrar el mismo criterio duplicado y divergido en varios archivos.
+
+| Helper | Archivo | Qué resuelve |
+|---|---|---|
+| `resolverObraSocial`, tipo `ConObraSocial` | `src/lib/pacientes/obra-social.ts` | Criterio ÚNICO de la obra social de un paciente: `obras_sociales?.nombre ?? (obra_social_otro?.trim() \|\| null)`. Unificó **12 sitios** que no eran idénticos (unos trimeaban y otros no). Módulo **neutro** y de parámetro **estructural**, para aceptar las filas sin tipar de supabase-js |
+| `resolverTenant`, `tenantDeProfile`, **`resolverAcceso`** | `src/lib/auth/tenant.ts` | Resolución del tenant (`medico_id` efectivo) y autorización por permiso. `tenantDeProfile` es la variante **pura**, para quien ya leyó el `profile`. `resolverAcceso` suma el chequeo de permiso y acepta **un permiso o un array (OR)**. Ver **nota técnica 24** |
+| `formatFechaAR`, `formatFecha`, `formatFechaLarga`, `TZ_AR` | `src/lib/utils/format-date.ts` | Formateo de fechas en zona AR. El motor lanza; los dos wrappers degradan al texto crudo. Ver **nota técnica 18** |
+| `buscarSolapamientos` | `src/lib/agenda/solapamiento.ts` | Criterio ÚNICO de "franja ocupada" de la agenda. Ver **nota técnica 23** |
+| `BotonCrearConPermiso` | `src/components/shared/boton-crear-con-permiso.tsx` | Botón de acción que se **deshabilita** (en vez de rebotar contra `/sin-acceso`) cuando falta el permiso. Client Component: lee del `PermisosProvider`, así que sirve en páginas Server que **no** consultan `profiles`, sin agregarles una query. Es **solo UX** — la autorización real la hacen la página destino y el endpoint |
+
+---
+
 ## Notas y deuda técnica
 
 1. **Hooks:** los 4 stubs (`use-auth`, `use-pacientes`, `use-role`, `use-turnos`) se
@@ -827,9 +849,21 @@ es `schema.sql`.
       `Date` ya parseado — no agregar `new Date()` intermedios al llamarlo.
     - **Alcance:** aplica a **server-side**. En Client Components el navegador ya está en la zona
       del usuario, y ahí sí se usa `format()`/`toLocaleString()` (turnero, `turno-form`, etc.).
-    - ⚠ **Todavía sin unificar:** `formatFecha`/`formatFechaLarga` de `lib/utils.ts` tampoco
-      fijan zona. Hoy **no hay bug** porque solo reciben columnas `DATE` (sin hora), pero pasarles
-      un `timestamptz` reactiva el problema. Ver `PENDIENTES.md` → Bloque A → "Bugs menores".
+    - ✅ **UNIFICADO (Grupo 4, 2026-08-16): `src/lib/utils/format-date.ts` es la casa ÚNICA del
+      formateo de fechas.** Antes convivían **seis** implementaciones (este canon + 5 duplicados en
+      `lib/utils.ts`, las dos plantillas PDF y `/verificar`), cinco de ellas sin zona fija. Hoy el
+      archivo expone tres funciones y **no hay ninguna otra**:
+      - **`formatFechaAR(fecha, patron)`** — el **motor**. Fija `TZ_AR` y **lanza** ante una entrada
+        inválida.
+      - **`formatFecha(fecha, patron = 'd MMM yyyy')`** y **`formatFechaLarga(fecha)`** — wrappers
+        finos sobre el motor **con `try/catch` que degrada al string crudo**. El catch va acá y **no**
+        en `formatFechaAR`: sus llamadores nunca tragaron errores, y uno de los wrappers sirve a la
+        ruta **pública** `/verificar`, donde un dato degenerado no debe ser un 500.
+      ⚠ **La afirmación anterior de esta nota era FALSA:** decía que los wrappers "solo reciben
+      columnas `DATE`". `difusion-preview.tsx` les pasa un **`timestamptz`** (`post.updated_at`) — y
+      con la unificación eso ya no importa, porque los wrappers fijan zona igual que el motor.
+      ⚠ **No escribir un helper de fecha nuevo en otro archivo** ni llamar a `format()` de date-fns o
+      `toLocaleDateString()` directamente desde el servidor.
 19. **Notificaciones: el badge y la página derivan de UNA fuente compartida — no agregar una query
     suelta.** Todo lo "pendiente de leer" se normaliza a `ItemPendiente`
     (`src/types/notificacion.ts`) en `src/app/(app)/notificaciones/actions.ts`, y **la tabla
@@ -977,3 +1011,33 @@ es `schema.sql`.
       exigiendo solo `ver_turnos`, al asistente con `gestionar_turnos` y sin `ver_turnos` la query le
       devolvía `[]` y el helper daba la franja por **libre**. **Unificar el criterio en un helper NO
       cerró eso** —solo concentró el bug en un lugar en vez de seis—; se cerró en la base.
+24. **Tenant y permiso se resuelven con `resolverAcceso` (`src/lib/auth/tenant.ts`). No escribir el
+    chequeo a mano en un endpoint nuevo.** Es el canon de todo lo que necesita *"¿de qué médico es
+    esta request, y puede hacer esto?"*. Para lo que solo necesita el tenant está `resolverTenant`
+    (y `tenantDeProfile`, su variante pura para quien ya leyó el `profile`).
+    - **Firma y resultado:** `resolverAcceso(supabase, userId, permiso)` →
+      `{ ok: true, tenantMedicoId, role } | { ok: false, motivo: 'sin-perfil' | 'sin-permiso' | 'sin-tenant' }`.
+      **UNA sola query**, que proyecta los **12** permisos (proyección FIJA: no se interpola el
+      permiso en el `select`).
+    - ⚠ **Devuelve un `motivo`, no `null`, y eso es el punto.** Con un `null` que colapsa las tres
+      causas, un asistente sin `medico_id` recibía *"Sin permisos para ver estudios"* — un mensaje
+      **falso**, porque el permiso lo tenía. El `motivo` deja que cada llamador responda la verdad.
+    - **El permiso puede ser UNO o un ARRAY, y el array es OR** (alcanza tener cualquiera). Existe
+      para la lectura de la agenda, donde la RLS pide `ver_turnos` OR `gestionar_turnos` desde las
+      migraciones 037/039. **No cuesta una query extra**: los 12 permisos ya vienen proyectados.
+    - **Criterio FAIL-CLOSED:** `!profile[permiso]`, **nunca `permiso === false`**. Ante un valor
+      inesperado deniega en vez de permitir. El **médico no chequea permiso**: acceso total, igual
+      que `check_permiso()` en la base.
+    - ⚠ **El ORDEN de los chequeos es parte del contrato:** perfil → **permiso** → tenant. Un
+      `'sin-tenant'` garantiza que el permiso **ya pasó**, y de eso depende
+      **`lib/utils/verificar-permiso.ts`**, que hoy es un **wrapper fino sobre este canon**
+      (mantiene su firma y su `redirect`, y trata `'sin-tenant'` como "pasa" porque solo pregunta
+      por el permiso). Invertir ese orden lo rompe **en silencio**.
+    - ⚠ **NO responde `NextResponse` ni hace `redirect()`** — devuelve un valor y reacciona el
+      llamador. Es lo que permite que los mismos helpers sirvan a Route Handlers (403 JSON, 403 texto
+      plano), Server Components (`redirect('/sin-acceso')`, `redirect('/dashboard')`) y Server
+      Actions (objetos de error de formas distintas). **Unificar esas reacciones sería un cambio de
+      producto, no un refactor.**
+    - **El chequeo del endpoint debe pedir LO MISMO que la RLS de esa tabla.** Es defensa en
+      profundidad: la base ya frena, pero sin el chequeo en la app el usuario recibe un error
+      genérico en vez de un 403 con motivo.

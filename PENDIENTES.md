@@ -375,14 +375,17 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     error** de cada query —**8 de las 12** lo descartaban, así que un fallo de red daba `data`
     `undefined` y el endpoint concluía **"franja libre"**, un *fail-open* silencioso—, y se cerró el
     agujero de **"una sola fecha"** en el PATCH de turnos con un fetch previo.
-- **⚠ PENDIENTE NUEVO (2026-08-08) — comentario desactualizado en el PATCH de bloqueos.** Deuda de
-  comentario, no de código: `src/app/api/turnero/bloqueos/[id]/route.ts:128-130` dice que
-  `bloqueos_select` *"hoy es tenant-only, así que si algún día se endurece esa política habría que
-  revisar esta guarda"*. **La 037 la endureció**: el *"si algún día"* ya pasó.
-  - ⚠ **Y la conclusión útil es la contraria a la que teme el comentario:** el `OR gestionar_turnos`
-    de la 037 fue elegido **exactamente** para que esta guarda siga siendo correcta — quien pasa el
-    chequeo del endpoint (`gestionar_turnos`) pasa también el SELECT, así que **no hay 403 falsos**.
-    Eso es lo que debería decir.
+- **✅ RESUELTO (commit `ba5188d`, 2026-08-10) — el comentario desactualizado del PATCH de bloqueos.**
+  Era deuda de comentario, no de código: decía que `bloqueos_select` *"hoy es tenant-only, así que si
+  algún día se endurece esa política habría que revisar esta guarda"*, cuando la **037 ya la había
+  endurecido**.
+  - **Hoy el comentario dice lo correcto** (`src/app/api/turnero/bloqueos/[id]/route.ts:112-115`):
+    que el `.select()` pasa por `bloqueos_select`, que desde la 037 exige `ver_turnos` OR
+    `gestionar_turnos`, y que **ese `OR` está elegido justamente para que la guarda de "0 filas" siga
+    siendo correcta** — quien pasa el chequeo del endpoint (`gestionar_turnos`) pasa también el
+    SELECT, así que no hay 403 falsos.
+  - ⚠ **Este ítem quedó marcado como pendiente más tiempo del que correspondía** (se arregló en la
+    `ba5188d` y siguió figurando abierto hasta el pase de docs del Grupo 4).
 
 - **⚠ PENDIENTE NUEVO (2026-08-11) — las 4 políticas de `turnos` siguen en `{public}`; falta
   normalizarlas a `TO authenticated`. Severidad BAJA, defensa en profundidad.** Lo destapó la 039.
@@ -579,18 +582,26 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   día del turno nocturno queda cerrado. **Confirmado en producción.** ⚠ Los formateos
   **client-side** (turnero, `turno-form`) **no se tocaron**: renderizan en la zona del navegador y
   no tenían el bug. Regla de uso en `CLAUDE.md` → nota técnica 18.
-- **⚠ PENDIENTE NUEVO (2026-07-30) — quedan dos helpers de fecha sin unificar contra
-  `formatFechaAR`.** Surgió al hacer el fix de TZ; **no hay bug activo hoy**, pero conviene
-  cerrarlo en la próxima tanda que toque fechas:
-  - `formatFecha` / `formatFechaLarga` de **`src/lib/utils.ts`** tampoco fijan zona. Parchean el
-    caso "fecha sin hora" concatenando `T12:00:00`, lo cual **funciona** para columnas `DATE`
-    (fecha de nacimiento, `fecha_certificado`, `valido_hasta`) —que es lo único que hoy les
-    pasan sus consumidores—, pero si alguna vez se les pasa un **`timestamptz` con hora**
-    reaparece exactamente el bug del ítem anterior. Candidatas a reimplementarse sobre
-    `formatFechaAR`.
-  - **`src/app/verificar/[codigo]/page.tsx:12`** define un `formatFechaLarga` **local** que
-    duplica el de `src/lib/utils.ts`. Candidato a deduplicar, **con cuidado**: es la página
-    pública de verificación (datos sensibles, Ley 25.326) y el cambio merece su propia revisión.
+- **✅ RESUELTO (Grupo 4, 2026-08-16) — todos los helpers de fecha unificados contra
+  `formatFechaAR`.** Este ítem contaba **dos** helpers sin unificar; el censo encontró **seis
+  implementaciones** (el canon + 5 duplicados), porque además de los dos anotados estaban los
+  **locales de las dos plantillas PDF** (`certificado-template.tsx`, `pedido-template.tsx`), que el
+  barrido por nombre no vio: se llaman `fmt*`, no `formatFecha*`.
+  - **Casa única: `src/lib/utils/format-date.ts`.** `formatFechaAR(fecha, patron)` es el motor (fija
+    `TZ_AR`), y se le sumaron dos wrappers finos **con `try/catch`** que degradan al string crudo:
+    `formatFecha(fecha, patron = 'd MMM yyyy')` y `formatFechaLarga(fecha)`. El catch va en los
+    wrappers y **no** en el motor, para no cambiarle el contrato a sus llamadores y para que un dato
+    degenerado no sea un 500 en la ruta pública `/verificar`.
+  - **`formatFecha` / `formatFechaLarga` salieron de `src/lib/utils.ts`** (que quedó con `cn`,
+    `escapeHtml` y `sanitizePdfFilename`), y los locales de `/verificar` y de las dos plantillas PDF
+    se borraron. ⚠ **Trampa del pase:** en las plantillas el helper se llamaba `formatFecha` pero
+    producía el formato **largo**, así que sus 7 usos fueron a `formatFechaLarga`.
+  - **Se cerraron dos formateos server-side que no eran helpers** y por eso no estaban anotados: el
+    `toLocaleDateString` de los dos endpoints de consultas (texto que **se persiste** en
+    `turnos.notas`) y los `format()` inline de `lib/pdf/consulta-template.tsx` y de la ficha de
+    paciente. **La equivalencia se verificó A/B en runtime** bajo `TZ=UTC` y `TZ=AR`: idéntica sobre
+    columnas `DATE`, corregida sobre `timestamptz`.
+  - ⚠ **Sin backfill:** las notas de turnos ya escritas conservan la fecha corrida.
 - **✅ RESUELTO (tanda 1B — parte 1, 2026-07-31) — el badge de la campanita no contaba los avisos
   del sistema.**
   > ⚠ **La versión anterior de este ítem era INCORRECTA** y quedó refutada por el diagnóstico.
@@ -887,17 +898,15 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - ⚠ **SIGUE VIGENTE — los documentos YA EMITIDOS conservan el valor vacío.** `obra_social_nombre` se
     persiste en la fila del pedido/certificado al emitir y **el snapshot es inmutable** (regla de
     negocio 5): **no hay backfill**. El fix solo alcanza a los documentos emitidos de acá en adelante.
-- **⚠ PENDIENTE NUEVO (2026-08-08) — la TARJETA DE PREVIEW de `pedido-form.tsx` no muestra la obra
-  social. Severidad BAJA.** Cola del ítem anterior: es **otro eslabón**, no lo tapa la Capa 1.
-  - **Causa:** el estado del paciente elegido está tipado como
-    `type PacienteElegido = Pick<PacienteBusqueda, 'id' | 'nombre_completo' | 'dni' | 'obra_social_id' | 'numero_afiliado'>`
-    (`pedido-form.tsx:28-30`): **no incluye `obras_sociales.nombre` ni `obra_social_otro`**, así que la
-    tarjeta **no tiene con qué mostrarla** — ni la del catálogo ni la de texto libre.
-  - **Por qué la Capa 1 no lo alcanzó:** ese fix arregló lo que **se guarda** en el documento
-    (`setValue('obra_social_nombre', …)`), no lo que **se muestra** en la tarjeta. El dato viaja bien
-    al PDF; lo que falta es pintarlo.
-  - **Fix acotado:** ensanchar el `Pick`. ⚠ Revisar de paso si `certificado-form.tsx` tiene la misma
-    tarjeta con el mismo recorte.
+- **✅ RESUELTO (Grupo 4, 2026-08-16) — la TARJETA DE PREVIEW de `pedido-form.tsx` ya muestra la obra
+  social.** Se aplicó el fix que este ítem proponía: **se ensanchó el `Pick`**. `PacienteElegido`
+  (`pedido-form.tsx:33-36`) pasó a llevar `obras_sociales` y `obra_social_otro` en vez de
+  `obra_social_id`, que era lo que no servía para pintarla.
+  - **La tarjeta resuelve con el helper compartido:** `obraSocialElegida = resolverObraSocial(...)`
+    (`pedido-form.tsx:141`), así que muestra tanto la del catálogo como la de texto libre con el mismo
+    criterio que el resto de la app.
+  - ✅ **La sospecha del último bullet se confirmó y se cerró:** `certificado-form.tsx` tenía la misma
+    tarjeta con el mismo recorte, y quedó igual (`:121`).
 - **⚠ PENDIENTE NUEVO (2026-08-08) — la HORA del próximo control no se persiste: se pierde y cae a
   las 09:00. Severidad MEDIA.** Es un límite del **modelo**, no del formulario.
   - **Causa:** `consultas.proximo_turno_sugerido` es **`DATE`**, no `timestamptz`, así que la base
@@ -1384,10 +1393,25 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   dominio: los 2 `(profile as any)[permisoRequerido]` de `consultas` (**T2**), el
   `(t.paciente as any).nombre_completo` del cron (**T6**) y el `getTenantMedicoId(supabase: any)` de
   `pacientes/[id]` (**T1**).
-  ⚠ **Lo que NO se hizo y sigue pendiente:** extraer a `lib/` el helper de tenant, **duplicado inline
-  en ~14 endpoints** (`getTenantMedicoId` / `getTenantContext`). Es otra tanda: tocaría los 14 a la
-  vez, cada uno con su verificación. Ver también el ítem H5 del bug de RLS de bloqueos, que sumó dos
-  ocurrencias más al conteo.
+  ✅ **RESUELTO (Grupo 4, 3 tandas, 2026-08-16) — el helper de tenant se extrajo a
+  `src/lib/auth/tenant.ts`.** Lo que este ítem anotaba como *"duplicado inline en ~14 endpoints"* era
+  en realidad **más grande**: el censo encontró **33 sitios de resolución en ~26 archivos**, y no una
+  sino **dos responsabilidades mezcladas** (resolver tenant / autorizar por permiso). Se cerró en tres
+  tandas, cortadas por eso:
+  - **Tanda 1 — `resolverTenant` + `tenantDeProfile`:** los **20 sitios que resuelven tenant SIN
+    chequear permiso** (Route Handlers, Server Components y Server Actions). `tenantDeProfile` es la
+    variante **pura**, para los llamadores que ya leyeron el `profile` por otro motivo y no deben
+    pagar una segunda query.
+  - **Tanda 2a — `resolverAcceso`:** los sitios que resuelven tenant **y** chequean permiso
+    (`consultas`, `estudios`, PDFs). Devuelve un **resultado discriminado** en vez de `null`, para que
+    el llamador distinga *"sin permiso"* de *"sin tenant"*. De paso, **`lib/utils/verificar-permiso.ts`
+    se reimplementó como wrapper fino sobre el canon**, sin tocar su firma ni sus llamadores.
+  - **Tanda 2b — OR + turnero:** `resolverAcceso` pasó a aceptar **un permiso o un array** (alcanza
+    tener cualquiera) y se migraron los **7 sitios de `api/turnero/*`**, normalizando de paso su
+    criterio `permiso === false` a **fail-closed**. El GET de la agenda pasó a pedir
+    **`ver_turnos` OR `gestionar_turnos`**, que es lo que la RLS ya exigía desde la 039.
+  - **Ninguna resolución de tenant o permiso quedó a mano en `src/app/api/`.** Ver `CLAUDE.md` →
+    nota técnica 24.
 - **✅ RESUELTO (T3, T4 y T5) — el "grupo (C)" del turnero (7 `any` de datos de dominio).** Al
   diagnosticarlo se vio que **no era un grupo homogéneo**, y ése fue el motivo del corte en tres
   tandas: 2 se resolvían con **`BloqueoAgenda`, que ya existía** (T3), 3 dependían de crear
@@ -1428,20 +1452,23 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     React, así que son seguras.
   - **Indentación a 4 espacios** en los bloques `onDelete`/`onSubmit` de esos dos archivos, contra
     los 2 del resto del repo. Cosmético; **no tocar dentro de una tanda de tipos** (ensuciaría el diff).
-- **⚠ DECISIÓN DE POLÍTICA PENDIENTE — adoptar (o no) la convención de prefijo `_`.** Hoy el repo
-  usa `_` en **8 lugares** (`_req` ×5, `_request` ×3) **sin ningún efecto**, porque
-  `eslint.config.mjs` no define `varsIgnorePattern`/`argsIgnorePattern`. Se dejó afuera de L3b a
-  propósito: **no es limpieza, es una decisión de equipo**. Datos para tomarla:
-  - **Hoy no silenciaría nada:** los `_req`/`_request` son parámetros que **preceden a uno usado**, y
-    el default `args: 'after-used'` ya no los marca. Su valor sería **preventivo**, para que la
-    convención empiece a significar algo.
-  - **El costo:** a partir de ahí, **cualquier** variable que empiece con `_` deja de reportarse para
-    siempre. Si alguien "arregla" un unused legítimo renombrándolo en vez de borrarlo, el linter se
-    queda mudo.
-  - ⚠ **Nota de coherencia:** `consultas/[id]/route.ts:34` y `:207` declaran `_request` **y lo usan**
-    (`:41` y `:214`, `rateLimit(_request, …)`). El prefijo comunica lo contrario de lo que pasa;
-    convendría renombrarlos si se adopta la convención.
-  - **Dejarla para cuando el dueño del proyecto la tome a conciencia**, no colada en una tanda de lint.
+- **✅ RESUELTO (Grupo 4, 2026-08-16) — la convención de prefijo `_` se ADOPTÓ formalmente.**
+  `eslint.config.mjs` define ahora `argsIgnorePattern: '^_'`, `varsIgnorePattern: '^_'` y conserva el
+  `ignoreRestSiblings: true` que ya tenía. **Se preservó la severidad `warn`** de
+  `eslint-config-next` y el resto de los defaults de la regla.
+  - **El conteo de este ítem se quedaba corto:** decía 8 lugares (`_req` ×5, `_request` ×3); el censo
+    encontró **15** — faltaban `_pid`, dos `_prevState` y **cuatro `_` pelados** en callbacks
+    (`.map((_, i) => …)`), que un barrido por nombre no ve.
+  - **Fue preventivo, como el ítem anticipaba: no silenció ni un warning.** El lint quedó en cero
+    antes y después. Se verificó con un **control positivo** (sondas por `--stdin`): un `_x` sin usar
+    queda mudo y un `x` sin usar sigue warneando, o sea que la regla no se apagó de más.
+  - ⚠ **La "nota de coherencia" era peor de lo que decía: eran 4 falsos, no 2.** Además de los dos
+    `_request` de `consultas/[id]`, los `_req` de los PDF de **pedidos** y **certificados** también se
+    usaban (`getBaseUrl(_req)`, 45 líneas más abajo). **Los 4 se renombraron** a `request`/`req`, así
+    que el prefijo ya no le miente a nadie. Los **11 `_` restantes son estructurales** (firmas
+    impuestas, placeholders posicionales, rest siblings) y se conservan.
+  - **El costo sigue vigente y asumido:** de acá en más cualquier identificador que empiece con `_`
+    deja de reportarse. Renombrar un unused legítimo en vez de borrarlo deja al linter mudo.
 - **Plan de las tandas restantes** (nota de planificación, no compromiso de fecha). ⚠ **Ninguna es
   limpieza de lint**: la serie **L1→L4** agotó el lint mecánico y el bloque **T1→T6** agotó los tipos
   de dominio. Lo que queda es de otra naturaleza.
@@ -1624,11 +1651,14 @@ Información Pública**). Hallazgos:
   leer los bloqueos por PostgREST directo) y las 4 políticas se evaluaban para `{public}`. La 037 pide
   ahora **`ver_turnos` OR `gestionar_turnos`** y normaliza las cuatro a `TO authenticated`. Detalle y
   el porqué del `OR` en **Bloque A → "Agenda y RLS"**.
-  - ⚠ **EL MISMO HUECO SIGUE ABIERTO EN `turnos`:** `turnos_select` exige **solo `ver_turnos`**, así
-    que un asistente con `gestionar_turnos` y sin `ver_turnos` **escribe turnos que no puede leer** —
-    con 404 falsos y **falsos negativos de solapamiento** como consecuencia. Las dos tablas de la
-    agenda quedaron con criterios distintos. Ítem completo, con las dos salidas posibles, en
-    **Bloque A → "Agenda y RLS"**.
+  - ✅ **El mismo hueco en `turnos` quedó CERRADO por la migración 039 (2026-08-11).** `turnos_select`
+    exigía **solo `ver_turnos`**, así que un asistente con `gestionar_turnos` y sin `ver_turnos`
+    escribía turnos que no podía leer —404 falsos y **falsos negativos de solapamiento**—. Desde la
+    039 pide el **mismo `USING` que `bloqueos_select`**: `ver_turnos` OR `gestionar_turnos`. Las dos
+    tablas de la agenda quedaron con el mismo criterio de lectura. Detalle en **Bloque A → "Agenda y
+    RLS"**.
+    ⚠ **Lo único que sigue abierto de esa familia es el ROL:** las 4 políticas de `turnos` siguen en
+    `{public}` y falta normalizarlas a `TO authenticated` (ver el ítem propio más arriba).
 - **`consultas_delete` se endureció (migración 038, 2026-08-08) — nota de seguridad.** La política
   ahora exige, además del tenant, que la fila esté en **`estado = 'borrador'`**. Es **defensa en
   profundidad de la regla de negocio 1 y de la Ley 26.529**: una consulta **finalizada** pasó a ser
@@ -1647,6 +1677,39 @@ Información Pública**). Hallazgos:
     granular, este endpoint es uno de los lugares a atar.
   - Confirmar que `mensajes_internos` grupales no filtren datos entre asistentes de
     tenants distintos (RLS usa `medico_id = get_medico_id()`, correcto; validar en prueba).
+
+### Autorización a nivel de APLICACIÓN (defensa en profundidad sobre la RLS)
+
+> Los tres ítems de acá abajo eran el **mismo hallazgo repetido**: la RLS frenaba de verdad, pero la
+> aplicación no chequeaba nada, así que el usuario recibía un **error genérico** (o directamente un
+> formulario que iba a fallar) donde correspondía un **403 con motivo**. Cerrados en el Grupo 4
+> (2026-08-16) con `resolverAcceso`.
+
+- **✅ RESUELTO (2026-08-16) — endpoints de pedidos, certificados y pacientes sin chequeo de permiso
+  en la app.** `GET`/`POST` de `/api/pedidos` y `/api/certificados`, y `GET`/`POST` de
+  `/api/pacientes` (colección), resolvían tenant con `resolverTenant` y **no miraban el permiso**:
+  solo los frenaba la RLS. Ahora piden con `resolverAcceso` **exactamente lo mismo que la política de
+  esa tabla** — los `GET` el permiso de lectura (`ver_pedidos` / `ver_certificados` /
+  `ver_pacientes`) y los de escritura el de creación/edición (`crear_pedidos` /
+  `crear_certificados` / `editar_pacientes`).
+  ⚠ El alta de pacientes exige **`editar_pacientes`**: no existe un `crear_pacientes`, y es el mismo
+  permiso que pide `pacientes_insert`.
+
+- **✅ RESUELTO (2026-08-16) — cuatro formularios se abrían por URL sin chequear permiso.**
+  `/pedidos/nuevo`, `/certificados/nuevo` y `/pacientes/nuevo` no consultaban `profiles` ni llamaban
+  a `verificarPermiso`, y el `?edit=true` de la ficha solo miraba `archivado`. Un asistente sin el
+  permiso veía el formulario completo y **el rechazo llegaba recién al guardar**. Las tres páginas
+  llevan ahora la guarda con `resolverAcceso` (`sin-permiso` → `/sin-acceso`, `sin-tenant` →
+  `/dashboard`, `sin-perfil` → `/login`) y el `?edit=true` quedó gateado por el permiso.
+  ⚠ **Es autorización, no UX:** distinto del grisado de botones, que es solo la capa visible.
+
+- **✅ RESUELTO (2026-08-16) — el turnero autorizaba con un criterio que ABRÍA ante un valor
+  inesperado.** Sus 7 sitios preguntaban `profile?.<permiso> === false`, que con un permiso
+  `null`/`undefined` **no dispara el guard**. Era seguro **solo porque las columnas son
+  `BOOLEAN NOT NULL DEFAULT FALSE`** — o sea, por una constraint de la base y no por el código.
+  Al migrar a `resolverAcceso` pasaron al criterio **fail-closed** (`!permiso`), que ante lo
+  inesperado deniega. **Cambio estrictamente más restrictivo: no habilita nada que estuviera
+  cerrado**, y con las columnas actuales no altera ningún caso real.
 
 ### Autenticación, sesiones y registro
 - **⚠ Auto-registro como médico (riesgo conocido, aceptado por ahora).** `handle_new_user`
