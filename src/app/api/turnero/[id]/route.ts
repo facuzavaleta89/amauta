@@ -4,6 +4,7 @@ import { turnoUpdateWithDatesSchema } from '@/lib/validations/turno.schema'
 import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { uuidSchema } from '@/lib/validations/shared'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -34,24 +35,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id, gestionar_turnos')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
-      return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'gestionar_turnos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'No tenés permisos para modificar la agenda.'
+                : acceso.motivo === 'sin-tenant'  ? 'Tenant inválido'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
-
-    const tenantMedicoId =
-      profile?.role === 'medico' ? user.id :
-      profile?.role === 'asistente' ? profile?.medico_id :
-      null
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Tenant inválido' }, { status: 403 })
-    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const body = await request.json()
     // Usar el esquema de actualización que tiene los refines cruzados si vienen ambas fechas
@@ -151,24 +142,14 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, medico_id, gestionar_turnos')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.role === 'asistente' && profile?.gestionar_turnos === false) {
-      return NextResponse.json({ error: 'No tenés permisos para modificar la agenda.' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'gestionar_turnos')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'No tenés permisos para modificar la agenda.'
+                : acceso.motivo === 'sin-tenant'  ? 'Tenant inválido'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
-
-    const tenantMedicoId =
-      profile?.role === 'medico' ? user.id :
-      profile?.role === 'asistente' ? profile?.medico_id :
-      null
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'Tenant inválido' }, { status: 403 })
-    }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const { data: deleted, error: deleteError } = await supabase
       .from('turnos')
