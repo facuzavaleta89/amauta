@@ -47,19 +47,26 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
   const { data: { user } } = await supabase.auth.getUser()
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, ver_historia_clinica')
+    .select('role, ver_historia_clinica, ver_turnos, crear_pedidos, crear_certificados, editar_pacientes')
     .eq('id', user!.id)
     .single()
   const esMedico = profile?.role === 'medico'
-  // Solo UX: decide si los botones de Historia clínica / Estudios se ven habilitados.
-  // El médico siempre puede; el asistente, según su permiso. La protección real la
-  // hacen las páginas destino (403 / redirect a /sin-acceso) y no depende de esto.
+  // Decide qué acciones se ven habilitadas. El médico siempre puede; el asistente,
+  // según su permiso. Para los botones esto es SOLO UX —la protección real la hacen
+  // las páginas destino y los endpoints—, salvo `puedeEditar`, que además gatea la
+  // apertura del formulario de edición (ver `isEditing` abajo).
   const puedeVerHistoria = esMedico || !!profile?.ver_historia_clinica
+  const puedeVerTurnos   = esMedico || !!profile?.ver_turnos
+  const puedeCrearPedido = esMedico || !!profile?.crear_pedidos
+  const puedeCrearCert   = esMedico || !!profile?.crear_certificados
+  const puedeEditar      = esMedico || !!profile?.editar_pacientes
 
   const archivado = Boolean(paciente.archivado_at)
 
   // Un paciente archivado no se edita, ni siquiera entrando por ?edit=true.
-  const isEditing = edit === 'true' && !archivado
+  // Y sin `editar_pacientes` tampoco: entrar por URL ya no abre el formulario —
+  // se muestra la ficha normal. El PATCH del endpoint lo rechaza igual (403).
+  const isEditing = edit === 'true' && !archivado && puedeEditar
 
   const edad = paciente.fecha_nacimiento
     ? differenceInYears(new Date(), new Date(paciente.fecha_nacimiento))
@@ -120,13 +127,22 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* ⚠ Acá `archivado` OCULTA el botón (comportamiento previo, se conserva);
+              la falta de permiso lo muestra deshabilitado, como el resto. */}
           {!archivado && (
-            <Button asChild variant="outline" className="gap-2">
-              <Link href={`/pacientes/${id}?edit=true`}>
+            puedeEditar ? (
+              <Button asChild variant="outline" className="gap-2">
+                <Link href={`/pacientes/${id}?edit=true`}>
+                  <Pencil className="h-4 w-4" />
+                  <span className="hidden sm:inline">Editar</span>
+                </Link>
+              </Button>
+            ) : (
+              <Button variant="outline" className="gap-2" disabled title="Requiere permiso para editar pacientes">
                 <Pencil className="h-4 w-4" />
                 <span className="hidden sm:inline">Editar</span>
-              </Link>
-            </Button>
+              </Button>
+            )
           )}
           {esMedico && (
             <PacienteAcciones
@@ -235,8 +251,16 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
 
       {/* Accesos rápidos. Las acciones de escritura se deshabilitan si está archivado. */}
       <div className="flex flex-wrap gap-3">
-        {archivado ? (
-          <Button variant="outline" className="gap-2" disabled title="Paciente archivado">
+        {/* Cada acción se deshabilita si el paciente está archivado O si falta el permiso.
+            El motivo del `title` distingue las dos causas. Sin permiso el botón va SIN
+            <Link>: un <a> no se apaga con `disabled`. */}
+        {archivado || !puedeEditar ? (
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled
+            title={archivado ? 'Paciente archivado' : 'Requiere permiso para editar pacientes'}
+          >
             <Pencil className="h-4 w-4" />
             Editar datos
           </Button>
@@ -248,14 +272,29 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
             </Link>
           </Button>
         )}
-        <Button variant="outline" className="gap-2" asChild>
-          <Link href={`/turnero?paciente_id=${id}`}>
+        {/* Ver turnos no depende de `archivado`: la agenda se consulta igual. */}
+        {puedeVerTurnos ? (
+          <Button variant="outline" className="gap-2" asChild>
+            <Link href={`/turnero?paciente_id=${id}`}>
+              <CalendarDays className="h-4 w-4" />
+              Ver turnos
+            </Link>
+          </Button>
+        ) : (
+          <Button variant="outline" className="gap-2" disabled title="Requiere permiso para ver turnos">
             <CalendarDays className="h-4 w-4" />
             Ver turnos
-          </Link>
-        </Button>
-        {archivado ? (
-          <Button variant="outline" className="gap-2" disabled title="No se pueden emitir documentos a un paciente archivado">
+          </Button>
+        )}
+        {archivado || !puedeCrearPedido ? (
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled
+            title={archivado
+              ? 'No se pueden emitir documentos a un paciente archivado'
+              : 'Requiere permiso para emitir pedidos'}
+          >
             <ClipboardList className="h-4 w-4" />
             Nuevo Pedido
           </Button>
@@ -267,8 +306,15 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
             </Link>
           </Button>
         )}
-        {archivado ? (
-          <Button variant="outline" className="gap-2" disabled title="No se pueden emitir documentos a un paciente archivado">
+        {archivado || !puedeCrearCert ? (
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled
+            title={archivado
+              ? 'No se pueden emitir documentos a un paciente archivado'
+              : 'Requiere permiso para emitir certificados'}
+          >
             <Award className="h-4 w-4" />
             Nuevo Certificado
           </Button>
