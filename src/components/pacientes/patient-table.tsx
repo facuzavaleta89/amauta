@@ -31,6 +31,7 @@ export function PatientTable({ pacientes }: PatientTableProps) {
   // ⚠ El hook va ANTES del early return de abajo (reglas de los hooks).
   const { tienePermiso } = usePermisos()
   const puedeVerHistoria = tienePermiso('ver_historia_clinica')
+  const puedeEditar = tienePermiso('editar_pacientes')
 
   if (pacientes.length === 0) {
     return (
@@ -209,20 +210,32 @@ export function PatientTable({ pacientes }: PatientTableProps) {
                           <Eye className="h-4 w-4" />
                         </Link>
                       </Button>
-                      <Button
-                        asChild
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-primary relative z-10"
-                      >
-                        <Link
-                          href={`/pacientes/${p.id}?edit=true`}
-                          aria-label="Editar paciente"
-                          onClick={(e) => e.stopPropagation()}
+                      {puedeEditar ? (
+                        <Button
+                          asChild
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-muted-foreground hover:text-primary relative z-10"
+                        >
+                          <Link
+                            href={`/pacientes/${p.id}?edit=true`}
+                            aria-label="Editar paciente"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button
+                          disabled
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-muted-foreground relative z-10"
+                          aria-label="Editar paciente (requiere permiso)"
                         >
                           <Pencil className="h-4 w-4" />
-                        </Link>
-                      </Button>
+                        </Button>
+                      )}
                       {puedeVerHistoria ? (
                         <Button
                           asChild

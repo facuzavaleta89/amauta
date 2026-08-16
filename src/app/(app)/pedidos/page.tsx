@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { Button } from '@/components/ui/button'
+import { BotonCrearConPermiso } from '@/components/shared/boton-crear-con-permiso'
 import { Input } from '@/components/ui/input'
 import { PlusCircle, ClipboardList, FileText, Calendar, Search, X, Ban } from 'lucide-react'
 import Link from 'next/link'
@@ -49,12 +50,15 @@ export default async function PedidosPage({ searchParams }: Props) {
             Solicitudes de estudios complementarios emitidas
           </p>
         </div>
-        <Button asChild className="gap-2 shrink-0">
-          <Link href="/pedidos/nuevo">
-            <PlusCircle className="h-4 w-4" />
-            Nuevo Pedido
-          </Link>
-        </Button>
+        <BotonCrearConPermiso
+          permiso="crear_pedidos"
+          href="/pedidos/nuevo"
+          className="gap-2 shrink-0"
+          tituloSinPermiso="Requiere permiso para emitir pedidos"
+        >
+          <PlusCircle className="h-4 w-4" />
+          Nuevo Pedido
+        </BotonCrearConPermiso>
       </div>
 
       {/* Búsqueda */}
@@ -102,12 +106,15 @@ export default async function PedidosPage({ searchParams }: Props) {
               : 'Los pedidos de estudios que emitas aparecerán aquí. Podés crear uno desde la ficha del paciente o desde este botón.'}
           </p>
           {!q && (
-            <Button asChild className="gap-2">
-              <Link href="/pedidos/nuevo">
-                <PlusCircle className="h-4 w-4" />
-                Crear primer pedido
-              </Link>
-            </Button>
+            <BotonCrearConPermiso
+              permiso="crear_pedidos"
+              href="/pedidos/nuevo"
+              className="gap-2"
+              tituloSinPermiso="Requiere permiso para emitir pedidos"
+            >
+              <PlusCircle className="h-4 w-4" />
+              Crear primer pedido
+            </BotonCrearConPermiso>
           )}
         </div>
       ) : (

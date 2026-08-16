@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { pacienteSchema } from '@/lib/validations/paciente.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
-import { resolverTenant } from '@/lib/auth/tenant'
+import { resolverAcceso } from '@/lib/auth/tenant'
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,11 +22,14 @@ export async function GET(request: NextRequest) {
       return rateLimitResponse(rl.retryAfter!)
     }
 
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'No autorizado: sin tenant asignado' }, { status: 403 })
+    const acceso = await resolverAcceso(supabase, user.id, 'ver_pacientes')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para ver pacientes'
+                : acceso.motivo === 'sin-tenant'  ? 'No autorizado: sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const { searchParams } = new URL(request.url)
     const rawQuery = searchParams.get('q') || ''
@@ -71,11 +74,16 @@ export async function POST(request: NextRequest) {
     // Determinar el medico_id del tenant:
     // - Si es médico: su propio id
     // - Si es asistente: el medico_id al que está vinculado
-    const tenantMedicoId = await resolverTenant(supabase, user.id)
-
-    if (!tenantMedicoId) {
-      return NextResponse.json({ error: 'No autorizado: sin tenant asignado' }, { status: 403 })
+    // ⚠ El alta exige `editar_pacientes` (no existe `crear_pacientes`): es el mismo
+    // permiso que pide la RLS `pacientes_insert`.
+    const acceso = await resolverAcceso(supabase, user.id, 'editar_pacientes')
+    if (!acceso.ok) {
+      const msg = acceso.motivo === 'sin-permiso' ? 'Sin permisos para dar de alta pacientes'
+                : acceso.motivo === 'sin-tenant'  ? 'No autorizado: sin tenant asignado'
+                : 'Perfil no encontrado'
+      return NextResponse.json({ error: msg }, { status: 403 })
     }
+    const tenantMedicoId = acceso.tenantMedicoId
 
     const body = await request.json()
 

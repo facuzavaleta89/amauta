@@ -2,9 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { PatientTable } from '@/components/pacientes/patient-table'
 import { PatientFilters } from '@/components/pacientes/patient-filters'
-import { Button } from '@/components/ui/button'
+import { BotonCrearConPermiso } from '@/components/shared/boton-crear-con-permiso'
 import { PlusCircle } from 'lucide-react'
-import Link from 'next/link'
 
 export const metadata = {
   title: 'Pacientes',
@@ -68,12 +67,15 @@ export default async function PacientesPage({ searchParams }: PacientesPageProps
             Gestión de pacientes e historia clínica
           </p>
         </div>
-        <Button asChild className="gap-2">
-          <Link href="/pacientes/nuevo">
-            <PlusCircle className="h-4 w-4" />
-            Nuevo Paciente
-          </Link>
-        </Button>
+        <BotonCrearConPermiso
+          permiso="editar_pacientes"
+          href="/pacientes/nuevo"
+          className="gap-2"
+          tituloSinPermiso="Requiere permiso para dar de alta pacientes"
+        >
+          <PlusCircle className="h-4 w-4" />
+          Nuevo Paciente
+        </BotonCrearConPermiso>
       </div>
 
       <PatientFilters obrasSociales={obrasSociales || []} />
