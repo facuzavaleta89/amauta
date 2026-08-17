@@ -54,7 +54,16 @@ export interface Consulta {
   observaciones: string | null
 
   // Seguimiento
-  proximo_turno_sugerido: string | null  // ISO date (YYYY-MM-DD)
+  /**
+   * Próximo control sugerido. **ISO 8601 con offset** (`2026-08-20T17:00:00+00:00`):
+   * la columna es TIMESTAMPTZ desde la migración 041 y por lo tanto LLEVA HORA.
+   *
+   * ⚠ Antes era DATE y este comentario decía `YYYY-MM-DD`. No volver a partir el
+   * string por `'T'` para sacarle fecha y hora: eso da los componentes en UTC, no en
+   * hora argentina. Se proyecta con `formatFechaAR` y se compone con
+   * `parseFechaHoraAR` (`lib/utils/format-date.ts`). Ver nota técnica 18.
+   */
+  proximo_turno_sugerido: string | null
 
   // Campos extra ad-hoc (examen físico / parámetros metabólicos), por consulta
   campos_extra: CampoExtra[]

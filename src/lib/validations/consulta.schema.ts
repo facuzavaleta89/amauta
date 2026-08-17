@@ -49,7 +49,11 @@ export const consultaSchema = z
     medicacion_actual: z.string().max(10000).optional().nullable(),
     observaciones:    z.string().max(10000).optional().nullable(),
 
-    // Seguimiento — acepta fecha simple (YYYY-MM-DD) o datetime completo
+    // Seguimiento — la columna es TIMESTAMPTZ desde la migración 041, y el formulario
+    // manda un ISO CON offset (lo compone `parseFechaHoraAR`, anclado en zona AR).
+    // El refine sigue siendo deliberadamente laxo —un prefijo YYYY-MM-DD, SIN '$'—
+    // para seguir aceptando los valores date-only que quedaron guardados de antes:
+    // acá no se valida el formato exacto, solo se descarta la basura evidente.
     proximo_turno_sugerido: z
       .string()
       .optional()

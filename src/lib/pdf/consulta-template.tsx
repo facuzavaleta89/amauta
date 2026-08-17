@@ -6,9 +6,7 @@ import {
   StyleSheet,
   Image,
 } from '@react-pdf/renderer'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
-import { formatFechaAR } from '@/lib/utils/format-date'
+import { formatFechaAR, formatFechaLarga } from '@/lib/utils/format-date'
 import type { Consulta } from '@/types/consulta'
 import type { Matricula } from '@/types/roles'
 
@@ -103,11 +101,15 @@ function fmtFecha(str: string) {
   } catch { return str }
 }
 
-function fmtDate(str: string) {
-  try {
-    return format(new Date(str + 'T12:00:00'), "d 'de' MMMM 'de' yyyy", { locale: es })
-  } catch { return str }
-}
+// `fmtDate` (fecha sin hora) se ELIMINÓ: era el último helper de fecha propio de este
+// archivo y la última excepción viva a la nota técnica 18. Formateaba con `format()` de
+// date-fns —o sea en la zona del RUNTIME, UTC en Vercel— y compensaba concatenando
+// 'T12:00:00' para que el mediodía absorbiera el corrimiento. Ese truco se rompía en
+// cuanto el valor traía hora propia: '2026-08-20T17:00:00+00:00' + 'T12:00:00' es un
+// string inválido → Invalid Date → el catch metía el ISO CRUDO dentro del PDF.
+// Sus dos usos pasaron al canon: `formatFechaLarga` para las fechas sin hora
+// (paciente.fecha_nacimiento, que sigue siendo DATE) y `fmtFecha` para el próximo
+// control, que desde la migración 041 es TIMESTAMPTZ y lleva hora.
 
 function calcEdad(dob: string) {
   try {
@@ -237,7 +239,7 @@ function ConsultaBody({ consulta }: { consulta: Consulta }) {
       {consulta.proximo_turno_sugerido && (
         <View>
           <Text style={s.sectionTitle}>Próximo Control Sugerido</Text>
-          <Text style={s.bodyText}>{fmtDate(consulta.proximo_turno_sugerido)}</Text>
+          <Text style={s.bodyText}>{fmtFecha(consulta.proximo_turno_sugerido)}</Text>
         </View>
       )}
     </View>
@@ -320,7 +322,7 @@ export function ConsultaIndividualPDF({ consulta, paciente, medico }: ConsultaPD
         <View style={s.patientBox}>
           <View style={s.row}><Text style={s.label}>Paciente:</Text><Text style={s.value}>{paciente.nombre_completo}</Text></View>
           <View style={s.row}><Text style={s.label}>DNI:</Text><Text style={s.value}>{paciente.dni}</Text></View>
-          <View style={s.row}><Text style={s.label}>Fecha de Nac.:</Text><Text style={s.value}>{fmtDate(paciente.fecha_nacimiento)}{edad ? ` (${edad})` : ''}</Text></View>
+          <View style={s.row}><Text style={s.label}>Fecha de Nac.:</Text><Text style={s.value}>{formatFechaLarga(paciente.fecha_nacimiento)}{edad ? ` (${edad})` : ''}</Text></View>
           {paciente.obra_social_nombre && <View style={s.row}><Text style={s.label}>Obra Social:</Text><Text style={s.value}>{paciente.obra_social_nombre}</Text></View>}
           {paciente.numero_afiliado    && <View style={s.row}><Text style={s.label}>N° Afiliado:</Text><Text style={s.value}>{paciente.numero_afiliado}</Text></View>}
         </View>
@@ -372,7 +374,7 @@ export function HCCompletaPDF({ consultas, paciente, medico }: HCCompletaPDFProp
             <View style={s.patientBox}>
               <View style={s.row}><Text style={s.label}>Paciente:</Text><Text style={s.value}>{paciente.nombre_completo}</Text></View>
               <View style={s.row}><Text style={s.label}>DNI:</Text><Text style={s.value}>{paciente.dni}</Text></View>
-              <View style={s.row}><Text style={s.label}>Fecha de Nac.:</Text><Text style={s.value}>{fmtDate(paciente.fecha_nacimiento)}{edad ? ` (${edad})` : ''}</Text></View>
+              <View style={s.row}><Text style={s.label}>Fecha de Nac.:</Text><Text style={s.value}>{formatFechaLarga(paciente.fecha_nacimiento)}{edad ? ` (${edad})` : ''}</Text></View>
               {paciente.obra_social_nombre && <View style={s.row}><Text style={s.label}>Obra Social:</Text><Text style={s.value}>{paciente.obra_social_nombre}</Text></View>}
               {paciente.numero_afiliado    && <View style={s.row}><Text style={s.label}>N° Afiliado:</Text><Text style={s.value}>{paciente.numero_afiliado}</Text></View>}
             </View>

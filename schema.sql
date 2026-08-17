@@ -292,7 +292,11 @@ CREATE TABLE public.consultas (
   medicacion_actual      TEXT,
   observaciones          TEXT,
   -- Seguimiento
-  proximo_turno_sugerido DATE,
+  -- migración 041 — pasó de DATE a TIMESTAMPTZ. Era DATE y truncaba en silencio la
+  -- hora que el formulario mandaba ('2026-08-20T14:00' se guardaba '2026-08-20'), así
+  -- que al reabrir un borrador la hora elegida volvía al default 09:00. Sin backfill:
+  -- las filas previas quedaron en la medianoche UTC que produjo el cast (data de prueba).
+  proximo_turno_sugerido TIMESTAMPTZ,
   -- Campos extra ad-hoc por consulta (migración 022): array [{ seccion, nombre, valor }],
   -- seccion ∈ 'examen_fisico' | 'parametros_metabolicos'. Preserva el orden de carga.
   campos_extra           JSONB NOT NULL DEFAULT '[]'::jsonb,
