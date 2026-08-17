@@ -70,10 +70,25 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Pr
     else window.history.replaceState(null, '', url)
   }
 
+  /**
+   * ¿El HILO se muestra como no leído? Un hilo lo está si su raíz es no-leída
+   * O si tiene respuestas no leídas.
+   *
+   * ⚠ El corte por autoría (`remitente_id === currentUserId`) sigue aplicando,
+   * pero SOLO a la raíz — antes era un `return false` que cortaba la función
+   * entera, y por eso un hilo que YO inicié quedaba "leído" para siempre aunque
+   * el otro respondiera. Las respuestas se evalúan aparte: la señal
+   * `tiene_respuestas_no_leidas` la calcula `obtenerBandeja()` excluyendo las
+   * mías, así que ya viene con la autoría descontada.
+   */
   function esNoLeido(m: MensajeInterno): boolean {
-    if (m.remitente_id === currentUserId) return false
-    if (m.es_grupal) return !(m.lecturas ?? []).some((l) => l.user_id === currentUserId)
-    return !m.leido
+    const raizNoLeida =
+      m.remitente_id !== currentUserId &&
+      (m.es_grupal
+        ? !(m.lecturas ?? []).some((l) => l.user_id === currentUserId)
+        : !m.leido)
+
+    return raizNoLeida || (m.tiene_respuestas_no_leidas ?? false)
   }
 
   function abrirHilo(m: MensajeInterno) {
@@ -82,23 +97,28 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Pr
     // no `replace`) el botón "atrás" del navegador cierra el modal.
     sincronizarUrl(m.id, 'push')
 
-    // Marcar como leído localmente de inmediato para que desaparezca el indicador azul al hacer clic
+    // Marcar como leído localmente de inmediato para que desaparezca el indicador
+    // al hacer clic, sin esperar el round-trip del `revalidatePath` que dispara el
+    // marcado real (`marcarMensajeLeido`, desde el modal).
     setThreads((prev) =>
       prev.map((t) => {
-        if (t.id === m.id) {
-          if (t.es_grupal) {
-            const lecturas = t.lecturas ?? []
-            if (!lecturas.some((l) => l.user_id === currentUserId)) {
-              return {
-                ...t,
-                lecturas: [...lecturas, { user_id: currentUserId, leido_at: new Date().toISOString() }],
-              }
-            }
-          } else {
-            return { ...t, leido: true }
+        if (t.id !== m.id) return t
+
+        // La señal de respuestas se apaga SIEMPRE: al abrir, el modal marca como
+        // leídas todas las no leídas del hilo (raíz y respuestas). Si ese marcado
+        // fallara, el `revalidatePath` trae la señal en `true` de vuelta y el
+        // indicador reaparece — el optimismo no puede mentir de forma permanente.
+        const abierto: MensajeInterno = { ...t, tiene_respuestas_no_leidas: false }
+
+        if (t.es_grupal) {
+          const lecturas = t.lecturas ?? []
+          if (lecturas.some((l) => l.user_id === currentUserId)) return abierto
+          return {
+            ...abierto,
+            lecturas: [...lecturas, { user_id: currentUserId, leido_at: new Date().toISOString() }],
           }
         }
-        return t
+        return { ...abierto, leido: true }
       })
     )
   }

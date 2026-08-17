@@ -36,6 +36,39 @@ export interface MensajeInterno {
   destinatario?: { full_name: string; role: UserRole } | null
   /** Para mensajes grupales: registros de lectura por usuario */
   lecturas?: MensajeLectura[]
+  /**
+   * ⚠ NO es una columna: lo CALCULA `obtenerBandeja()` (mensajes/actions.ts) para
+   * cada hilo raíz — `true` si el hilo tiene al menos una respuesta (`parent_id`
+   * no nulo) sin leer por el usuario actual.
+   *
+   * Existe porque la bandeja pinta HILOS pero su query trae solo RAÍCES: sin esta
+   * señal el estado de lectura de las respuestas no llegaba al cliente y el
+   * indicador de no-leído no se encendía, aunque el badge global sí las contara.
+   *
+   * Opcional a propósito: los demás productores del tipo (`obtenerHilo`, el
+   * optimista de `bandeja.tsx`, el insert de `enviarMensaje`) no la calculan, y
+   * `undefined` se lee como "sin señal" = `false`.
+   */
+  tiene_respuestas_no_leidas?: boolean
+}
+
+/**
+ * Proyección MÍNIMA para decidir si una RESPUESTA está no leída para el usuario
+ * actual. La produce y consume solo el paso 3 de `obtenerBandeja()`
+ * (`src/app/(app)/mensajes/actions.ts`); su `select` es
+ * `parent_id, es_grupal, remitente_id, leido, lecturas:mensajes_lecturas(user_id)`.
+ *
+ * ⚠ No es intercambiable con `MensajeInterno`: no trae `id`, `asunto`, `cuerpo`,
+ * `medico_id` ni `created_at`. Si otro endpoint necesita el estado de lectura de
+ * las respuestas con más campos, va un tipo propio (ver el ⚠ del mapa de tipos en
+ * CLAUDE.md: el shape de un join lo fija cada endpoint, no la tabla).
+ */
+export interface RespuestaEstadoLectura {
+  parent_id: string
+  es_grupal: boolean
+  remitente_id: string
+  leido: boolean
+  lecturas: { user_id: string }[]
 }
 
 export interface MensajeInsertar {
