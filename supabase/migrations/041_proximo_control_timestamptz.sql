@@ -1,0 +1,94 @@
+-- ============================================================================
+-- Migration 041 — consultas.proximo_turno_sugerido pasa de DATE a TIMESTAMPTZ
+-- ============================================================================
+-- Fecha: 2026-08-17
+--
+-- ── QUÉ ARREGLA ─────────────────────────────────────────────────────────────
+--   La sección "Seguimiento" de la HC deja elegir FECHA Y HORA del próximo
+--   control (default 09:00), pero la columna es DATE: Postgres acepta el
+--   '2026-08-20T14:00' que manda el formulario y **descarta la hora en
+--   silencio** — no es un error de cast, es truncamiento. Al reabrir el
+--   borrador el valor releído ya no trae 'T', el formulario no encuentra hora y
+--   cae al default: **las 14:00 elegidas vuelven a mostrarse como 09:00**.
+--
+--   El turno de la agenda NO tenía este problema: se arma con el valor en
+--   memoria del request (ver nota técnica 22), no con lo releído de la base. O
+--   sea que hasta hoy el turno quedaba a la hora correcta y la consulta guardada
+--   decía otra cosa: los dos artefactos **divergían**.
+--
+-- ── POR QUÉ EL TIPO Y NO UNA COLUMNA NUEVA ──────────────────────────────────
+--   Toda la cadena de aplicación YA transporta la hora intacta: el schema Zod la
+--   acepta (`consulta.schema.ts`, el refine es /^\d{4}-\d{2}-\d{2}/ SIN '$'), el
+--   tipo TS es `string | null` y los dos endpoints la usan con hora para armar
+--   el turno. **El único eslabón que la pierde es esta columna.** Cambiarle el
+--   tipo es la corrección en el punto exacto de la pérdida; agregar una columna
+--   paralela dejaría dos fuentes de verdad para el mismo dato.
+--
+-- ── ⚠ SIN BACKFILL, A PROPÓSITO ─────────────────────────────────────────────
+--   Esta migración **no lleva ningún UPDATE de datos**. Las filas existentes son
+--   data de prueba y su conversión es aceptable tal como resulte del cast.
+--
+--   Qué resulta, concretamente: `date::timestamptz` interpreta la fecha como
+--   MEDIANOCHE en la zona de la SESIÓN. En Supabase el TimeZone del servidor es
+--   UTC, así que un '2026-08-20' queda '2026-08-20 00:00:00+00' — que leído en
+--   hora argentina (UTC-3) es **el 19/08 a las 21:00**. Es decir: las filas
+--   viejas se van a ver **un día antes, a la noche**. Asumido y aceptado; si
+--   alguna vez hubiera datos reales que preservar, el backfill correcto sería
+--   un UPDATE que reancle cada fila a las 09:00 AR (el default del formulario),
+--   no este cast.
+--
+-- ── SOBRE LA CLÁUSULA `USING` ───────────────────────────────────────────────
+--   El precedente exacto de este mismo cambio es la migración **016**, que hizo
+--   `ALTER TABLE public.historia_clinica ALTER COLUMN proximo_control TYPE
+--   TIMESTAMPTZ;` **sin USING** — y funcionó, porque en `pg_cast` existe una
+--   conversión date→timestamptz, así que Postgres no exige la cláusula.
+--   Acá se la escribe igual, explícita: `USING` documenta EN LA MIGRACIÓN cómo
+--   se convierte cada fila existente (que es justamente el punto delicado del
+--   párrafo anterior) en vez de dejarlo a una regla implícita del motor. Es la
+--   misma conversión que Postgres aplicaría solo; no cambia el resultado.
+--
+-- ── LO QUE ESTA MIGRACIÓN NO TOCA ───────────────────────────────────────────
+--   · **Ninguna otra columna, tabla, política ni índice.** Es un solo ALTER.
+--   · La RLS de `consultas` es a nivel de FILA: cambiar el tipo de una columna
+--     no la afecta (mismo criterio que la 022 con `campos_extra`).
+--   · El tipo TS sigue siendo `string | null` — lo que cambia es el FORMATO que
+--     transporta ese string (ahora ISO con offset). Se actualizan los
+--     comentarios de `src/types/consulta.ts` en la misma tanda.
+--   · `historia_clinica.proximo_control` ya es TIMESTAMPTZ desde la 016 y no se
+--     toca: esa tabla está DORMIDA.
+--
+-- Sin transacción explícita: es un único DDL, atómico por sí mismo.
+-- Reversible: ver el bloque comentado al final (⚠ el revert PIERDE la hora).
+-- ============================================================================
+
+ALTER TABLE public.consultas
+  ALTER COLUMN proximo_turno_sugerido TYPE TIMESTAMPTZ
+  USING proximo_turno_sugerido::timestamptz;
+
+-- ── VERIFICACIÓN (correr por separado, es read-only) ─────────────────────────
+-- V1. El tipo quedó en 'timestamp with time zone':
+--   SELECT column_name, data_type, is_nullable
+--   FROM   information_schema.columns
+--   WHERE  table_schema = 'public'
+--     AND  table_name   = 'consultas'
+--     AND  column_name  = 'proximo_turno_sugerido';
+--   Esperado: proximo_turno_sugerido | timestamp with time zone | YES
+--
+-- V2. Cómo quedaron las filas existentes (las de prueba, sin backfill):
+--   SELECT id, estado, proximo_turno_sugerido,
+--          proximo_turno_sugerido AT TIME ZONE 'America/Argentina/Buenos_Aires' AS en_hora_ar
+--   FROM   public.consultas
+--   WHERE  proximo_turno_sugerido IS NOT NULL
+--   ORDER  BY created_at DESC;
+--
+-- La prueba REAL es funcional: guardar un borrador con hora 14:00, cerrarlo y
+-- reabrirlo — el campo "Hora sugerida" tiene que mostrar 14:00, no 09:00.
+
+-- ── REVERSIBLE ──────────────────────────────────────────────────────────────
+-- ⚠ Revertir DESTRUYE la hora de todas las filas (date descarta la parte
+--   horaria), y además la descarta según la zona de la SESIÓN: un control
+--   guardado a las 22:00 AR (01:00 UTC del día siguiente) volvería con la fecha
+--   corrida un día. No revertir sin exportar antes la columna.
+-- ALTER TABLE public.consultas
+--   ALTER COLUMN proximo_turno_sugerido TYPE DATE
+--   USING proximo_turno_sugerido::date;

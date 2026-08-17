@@ -23,10 +23,20 @@ import {
 
 import { usePermisos } from '@/contexts/permisos-context'
 import { consultaSchema, type ConsultaFormInput, type ConsultaFormData } from '@/lib/validations/consulta.schema'
+import { formatFechaAR, parseFechaHoraAR } from '@/lib/utils/format-date'
 import { FinalizarDialog } from './finalizar-dialog'
 import { DescartarDialog } from './descartar-dialog'
 import { ConsultaPDFButton } from './pdf-download-button'
 import type { Consulta, CampoExtraSeccion } from '@/types/consulta'
+
+/**
+ * Hora sugerida por defecto del próximo control, en hora ARGENTINA.
+ *
+ * Estaba duplicada en dos literales '09:00' (el sembrado del input y el fallback del
+ * efecto que compone el valor) que podían divergir en silencio. El texto de ayuda del
+ * formulario le promete este valor al usuario, así que es una sola constante.
+ */
+const HORA_CONTROL_DEFAULT = '09:00'
 
 // ── Tipos ─────────────────────────────────────────────────────
 
@@ -179,16 +189,17 @@ function ConsultaReadOnly({ consulta }: { consulta: Consulta }) {
       {/* Seguimiento */}
       {(() => {
         if (!consulta.proximo_turno_sugerido) return null
-        const tieneHora = consulta.proximo_turno_sugerido.includes('T')
-        const fechaObj = tieneHora
-          ? new Date(consulta.proximo_turno_sugerido)
-          : new Date(consulta.proximo_turno_sugerido + 'T12:00:00')
+        // Desde la migración 041 la columna es TIMESTAMPTZ, así que el valor SIEMPRE
+        // llega como ISO con offset: se acabaron las dos ramas ('con T' / 'sin T') y
+        // el `+ 'T12:00:00'` que evitaba el corrimiento del caso date-only.
+        const fechaObj = new Date(consulta.proximo_turno_sugerido)
 
         if (isNaN(fechaObj.getTime())) return null
 
-        const valorFormateado = tieneHora
-          ? format(fechaObj, "d 'de' MMMM 'de' yyyy 'a las' HH:mm 'hs'", { locale: es })
-          : format(fechaObj, "d 'de' MMMM 'de' yyyy", { locale: es })
+        // Client Component: `format()` renderiza en la zona del NAVEGADOR, que es la
+        // del usuario. Es el uso correcto según la nota técnica 18 — el canon
+        // `formatFechaAR` es para el SERVIDOR, donde el runtime es UTC.
+        const valorFormateado = format(fechaObj, "d 'de' MMMM 'de' yyyy 'a las' HH:mm 'hs'", { locale: es })
 
         return (
           <div>
@@ -209,7 +220,7 @@ function ConsultaReadOnly({ consulta }: { consulta: Consulta }) {
 function ConsultaForm({
   consulta, pacienteId, currentUserId, archivado = false, onSaved, onCancel, onDeleted,
 }: Pick<ConsultaDetailProps,
-  'mode' | 'consulta' | 'pacienteId' | 'currentUserId' | 'archivado' | 'onSaved' | 'onCancel' | 'onDeleted'
+  'consulta' | 'pacienteId' | 'currentUserId' | 'archivado' | 'onSaved' | 'onCancel' | 'onDeleted'
 >) {
   const { esMedico } = usePermisos()
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -288,30 +299,48 @@ function ConsultaForm({
     return null
   }, [pesoVal, tallaVal])
 
-  // Extraer valores iniciales para los inputs separados
-  const initialDate = useMemo(() => {
-    if (consulta?.proximo_turno_sugerido && consulta.proximo_turno_sugerido.includes('T')) {
-      return consulta.proximo_turno_sugerido.split('T')[0]
+  // Sembrado de los dos inputs separados (fecha + hora) desde el valor guardado.
+  //
+  // ⚠ NO partir el string por 'T'. Desde la migración 041 la columna es TIMESTAMPTZ y
+  // el valor llega como ISO CON offset (p. ej. '2026-08-20T17:00:00+00:00'): partirlo
+  // daría la fecha y la hora en UTC, no las que el usuario eligió. Hay que PROYECTARLO
+  // a zona AR, y eso lo hace el canon `formatFechaAR` (nota técnica 18).
+  //
+  // Los dos valores salen del MISMO memo para que no puedan quedar desfasados: cerca de
+  // medianoche, fecha y hora tienen que venir de la misma proyección.
+  const { initialDate, initialTime } = useMemo(() => {
+    const valor = consulta?.proximo_turno_sugerido
+    if (!valor) return { initialDate: '', initialTime: HORA_CONTROL_DEFAULT }
+    try {
+      return {
+        initialDate: formatFechaAR(valor, 'yyyy-MM-dd'),
+        initialTime: formatFechaAR(valor, 'HH:mm'),
+      }
+    } catch {
+      // `formatFechaAR` LANZA ante una entrada degenerada, y como el proyecto no tiene
+      // tipos generados de `Database` el valor llega sin verificar: se degrada a "sin
+      // próximo control" en vez de tumbar el formulario entero.
+      return { initialDate: '', initialTime: HORA_CONTROL_DEFAULT }
     }
-    return consulta?.proximo_turno_sugerido || ''
-  }, [consulta])
-
-  const initialTime = useMemo(() => {
-    if (consulta?.proximo_turno_sugerido && consulta.proximo_turno_sugerido.includes('T')) {
-      return consulta.proximo_turno_sugerido.split('T')[1]
-    }
-    return '09:00' // Hora por defecto sugerida
   }, [consulta])
 
   const [proximoFecha, setProximoFecha] = useState(initialDate)
   const [proximoHora, setProximoHora] = useState(initialTime)
 
   useEffect(() => {
-    if (proximoFecha) {
-      form.setValue('proximo_turno_sugerido', `${proximoFecha}T${proximoHora || '09:00'}`)
-    } else {
+    if (!proximoFecha) {
       form.setValue('proximo_turno_sugerido', '')
+      return
     }
+    // Los dos <input> dan hora de PARED argentina, sin offset. La columna es TIMESTAMPTZ,
+    // así que hay que anclarla a un instante ANTES de mandarla: con el string crudo
+    // ('2026-08-20T14:00') el servidor lo interpretaría en la zona del runtime —UTC en
+    // Vercel— y las 14:00 AR se guardarían como 11:00 AR. Ver nota técnica 18.
+    const instante = parseFechaHoraAR(`${proximoFecha}T${proximoHora || HORA_CONTROL_DEFAULT}`)
+    form.setValue(
+      'proximo_turno_sugerido',
+      isNaN(instante.getTime()) ? '' : instante.toISOString(),
+    )
   }, [proximoFecha, proximoHora, form])
 
   async function submitWithEstado(estado: 'borrador' | 'finalizada') {
@@ -756,7 +785,6 @@ export function ConsultaDetail({
 
   return (
     <ConsultaForm
-      mode={mode}
       consulta={consulta}
       pacienteId={pacienteId}
       currentUserId={currentUserId}
