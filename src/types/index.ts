@@ -15,6 +15,6 @@ export * from './consulta'   // ConsultaEstado, Consulta, ConsultaConRelaciones,
 export * from './pedido'     // Pedido, Certificado, Receta, Evolucion, Estudio
 export * from './turno'      // TurnoEstado, Turno, TurnoConPaciente, TurnoParaRecordatorio, BloqueoAgenda, TurnoAuditLog, inserts/updates
 export * from './difusion'   // DifusionEstado, DifusionCanal, DifusionPost, DifusionEnvio
-export * from './mensaje'    // MensajeInterno, MensajeInsertar, MensajeFormValues
+export * from './mensaje'    // MensajeInterno, MensajeInsertar, MensajeFormValues, MARCADO_SIN_FILAS
 export * from './nota'       // Nota, NotaInsert, NotaUpdate
 export * from './notificacion' // Notificacion, NotificacionTipo, ItemPendiente, ITEM_TYPE_SOLICITUD

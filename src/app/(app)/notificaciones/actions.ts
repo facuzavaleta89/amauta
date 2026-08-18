@@ -5,7 +5,7 @@ import { resolverTenant, tenantDeProfile } from '@/lib/auth/tenant'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
-import type { MensajeNoLeido } from '@/types/mensaje'
+import { MARCADO_SIN_FILAS, type MensajeNoLeido } from '@/types/mensaje'
 import { ITEM_TYPE_SOLICITUD, type ItemPendiente } from '@/types/notificacion'
 
 const mensajeSchema = z.object({
@@ -104,13 +104,26 @@ export async function marcarMensajeLeido(id: string) {
       )
     if (error) return { error: error.message }
   } else {
-    // Para individuales: update leido = true
-    const { error } = await supabase
+    // Para individuales: update leido = true.
+    // ⚠ El `.select('id')` NO es decorativo: sin él PostgREST responde 204 con
+    // cuerpo vacío y supabase-js devuelve `data: null, error: null`, así que un
+    // UPDATE que afecta 0 filas es INDISTINGUIBLE de uno exitoso. Una fila filtrada
+    // por RLS en un UPDATE no es un rechazo (no hay error), es una fila que no entra
+    // en el conjunto: el silencio era total.
+    const { data, error } = await supabase
       .from('mensajes_internos')
       .update({ leido: true, leido_at: new Date().toISOString() })
       .eq('id', id)
       .eq('destinatario_id', user.id)
+      .select('id')
+      .overrideTypes<{ id: string }[], { merge: false }>()
     if (error) return { error: error.message }
+    // 0 filas ⇒ ninguna pasó `id + destinatario_id` y la RLS `mensajes_marcar_leido`.
+    // En uso normal es inalcanzable (ver el JSDoc de MARCADO_SIN_FILAS), así que
+    // viaja como sentinel: el llamador lo loguea sin molestar al usuario con un
+    // toast que no puede accionar. Se reusa el `{ error }` que la action ya devuelve
+    // para no volver heterogénea su firma inferida.
+    if (!data || data.length === 0) return { error: MARCADO_SIN_FILAS }
   }
 
   revalidatePath('/notificaciones')

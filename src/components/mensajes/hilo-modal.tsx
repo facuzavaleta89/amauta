@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { Separator } from '@/components/ui/separator'
-import type { MensajeInterno } from '@/types/mensaje'
+import { MARCADO_SIN_FILAS, type MensajeInterno } from '@/types/mensaje'
 import { obtenerHilo, eliminarMensaje } from '@/app/(app)/mensajes/actions'
 import { enviarMensaje, marcarMensajeLeido } from '@/app/(app)/notificaciones/actions'
 import { usePermisos } from '@/contexts/permisos-context'
@@ -134,7 +134,34 @@ export function HiloModal({ mensajeRaiz, currentUserId, onClose, onMensajeEnviad
       })
 
       if (noLeidos.length > 0) {
-        await Promise.all(noLeidos.map((m) => marcarMensajeLeido(m.id)))
+        // El resultado del marcado ya no se descarta: hasta acá, ni un fallo de RLS
+        // ni un 'Mensaje no encontrado' dejaban rastro en ningún lado.
+        const resultados = await Promise.all(noLeidos.map((m) => marcarMensajeLeido(m.id)))
+
+        // UN solo aviso agregado, nunca uno por mensaje: el hilo puede tener N no
+        // leídos y un fallo sistemático (RLS caída) apilaría N toasts idénticos.
+        const errores = resultados
+          .map((r) => r.error)
+          .filter((e): e is string => e !== null)
+        const sinFilas = errores.filter((e) => e === MARCADO_SIN_FILAS)
+        const erroresReales = errores.filter((e) => e !== MARCADO_SIN_FILAS)
+
+        // Anomalía de datos/RLS: el usuario no puede hacer nada con esto, va solo a
+        // consola. Sin cuerpo ni asunto — el log no lleva datos personales.
+        if (sinFilas.length > 0) {
+          console.error(
+            `[marcarMensajeLeido] ${sinFilas.length} mensaje(s) del hilo ${mensajeRaiz.id} no afectaron ninguna fila`
+          )
+        }
+
+        // Error real: lo accionable. `warning` y no `error` porque el acto principal
+        // —abrir y mostrar el hilo— salió bien y lo que falló es secundario; mismo
+        // criterio que el turno que no se agenda al finalizar una consulta.
+        if (erroresReales.length > 0) {
+          console.error('[marcarMensajeLeido]', erroresReales)
+          toast.warning('No se pudieron marcar algunos mensajes como leídos.')
+        }
+
         onMensajeEnviado() // Notificar al padre para actualizar contadores/bandeja
       }
     } finally {
