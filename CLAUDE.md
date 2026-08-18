@@ -702,6 +702,7 @@ cuatro nacieron de encontrar el mismo criterio duplicado y divergido en varios a
 | `resolverObraSocial`, tipo `ConObraSocial` | `src/lib/pacientes/obra-social.ts` | Criterio ÚNICO de la obra social de un paciente: `obras_sociales?.nombre ?? (obra_social_otro?.trim() \|\| null)`. Unificó **12 sitios** que no eran idénticos (unos trimeaban y otros no). Módulo **neutro** y de parámetro **estructural**, para aceptar las filas sin tipar de supabase-js |
 | `resolverTenant`, `tenantDeProfile`, **`resolverAcceso`** | `src/lib/auth/tenant.ts` | Resolución del tenant (`medico_id` efectivo) y autorización por permiso. `tenantDeProfile` es la variante **pura**, para quien ya leyó el `profile`. `resolverAcceso` suma el chequeo de permiso y acepta **un permiso o un array (OR)**. Ver **nota técnica 24** |
 | `formatFechaAR`, `formatFecha`, `formatFechaLarga`, `TZ_AR` | `src/lib/utils/format-date.ts` | Formateo de fechas en zona AR. El motor lanza; los dos wrappers degradan al texto crudo. Ver **nota técnica 18** |
+| **`parseFechaHoraAR`** | `src/lib/utils/format-date.ts` | La **inversa**: ancla una hora de PARED argentina (sin offset) al instante correcto, para persistirla en un `timestamptz`. Ver **nota técnica 25** |
 | `buscarSolapamientos` | `src/lib/agenda/solapamiento.ts` | Criterio ÚNICO de "franja ocupada" de la agenda. Ver **nota técnica 23** |
 | `BotonCrearConPermiso` | `src/components/shared/boton-crear-con-permiso.tsx` | Botón de acción que se **deshabilita** (en vez de rebotar contra `/sin-acceso`) cuando falta el permiso. Client Component: lee del `PermisosProvider`, así que sirve en páginas Server que **no** consultan `profiles`, sin agregarles una query. Es **solo UX** — la autorización real la hacen la página destino y el endpoint |
 
@@ -852,7 +853,8 @@ cuatro nacieron de encontrar el mismo criterio duplicado y divergido en varios a
     - ✅ **UNIFICADO (Grupo 4, 2026-08-16): `src/lib/utils/format-date.ts` es la casa ÚNICA del
       formateo de fechas.** Antes convivían **seis** implementaciones (este canon + 5 duplicados en
       `lib/utils.ts`, las dos plantillas PDF y `/verificar`), cinco de ellas sin zona fija. Hoy el
-      archivo expone tres funciones y **no hay ninguna otra**:
+      archivo expone tres funciones de **formateo** y **no hay ninguna otra** (desde el Grupo 5 suma
+      además `parseFechaHoraAR`, que hace el camino inverso — ver **nota técnica 25**):
       - **`formatFechaAR(fecha, patron)`** — el **motor**. Fija `TZ_AR` y **lanza** ante una entrada
         inválida.
       - **`formatFecha(fecha, patron = 'd MMM yyyy')`** y **`formatFechaLarga(fecha)`** — wrappers
@@ -1041,3 +1043,46 @@ cuatro nacieron de encontrar el mismo criterio duplicado y divergido en varios a
     - **El chequeo del endpoint debe pedir LO MISMO que la RLS de esa tabla.** Es defensa en
       profundidad: la base ya frena, pero sin el chequeo en la app el usuario recibe un error
       genérico en vez de un 403 con motivo.
+25. **Para ANCLAR una hora de pared argentina a un instante va `parseFechaHoraAR`
+    (`src/lib/utils/format-date.ts`), NUNCA `new Date('…T14:00')`.** Es la **inversa** de la nota 18:
+    aquélla cubre la **salida** (instante → texto en zona AR), ésta la **entrada** (texto de pared en
+    zona AR → instante). Las dos viven en el mismo archivo, que es la casa única de fechas.
+    - **Qué recibe y qué devuelve:** `parseFechaHoraAR('YYYY-MM-DDTHH:mm')` → `Date`. También acepta
+      `'YYYY-MM-DD'` a secas, que resuelve a la **medianoche AR**. El llamador decide la
+      serialización (`.toISOString()` para mandarlo al servidor).
+    - **Por qué existe (bug real, no precaución):** el usuario elige `2026-08-20` en un
+      `<input type="date">` y `14:00` en un `<input type="time">`, y esos strings son hora de
+      **pared** argentina, **sin offset**. Un ISO date-time sin offset lo interpreta el motor en la
+      zona del **RUNTIME**, que en Vercel es **UTC**: `new Date('2026-08-20T14:00')` guardaría las
+      14:00 como **14:00Z**, o sea **11:00 AR**. Es el mismo bug de la nota 18, en el sentido de
+      entrada.
+    - **Sin `-03:00` hardcodeado:** por dentro es `fromZonedTime` de **`date-fns-tz`** fijando
+      `TZ_AR`, que resuelve el offset **real** de la zona para esa fecha. Si Argentina volviera a
+      tener horario de verano, sigue siendo correcto sin tocar código. **No escribir el offset a
+      mano** en un string.
+    - ⚠ **Ante una entrada inválida devuelve `Invalid Date`, NO lanza** — como `new Date`, y a
+      diferencia de `formatFechaAR` (que sí lanza). **El llamador debe chequear** con
+      `isNaN(d.getTime())` antes de usarlo.
+    - **Caso testigo:** la hora del próximo control de la HC. La columna
+      `consultas.proximo_turno_sugerido` era `DATE` y **descartaba la hora** (se agendaba todo a las
+      09:00); la migración **041** la pasó a `timestamptz` y el formulario dejó de perderla gracias a
+      este helper. Ver `PENDIENTES.md` → Bloque A → *Bugs menores detectados*.
+26. **Un valor centinela compartido entre una Server Action y un componente cliente vive en un
+    archivo de TIPOS, no en la action.** Un módulo **`'use server'`** solo puede exportar **funciones
+    async**: una `export const` ahí **rompe el build**. Así que cuando el productor (la action) y el
+    consumidor (el componente) tienen que reconocer **el mismo valor**, la constante va a
+    `src/types/<dominio>.ts` y viaja por el barrel `types/index.ts`.
+    - **Precedentes vivos:** `ITEM_TYPE_SOLICITUD` (`types/notificacion.ts`) y **`MARCADO_SIN_FILAS`**
+      (`types/mensaje.ts`), que marca el `{ error }` de `marcarMensajeLeido` cuando el UPDATE
+      **no afectó ninguna fila**.
+    - ⚠ **La alternativa —repetir el string literal en los dos archivos— es la trampa.** Si los dos
+      textos divergen, el consumidor **deja de reconocer el centinela** y el caso silencioso se
+      convierte en un aviso espurio al usuario: el fallo es **peor** que el problema que el centinela
+      resolvía. Es la misma lección que dejó `DIFUSION_LIMITE_DIARIO` (dos constantes del `100` que
+      podían separarse en silencio).
+    - **Que un archivo de tipos tenga valores de runtime no es una excepción**: `types/roles.ts` ya
+      exporta `PERMISOS_DEFAULT`, `PERMISO_LABELS` y `TITULOS_DISPONIBLES`. Lo que **no** va ahí es
+      lógica; solo el valor y su JSDoc.
+    - **Escribir el centinela legible, no un código corto.** Nunca debería llegar a la UI, pero si un
+      llamador futuro lo mostrara sin reconocerlo, un texto entendible degrada mejor que un
+      `'E_NOROWS'`.
