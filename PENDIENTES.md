@@ -694,24 +694,43 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     el param al instante, la prop del servidor tarda un round-trip). El clic **dentro de la bandeja**
     se unificó al mismo mecanismo, así que hay **un solo camino** para abrir el modal.
   - Detalle del patrón y del porqué de la History API en `CLAUDE.md` → **nota técnica 20**.
-- **⚠ PENDIENTE NUEVO (2026-08-02) — un mensaje individual quedó contado como NO LEÍDO de forma
-  persistente. Severidad BAJA, es de APLICACIÓN (no infraestructura).** Primer síntoma detectado al
-  diagnosticar la mensajería, y **el único de los tres que sigue abierto**. Una fila de mensaje
-  individual **con `parent_id`** (o sea, una **respuesta** dentro de un hilo) quedó marcada como no
-  leída y **sobrevive al F5**, así que no es un problema de estado en el cliente: la fila está
-  realmente sin marcar en la base.
-  - **Descartado:** que el marcado no recorra las respuestas. Se verificó que **sí** las recorre.
-  - **Causa candidata — un error tragado en silencio.** `src/components/mensajes/hilo-modal.tsx`
-    marca leído con `await Promise.all(noLeidos.map((m) => marcarMensajeLeido(m.id)))` y
-    **descarta el `{ error }` que devuelve cada llamada**. Si una falla (RLS, carrera, red), el
-    usuario **no se entera** y la fila queda sin marcar para siempre. Encaja con el síntoma: falla
-    puntual, persistente, sin rastro.
-  - **Primer paso cuando se retome:** **dejar de tragar esos errores** — juntar los resultados,
-    loguear/avisar los que fallaron (sin datos personales, Ley 25.326) y recién ahí decidir si hace
-    falta un reintento. Barato y previo a cualquier teoría.
-  - Nota: el upsert de **grupales** ya se arregló (ver el `ignoreDuplicates` del ítem del badge);
-    este síntoma es de mensajes **individuales**, que van por el `UPDATE leido = true` — camino
-    distinto, que sí tiene política.
+- **✅ RESUELTO (Grupo 5 — Frentes 3 y 4, 2026-08-17, sin migración) — un mensaje individual con
+  `parent_id` quedaba NO LEÍDO de forma persistente… y eran DOS cosas distintas.** Re-diagnosticado
+  con dos sesiones abiertas (médico + asistente), el síntoma se partió en dos, y **la causa candidata
+  que este ítem proponía no era la del bug**:
+  - **(a) EL BUG — la BANDEJA no encendía el indicador, aunque el badge SÍ contaba.** El badge cuenta
+    **mensajes** (`contarMensajesNoLeidos` **no filtra por `parent_id`**) y la bandeja pinta
+    **hilos**, pero decidía el estado del hilo mirando **una sola fila: la raíz**. `obtenerBandeja()`
+    trae solo raíces (`.is('parent_id', null)`), así que el estado de lectura de las respuestas
+    **nunca llegaba al cliente**: el usuario veía *"1 sin leer"* y **ninguna conversación marcada**,
+    sin forma de saber cuál abrir. La fila estaba realmente sin marcar en la base, sí, pero porque
+    nadie podía llegar a ella.
+    - **Fix:** nueva señal **`tiene_respuestas_no_leidas`**, calculada en `obtenerBandeja()` con una
+      segunda query **acotada a los ids de las raíces ya traídas** (booleana y **sin migración**: el
+      criterio de "no leído" grupal es la **AUSENCIA** de fila en `mensajes_lecturas`, o sea un
+      `NOT EXISTS`, y PostgREST no lo expresa como filtro de recurso embebido — un booleano calculado
+      en la base habría pedido vista o función).
+    - **`esNoLeido` pasa a evaluar raíz *O* respuestas, con el corte por autoría REDUCIDO a la
+      raíz.** Ese corte era un `return false` que cortaba la función entera, así que un hilo que
+      **yo** inicié quedaba "leído" para siempre aunque el otro respondiera — el caso más común, y el
+      segundo eslabón del bug (independiente del filtro de `parent_id`).
+  - **(b) La "causa candidata" de este ítem —el error tragado en silencio— resultó OBSERVABILIDAD,
+    no el bug.** El marcado **funciona** en el camino feliz. Se cerró igual, porque el silencio era
+    total: la rama **individual** de `marcarMensajeLeido` hacía el UPDATE **sin `.select()`**, y
+    PostgREST responde `204` con cuerpo vacío, así que **0 filas afectadas era indistinguible de un
+    éxito** — la misma lección que las **guardas de "0 filas"** de la migración 033. Ahora encadena
+    **`.select('id')`** y devuelve el sentinel **`MARCADO_SIN_FILAS`** si no afectó ninguna fila; el
+    llamador (`hilo-modal.tsx`) **captura el resultado del `Promise.all` que antes descartaba** y
+    distingue **error real** (un único `toast.warning` agregado, nunca N) de **0 filas** (solo
+    `console.error`: anomalía de datos que el usuario no puede accionar). Ver `CLAUDE.md` → **nota
+    técnica 26**.
+  - **La rama GRUPAL no se tocó:** su 0-filas es **idempotencia legítima** (`ON CONFLICT DO NOTHING`
+    = *"ya estaba marcado"*) y ya inspeccionaba su `{ error }`; instrumentarla habría dado **falsos
+    positivos**. Es el mismo camino que ya se había arreglado con el `ignoreDuplicates` del ítem del
+    badge; este síntoma era del `UPDATE leido = true`, que es el otro camino.
+  - ⚠ **En uso normal NO aparece ningún aviso nuevo:** re-marcar un mensaje ya leído **afecta 1
+    fila** (el UPDATE no filtra por `leido = false`), así que el 0-filas es prácticamente inalcanzable
+    salvo deriva de RLS o dato inconsistente.
 - **⚠ LIMITACIÓN CONOCIDA (2026-08-03) — el deep-link no abre hilos fuera de las 100 conversaciones
   más recientes. Severidad MUY BAJA.** `obtenerBandeja()` trae los mensajes raíz con **`.limit(100)`**
   (`src/app/(app)/mensajes/actions.ts:46`), y `bandeja.tsx` resuelve el `?hilo=X` buscando **dentro
@@ -721,27 +740,23 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   inalcanzable desde la campanita, que solo lista mensajes **no leídos** (recientes por definición).
   Si algún día se agrega búsqueda de mensajes o el volumen crece, revisarlo junto con paginar la
   bandeja.
-- **⚠ PENDIENTE NUEVO (2026-08-03) — el LOGO del emisor no se renderiza en los previews de pedido ni
-  de certificado. La firma sí. PREEXISTENTE.** Detectado al verificar visualmente la tanda L3a; **no
-  lo causó L3a**, que solo agregó comentarios de ESLint (diff de 6 inserciones, 0 borrados). El logo
-  se sube bien y **se ve en `/perfil`** después de guardarlo.
-  - **Descartado: no es el `<img>`.** La **firma se muestra en el mismo preview y en el mismo
-    componente**, así que el elemento y su estilo funcionan.
-  - **La ruta de datos es SIMÉTRICA entre logo y firma** —verificado en el código—, lo que hace poco
-    probable un bug de render: `lib/pdf/documentos.ts:91` **selecciona los dos**
-    (`'… firma_url, logo_url'`) y `:106-107` **guarda los dos** en el snapshot; las páginas de detalle
-    los leen igual (`pedidos/[id]/page.tsx:75-76` y `certificados/[id]/page.tsx:74`:
-    `medicoFirma={emisor?.firma_url ?? null}` / `medicoLogo={emisor?.logo_url ?? null}`).
-  - **⚠ PRIMERA HIPÓTESIS A DESCARTAR, y quizá NO sea un bug: la regla de negocio 11.** El
-    `emisor_snapshot` se **congela al emitir**. Un documento emitido **antes** de que se subiera el
-    logo tiene legítimamente `logo_url: null` en su snapshot, y **debe** mostrarse sin logo — eso es
-    el congelado funcionando, no una falla. Que el logo **se vea en `/perfil`** solo prueba que
-    `profiles.logo_url` lo tiene **hoy**, no que el snapshot de **ese** documento lo tuviera al
-    emitirse. Y encaja con que la firma sí aparezca: se habría subido **antes** de emitir.
-  - **Primer paso (barato y decisivo):** consultar el `emisor_snapshot` del documento concreto que se
-    está mirando. Si `logo_url` es **null** → no hay bug, y para verlo hay que **emitir un documento
-    nuevo** con el logo ya cargado. Si `logo_url` **tiene valor** y aun así no se pinta → ahí sí es un
-    bug de render y hay que revisar la condición en `pedido-pdf.tsx` / `certificado-pdf.tsx`.
+  - **Re-confirmada como FUERA DE ALCANCE en el Grupo 5 (2026-08-17).** La tanda del indicador de
+    no-leído cruzó las dos caras de esta limitación y **no tocó ninguna**: ni el `.limit(100)` ni el
+    **orden por `created_at` de la RAÍZ** (un hilo con una respuesta nueva **no sube** en la lista).
+    La señal `tiene_respuestas_no_leidas` se calcula **sobre las raíces que la bandeja ya trajo**, así
+    que **hereda esta cota** en vez de ensancharla. Sigue abierta.
+- **✅ NO REPRODUCIBLE / YA ESTABA RESUELTO (Grupo 5 — Frente 2, verificado en navegador 2026-08-17)
+  — el LOGO del emisor SÍ se renderiza en los previews de pedido y de certificado.** El ítem se
+  abrió el 2026-08-03 y quedó vivo **por inercia**: se había resuelto en una tanda anterior y nadie
+  lo cerró. **No hubo cambio de código en este frente.**
+  - **Verificación:** el logo se ve correctamente **en el preview HTML y en el PDF**, y una consulta
+    al **`emisor_snapshot`** del documento confirmó que está **bien guardado** (data-URI válido).
+  - **La hipótesis principal del ítem quedó descartada con dato, no con teoría:** no era el congelado
+    de la **regla de negocio 11** mostrando un snapshot sin logo — el snapshot **tenía** el logo.
+  - Lo que el ítem dejó verificado y **sigue siendo cierto**: la ruta de datos es **simétrica** entre
+    logo y firma (`lib/pdf/documentos.ts` **selecciona y guarda los dos**; las páginas de detalle los
+    leen igual, `medicoFirma={emisor?.firma_url ?? null}` / `medicoLogo={emisor?.logo_url ?? null}`),
+    que era justamente la razón por la que un bug de render era poco probable.
 - **⏸ DIFERIDO (2026-08-02) — el Realtime de `mensajes_internos` no entrega eventos en vivo. Causa
   acotada a INFRAESTRUCTURA de Supabase, fuera de nuestro código.** Detectado el 2026-07-31 al
   verificar a mano la 1B-parte-1 (**preexistente**, no lo causó esa tanda): con **dos sesiones**
@@ -907,20 +922,26 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     criterio que el resto de la app.
   - ✅ **La sospecha del último bullet se confirmó y se cerró:** `certificado-form.tsx` tenía la misma
     tarjeta con el mismo recorte, y quedó igual (`:121`).
-- **⚠ PENDIENTE NUEVO (2026-08-08) — la HORA del próximo control no se persiste: se pierde y cae a
-  las 09:00. Severidad MEDIA.** Es un límite del **modelo**, no del formulario.
-  - **Causa:** `consultas.proximo_turno_sugerido` es **`DATE`**, no `timestamptz`, así que la base
-    guarda `2026-08-20` y **la hora se descarta**. `consulta-detail.tsx` siembra la hora con
-    `proximo_turno_sugerido.split('T')[1]`; como el valor guardado **no tiene `T`**, cae al default
-    **`'09:00'`**.
-  - **El caso concreto:** elegís **14:00**, guardás borrador, y al **finalizar más tarde** el turno se
-    agenda a las **09:00**, en silencio.
-  - ⚠ **PREEXISTENTE, pero MÁS VISIBLE desde el Grupo 1, y por eso entra ahora:** antes el turno se
-    creaba en el mismo request en que se elegía la hora, así que la pérdida casi no se notaba. Desde
-    que **el turno se crea solo al finalizar** (`CLAUDE.md` → nota técnica 22), **agendar y elegir la
-    hora son momentos distintos** y el desfase queda a la vista.
-  - **Fix candidato:** migrar la columna a **`timestamptz`** (o sumar una columna de hora). Es cambio
-    de esquema + revisar los dos endpoints de consultas que la leen y el sembrado del formulario.
+- **✅ RESUELTO (Grupo 5 — Frente 1, migración 041, 2026-08-17) — la HORA del próximo control no se
+  persistía: se perdía y caía a las 09:00.** Era un límite del **modelo**, no del formulario.
+  - **Causa:** `consultas.proximo_turno_sugerido` era **`DATE`**, no `timestamptz`, así que la base
+    guardaba `2026-08-20` y **la hora se descartaba**. `consulta-detail.tsx` sembraba la hora con
+    `proximo_turno_sugerido.split('T')[1]`; como el valor guardado **no tenía `T`**, caía al default
+    **`'09:00'`**. El caso concreto: elegías **14:00**, guardabas borrador, y al **finalizar más
+    tarde** el turno se agendaba a las **09:00**, en silencio.
+  - ⚠ **PREEXISTENTE, pero MÁS VISIBLE desde el Grupo 1:** antes el turno se creaba en el mismo
+    request en que se elegía la hora, así que la pérdida casi no se notaba. Desde que **el turno se
+    crea solo al finalizar** (`CLAUDE.md` → nota técnica 22), **agendar y elegir la hora son momentos
+    distintos** y el desfase quedó a la vista.
+  - **Fix (1) — migración `041`:** la columna pasó de `DATE` a **`timestamptz`**. **Sin backfill**:
+    las filas existentes eran data de prueba, así que no hubo que decidir a qué hora anclar una fecha
+    que nunca tuvo hora.
+  - **Fix (2) — el sembrado del formulario:** corregido con **`parseFechaHoraAR`** (nuevo — ancla la
+    hora de PARED argentina al instante correcto) y **`formatFechaAR`** (para releerla en zona AR).
+    Ver `CLAUDE.md` → **nota técnica 25**.
+  - **Limpieza de arrastre:** se eliminó el helper local `fmtDate` de la plantilla PDF de consulta
+    —repartido entre `formatFechaLarga` y `fmtFecha`— y la prop **`mode`** muerta de `ConsultaForm`
+    (que era el tercer punto del ítem del "nudo de tipos"; ver Bloque A → *Lint preexistente*).
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -1522,12 +1543,17 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     escribe, validaciones de app que son superconjunto de los `NOT NULL`, y RLS que en UPDATE filtra
     en vez de abortar). Si esta tanda necesita probar sus mensajes nuevos, va a tener que **forzar el
     error igual que se forzó la verificación**: una columna inexistente en el `.update()`, temporal.
-- **⚠ PENDIENTE — nudo de tipos en `consulta-detail.tsx`. Severidad baja, requiere `tsc`.**
-  (Abierto 2026-07-30; **sigue vigente al 2026-08-03**: el `as any` está en
-  `src/components/pacientes/consultas/consulta-detail.tsx:215`.) Se dejó **deliberadamente afuera**
-  de la tanda 1A porque no es limpieza
-  mecánica sino un desajuste real de tipos, y los tres puntos van **juntos** (tocar ese archivo
-  una sola vez):
+- **✅ YA ESTABA RESUELTO (verificado en el Grupo 5, 2026-08-17) — el nudo de tipos de
+  `consulta-detail.tsx`.** (Abierto 2026-07-30.) Al ir a ejecutarlo se verificó contra el código y
+  **los tres `as any` / `: any` ya no existían**: el `useForm` ya llevaba **los tres genéricos**
+  (`useForm<ConsultaFormInput, unknown, ConsultaFormData>`, sin cast en el `resolver`) y
+  `numericProps` ya estaba tipado. Se resolvió en una tanda intermedia sin cerrar este ítem.
+  - **Lo único que seguía vivo era el tercer punto** —la prop **`mode`** desestructurada y nunca
+    usada—, y se limpió junto con el **Frente 1** del Grupo 5 (ver el ítem de la hora del próximo
+    control, en *Bugs menores detectados*).
+  - El **porqué** de la forma correcta quedó documentado en `CLAUDE.md` → **Convenciones de código**
+    (los tres genéricos cuando `z.input` ≠ `z.output`, y la trampa de que `z.coerce.number()` vuelve
+    el INPUT `unknown`). Lo que sigue es el diagnóstico original, conservado como registro:
   - `:215` — `resolver: zodResolver(consultaSchema) as any`. `consultaSchema`
     (`src/lib/validations/consulta.schema.ts`) termina en un **`.transform()`** que pasa los `''`
     de los campos numéricos a `null`, así que **`z.input` ≠ `z.output`** y por eso el archivo
