@@ -6,6 +6,26 @@
 import type { UserRole } from './roles'
 
 /**
+ * Sentinel del `{ error }` de `marcarMensajeLeido` (rama INDIVIDUAL) cuando el
+ * UPDATE **no afectó ninguna fila**: ninguna pasó `id = <id> AND destinatario_id =
+ * <yo>` más la RLS `mensajes_marcar_leido`.
+ *
+ * Es una ANOMALÍA, no un error de uso: el UPDATE no filtra por `leido = false`, así
+ * que re-marcar un mensaje ya leído afecta 1 fila igual, y `mensajes_ver` solo
+ * muestra individuales donde soy remitente o destinatario. Si aparece, es deriva de
+ * RLS o dato inconsistente — algo que el usuario no puede resolver. Por eso el
+ * llamador lo manda a `console.error` **sin toast**, a diferencia de un error real.
+ *
+ * ⚠ Vive acá y no en la action porque `notificaciones/actions.ts` es un módulo
+ * `'use server'`: solo puede exportar funciones async. Mismo criterio que
+ * `ITEM_TYPE_SOLICITUD` en `notificacion.ts` — un sentinel compartido entre el
+ * productor y quien lo reconoce, en UN solo lugar, para que no se dupliquen dos
+ * strings que pueden divergir en silencio (la lección de `DIFUSION_LIMITE_DIARIO`).
+ * El texto es legible a propósito: si algún llamador futuro lo mostrara, se entiende.
+ */
+export const MARCADO_SIN_FILAS = 'marcado-sin-filas: el UPDATE no afectó ninguna fila'
+
+/**
  * Registro de lectura de un mensaje grupal (tabla `mensajes_lecturas`).
  * Refleja la PROYECCIÓN que trae el join embebido, no la tabla completa: el select
  * es `lecturas:mensajes_lecturas(user_id, leido_at)` (ver mensajes/actions.ts), así
