@@ -1,19 +1,22 @@
 // ============================================================================
-// tenant.ts — Casa ÚNICA de la resolución de tenant.
+// tenant.ts — Casa ÚNICA de la resolución de tenant y de la autorización por permiso.
 // ----------------------------------------------------------------------------
 // El "tenant" es el `medico_id` efectivo de quien hace la request: su propio id si
 // es médico, el `medico_id` al que está vinculado si es asistente. Es la clave de
-// aislamiento de todo el proyecto (ver CLAUDE.md → Auth y roles), y hasta esta tanda
-// vivía duplicada a mano en 20 sitios repartidos por 16 archivos, con cinco
-// variaciones de escritura entre ellos.
+// aislamiento de todo el proyecto (ver CLAUDE.md → Auth y roles), y antes del Grupo 4
+// vivía duplicada a mano por todo el repo: el censo encontró 33 sitios de resolución
+// en ~26 archivos, con varias escrituras distintas del mismo criterio y con DOS
+// responsabilidades mezcladas —resolver el tenant y autorizar por permiso—. Se
+// consolidó acá en tres tandas, cortadas justamente por esa distinción.
 //
 // Módulo NEUTRO (sin 'server-only'): recibe el cliente por parámetro y solo importa
 // un TIPO, así que no arrastra dependencias de servidor. Hoy lo usan Route Handlers,
 // Server Components y Server Actions.
 //
 // ── DEVUELVE UN VALOR, NO UNA RESPUESTA ─────────────────────────────────────
-// `null` significa "no se pudo resolver el tenant" y el helper NO opina sobre qué
-// hacer con eso. Es deliberado: los llamadores reaccionan de cuatro formas
+// Ninguna de las tres opina sobre qué hacer ante un fallo: `tenantDeProfile` y
+// `resolverTenant` devuelven `null`, y `resolverAcceso` un `{ ok: false, motivo }`.
+// Es deliberado: los llamadores reaccionan de cuatro formas
 // distintas, todas correctas en su contexto —403 JSON en los Route Handlers,
 // `redirect('/onboarding')` o `redirect('/dashboard')` en las páginas, y objetos de
 // error de formas variadas en las Server Actions—. Un helper que respondiera
@@ -21,18 +24,26 @@
 // mundos, y unificar los destinos de redirect sería un cambio de producto, no un
 // refactor.
 //
-// ── POR QUÉ SON DOS FUNCIONES ───────────────────────────────────────────────
-// `resolverTenant` hace la query y delega en `tenantDeProfile`, así que la lógica
-// vive en UN solo lugar. `tenantDeProfile` se exporta porque hay call sites que ya
-// leyeron el profile por otro motivo —`pacientes/[id]/estudios/page.tsx` necesita el
-// `role` para decidir si muestra el borrado (regla 10), y `mensajes/actions.ts` lee
+// ── QUÉ EXPORTA, Y CUÁL USAR ────────────────────────────────────────────────
+// · `tenantDeProfile` — tenant PURO, sin I/O, a partir de un profile YA leído.
+// · `resolverTenant`  — solo el tenant; hace la query y delega en el anterior, así
+//                       que la lógica de resolución vive en UN solo lugar.
+// · `resolverAcceso`  — tenant Y permiso granular, en UNA sola query. Devuelve la
+//                       unión discriminada `Acceso`, que distingue 'sin-perfil' de
+//                       'sin-permiso' y de 'sin-tenant'.
+//
+// El criterio es directo: si el endpoint además autoriza por permiso granular
+// (consultas, estudios, turnero, documentos…) va `resolverAcceso`; si solo necesita
+// el tenant, `resolverTenant`. Y `tenantDeProfile` cuando el llamador ya leyó el
+// profile por otro motivo —`pacientes/[id]/estudios/page.tsx` necesita el `role`
+// para decidir si muestra el borrado (regla 10), y `mensajes/actions.ts` lee
 // `acceso_mensajeria`—: ahí una query interna sería una SEGUNDA lectura de la misma
 // fila.
 //
-// ⚠ Este helper resuelve el tenant y NADA MÁS: no chequea permisos. Los endpoints
-// que además autorizan por permiso granular (consultas, estudios, turnero) siguen
-// con su helper local — es la Tanda 2, que sumará el helper de permiso en esta misma
-// carpeta y tendrá que reconciliarse con `lib/utils/verificar-permiso.ts`.
+// ⚠ `lib/utils/verificar-permiso.ts` NO es un criterio paralelo: es un wrapper fino
+// sobre `resolverAcceso` que conserva su firma y su `redirect`. Trata `'sin-tenant'`
+// como "pasa" porque pregunta por el permiso y no por el tenant, y eso depende del
+// ORDEN de chequeos de `resolverAcceso` (perfil → permiso → tenant).
 // ============================================================================
 
 import type { createClient } from '@/lib/supabase/server'
