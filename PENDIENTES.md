@@ -248,10 +248,13 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     siguen funcionando. Orden aplicado: **primero el código, después el SQL** — así la guarda mostró
     el 403 honesto sobre la base sin política, que fue la prueba directa de que el diagnóstico era
     correcto y de que la guarda funciona.
-  - **H5 sigue ABIERTO — no lo tocó esta tanda.** `getTenantMedicoId` está duplicado inline en los
-    dos handlers de `bloqueos/[id]/route.ts` (~18 líneas cada uno). Son **dos ocurrencias más** de la
-    deuda ya anotada como *"extraer el helper a `lib/`"* (ver "Lint preexistente" → los 4 `any`
-    no-catch de Route Handlers); tocarla implica ~14 endpoints, así que sigue siendo **otra tanda**.
+  - **✅ H5 RESUELTO (Grupo 4, 2026-08-16) — el helper de tenant se extrajo a `lib/`.** Lo que este
+    ítem anotaba —`getTenantMedicoId` duplicado inline en los dos handlers de
+    `bloqueos/[id]/route.ts`, ~18 líneas cada uno— ya no existe: los dos llaman a
+    **`resolverAcceso(supabase, user.id, 'gestionar_turnos')`**, una línea cada uno. El trabajo
+    completo (censo real, las tres tandas y el porqué del corte) está documentado en el ítem
+    ✅ **RESUELTO (Grupo 4, 3 tandas)** de "Lint preexistente" → *los 4 `any` de Route Handlers*;
+    no se repite acá.
 
 - **✅ RESUELTO (migración 040, 2026-08-11) — `turnos_audit_log` no registraba los DELETE.** El
   trigger cubría solo INSERT y UPDATE, así que **el borrado no dejaba rastro**. Importaba desde la
