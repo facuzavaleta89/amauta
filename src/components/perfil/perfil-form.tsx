@@ -27,6 +27,7 @@ import { TITULOS_DISPONIBLES, PERMISO_LABELS, PERMISOS_GRUPOS } from '@/types/ro
 interface PerfilFormProps {
   profile: {
     id: string; full_name: string; role: 'medico' | 'asistente'
+    dni: string | null
     matriculas: Matricula[]; titulo: string | null
     firma_url: string | null; logo_url: string | null
     medico_id: string | null
@@ -357,6 +358,7 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
   const [isPending, startTransition] = useTransition()
 
   const [fullName, setFullName] = useState(profile.full_name)
+  const [dni, setDni] = useState(profile.dni ?? '')
   const [matriculas, setMatriculas] = useState<Matricula[]>(profile.matriculas)
   const [titulo, setTitulo] = useState(profile.titulo ?? '')
   const [firma, setFirma] = useState<string | null>(profile.firma_url)
@@ -369,7 +371,8 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
   const handleSaveDatos = async (e: React.FormEvent) => {
     e.preventDefault()
     startTransition(async () => {
-      const res = await actualizarPerfil(fullName, isMedico ? matriculas : undefined, isMedico ? (titulo || null) : null)
+      // ⚠ El `dni` va SIEMPRE, sin condicionar por `isMedico`: lo cargan los dos roles.
+      const res = await actualizarPerfil(fullName, isMedico ? matriculas : undefined, isMedico ? (titulo || null) : null, dni)
       if (res.error) toast.error(res.error)
       else { toast.success('Perfil actualizado correctamente'); router.refresh() }
     })
@@ -470,6 +473,20 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
                 <div className="space-y-2">
                   <Label htmlFor="full_name" className="text-sm font-medium">Nombre completo</Label>
                   <Input id="full_name" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+                </div>
+
+                {/* DNI — TODOS los roles (va antes del bloque de médico, a propósito) */}
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="dni" className="text-sm font-medium">DNI</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Opcional — 7 u 8 dígitos, sin puntos.
+                    </p>
+                  </div>
+                  <Input
+                    id="dni" value={dni} onChange={(e) => setDni(e.target.value)}
+                    placeholder="Sin puntos ni espacios" maxLength={8} className="font-mono"
+                  />
                 </div>
 
                 {/* Matrículas — solo médicos */}

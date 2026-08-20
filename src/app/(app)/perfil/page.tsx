@@ -103,6 +103,7 @@ export default async function PerfilPage() {
           id: profile.id,
           full_name: profile.full_name,
           role: profile.role,
+          dni: profile.dni ?? null,
           matriculas,
           titulo: profile.titulo ?? null,
           firma_url: profile.firma_url,
