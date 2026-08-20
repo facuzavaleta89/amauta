@@ -18,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 
 import { pedidoSchema, type PedidoFormValues } from '@/lib/validations/pedido.schema'
-import { resolverObraSocial } from '@/lib/pacientes/obra-social'
+import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL } from '@/lib/pacientes/obra-social'
 import type { PacienteBusqueda } from '@/types'
 
 /**
@@ -108,7 +108,12 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
     setValue('paciente_nombre', p.nombre_completo)
     setValue('paciente_dni', p.dni)
     setValue('paciente_dob', p.fecha_nacimiento)
-    setValue('obra_social_nombre', resolverObraSocial(p))
+    // ⚠ Fallback en la ESCRITURA del snapshot: el documento congela el literal en vez de
+    // `null`, así que el PDF de un paciente particular imprime "Obra Social: Particular /
+    // Sin obra social" en lugar de OMITIR la fila. Los documentos YA EMITIDOS conservan su
+    // `null` y siguen omitiéndola — la lectura no lleva fallback, a propósito (regla de
+    // negocio 5: el snapshot es inmutable y no se regenera).
+    setValue('obra_social_nombre', resolverObraSocial(p) ?? SIN_OBRA_SOCIAL_LABEL)
     setValue('numero_afiliado', p.numero_afiliado ?? null)
     setSearchQuery(p.nombre_completo)
     setShowSugerencias(false)
@@ -138,7 +143,9 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
   // ── Render ─────────────────────────────────────────────────
 
   // Derivada en render: una sola resolución para la tarjeta de resumen.
-  const obraSocialElegida = pacienteSeleccionado ? resolverObraSocial(pacienteSeleccionado) : null
+  const obraSocialElegida = pacienteSeleccionado
+    ? resolverObraSocial(pacienteSeleccionado) ?? SIN_OBRA_SOCIAL_LABEL
+    : null
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-w-3xl mx-auto">
@@ -208,6 +215,8 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
               <Badge variant="outline" className="gap-1.5">
                 DNI: {pacienteSeleccionado.dni}
               </Badge>
+              {/* Se muestra SIEMPRE que haya paciente elegido: antes el badge desaparecía
+                  para los particulares y la tarjeta parecía incompleta. */}
               {obraSocialElegida && (
                 <Badge variant="outline" className="text-xs gap-1">
                   {obraSocialElegida}

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { pacienteSchema } from '@/lib/validations/paciente.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { resolverAcceso } from '@/lib/auth/tenant'
+import { sanitizarTextoBusqueda } from '@/lib/validations/shared'
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,11 +33,8 @@ export async function GET(request: NextRequest) {
     const tenantMedicoId = acceso.tenantMedicoId
 
     const { searchParams } = new URL(request.url)
-    const rawQuery = searchParams.get('q') || ''
-    const query = rawQuery.slice(0, 100)
-
-    // Escapar caracteres especiales de SQL LIKE para evitar alteraciones en la búsqueda
-    const sanitizedQuery = query.trim().replace(/[%_\\]/g, (c) => `\\${c}`)
+    // Criterio compartido de escapado de LIKE: trim + tope de 100 + escape de %, _ y \.
+    const sanitizedQuery = sanitizarTextoBusqueda(searchParams.get('q'))
 
     let dbQuery = supabase
       .from('pacientes')

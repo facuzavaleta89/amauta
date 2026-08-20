@@ -4,6 +4,7 @@ import { BotonCrearConPermiso } from '@/components/shared/boton-crear-con-permis
 import { PlusCircle, Award, Calendar, Ban, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { formatFecha } from '@/lib/utils/format-date'
+import { sanitizarTextoBusqueda } from '@/lib/validations/shared'
 import { CertificadosFiltros } from '@/components/certificados/certificados-filtros'
 import { Suspense } from 'react'
 
@@ -21,6 +22,10 @@ export default async function CertificadosPage({ searchParams }: Props) {
 
   const params = await searchParams
   const q = params?.q?.trim() ?? ''
+  // ⚠ DOS variables a propósito: `q` (crudo) es lo que ve el usuario —el `defaultValue`
+  // del input y el texto "N resultados para …"— y `qSanitizado` es SOLO el patrón del
+  // `ilike`. Mostrar el escapado le devolvería `50\%` cuando escribió `50%`.
+  const qSanitizado = sanitizarTextoBusqueda(q)
 
   const supabase = await createClient()
 
@@ -33,8 +38,8 @@ export default async function CertificadosPage({ searchParams }: Props) {
     .order('fecha_certificado', { ascending: false })
     .limit(50)
 
-  if (q) {
-    query = query.or(`paciente_nombre.ilike.%${q}%,paciente_dni.ilike.%${q}%`)
+  if (qSanitizado) {
+    query = query.or(`paciente_nombre.ilike.%${qSanitizado}%,paciente_dni.ilike.%${qSanitizado}%`)
   }
 
   const { data: certificados } = await query

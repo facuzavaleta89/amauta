@@ -3,7 +3,6 @@ import { resolverAcceso } from '@/lib/auth/tenant'
 import { notFound, redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { HistoriaClinicaView } from '@/components/pacientes/consultas/historia-clinica-view'
-import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-social'
 import type { Consulta } from '@/types/consulta'
 
 interface Props {
@@ -34,10 +33,22 @@ export default async function HistoriaClinicaPage({ params }: Props) {
   const tenantMedicoId = acceso.tenantMedicoId
 
   // Paciente
+  // El `.eq('creado_por', …)` es defensa en profundidad: la RLS `pacientes_select` ya
+  // exige `creado_por = get_medico_id()`, que resuelve al mismo valor con la misma
+  // regla. No cambia qué filas vuelven; suma un segundo guardián, como el resto del
+  // repo hace con toda tabla que tenga columna de tenant DIRECTA.
+  // ⚠ La columna es `creado_por`, NO `medico_id`: `pacientes` es la excepción del esquema
+  // y su tenant key se llama distinto. La query de `consultas` de acá abajo sí usa
+  // `medico_id` — las dos están bien, no unificar los nombres.
   const { data: paciente, error: pacienteError } = await supabase
     .from('pacientes')
-    .select('id, nombre_completo, dni, fecha_nacimiento, obra_social_otro, numero_afiliado, archivado_at, obras_sociales(nombre)')
+    // Proyección MÍNIMA: `nombre_completo` es lo único que renderiza HistoriaClinicaView y
+    // `archivado_at` alimenta el flag de solo-lectura. Antes traía además dni,
+    // fecha_nacimiento, numero_afiliado, obra_social_otro y el join obras_sociales(nombre)
+    // para llenar props que nadie leía.
+    .select('id, nombre_completo, archivado_at')
     .eq('id', id)
+    .eq('creado_por', tenantMedicoId)
     .single()
 
   if (pacienteError || !paciente) notFound()
@@ -55,15 +66,7 @@ export default async function HistoriaClinicaPage({ params }: Props) {
     <div className="flex flex-col h-[calc(100vh-theme(spacing.16))]">
       <HistoriaClinicaView
         pacienteId={id}
-        paciente={{
-          nombre_completo:    paciente.nombre_completo,
-          dni:                paciente.dni,
-          fecha_nacimiento:   paciente.fecha_nacimiento,
-          // ⚠ La aserción reemplaza al cast previo: sin tipos generados de `Database`,
-          // supabase-js infiere el embebido como ARRAY y PostgREST devuelve un OBJETO.
-          obra_social_nombre: resolverObraSocial(paciente as unknown as ConObraSocial),
-          numero_afiliado:    paciente.numero_afiliado ?? null,
-        }}
+        paciente={{ nombre_completo: paciente.nombre_completo }}
         archivado={Boolean(paciente.archivado_at)}
         initialConsultas={(consultas ?? []) as Consulta[]}
         currentUserId={user.id}

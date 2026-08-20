@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button'
 import { Search, X, Archive } from 'lucide-react'
 import type { ObraSocial } from '@/types/paciente'
+import { SIN_OBRA_SOCIAL_LABEL, FILTRO_SIN_OBRA_SOCIAL } from '@/lib/pacientes/obra-social'
 
 interface PatientFiltersProps {
   obrasSociales: ObraSocial[]
@@ -30,7 +31,6 @@ export function PatientFilters({ obrasSociales }: PatientFiltersProps) {
       } else {
         params.delete(key)
       }
-      params.delete('page') // reset pagination
       router.push(`${pathname}?${params.toString()}`)
     },
     [router, pathname, searchParams]
@@ -62,6 +62,13 @@ export function PatientFilters({ obrasSociales }: PatientFiltersProps) {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Todas las obras sociales</SelectItem>
+          {/* Sin cobertura: NO es una fila del catálogo (la homónima se eliminó en la
+              migración 045), es un centinela que la page traduce a "obra_social_id IS NULL
+              y sin texto libre". Va arriba del separador, con las opciones especiales —
+              mismo criterio de ubicación que el selector de `patient-form.tsx`. */}
+          <SelectItem value={FILTRO_SIN_OBRA_SOCIAL}>{SIN_OBRA_SOCIAL_LABEL}</SelectItem>
+          {/* Separador visual antes del catálogo */}
+          <div className="my-1 h-px bg-border" role="separator" />
           {obrasSociales.map((os) => (
             <SelectItem key={os.id} value={String(os.id)}>
               {os.nombre}

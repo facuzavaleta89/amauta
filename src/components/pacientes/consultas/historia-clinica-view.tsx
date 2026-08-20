@@ -9,12 +9,17 @@ import { ConsultaDetail } from './consulta-detail'
 import { HCCompletaPDFButton } from './pdf-download-button'
 import type { Consulta } from '@/types/consulta'
 
+/**
+ * ⚠ UN SOLO CAMPO, a propósito. Este componente muestra el nombre del paciente en el
+ * header y nada más: `dni`, `fecha_nacimiento`, `obra_social_nombre` y `numero_afiliado`
+ * estaban declarados acá y NADIE los leía —ni este componente ni sus hijos, que reciben
+ * `pacienteId` y no el objeto—, así que la page los calculaba (incluida una llamada a
+ * `resolverObraSocial` con su aserción de tipo) para tirarlos a la basura.
+ * Si mañana hiciera falta la ficha completa acá adentro, se agregan de nuevo JUNTO con
+ * su consumidor, no antes.
+ */
 interface PacienteData {
   nombre_completo: string
-  dni: string
-  fecha_nacimiento: string
-  obra_social_nombre?: string | null
-  numero_afiliado?: string | null
 }
 
 interface HistoriaClinicaViewProps {

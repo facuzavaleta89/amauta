@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Eye, Pencil, FileText, ChevronRight, Archive } from 'lucide-react'
 import { usePermisos } from '@/contexts/permisos-context'
 import type { PacienteWithObraSocial } from '@/types/paciente'
-import { resolverObraSocial } from '@/lib/pacientes/obra-social'
+import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL } from '@/lib/pacientes/obra-social'
 import { differenceInYears } from 'date-fns'
 
 interface PatientTableProps {
@@ -52,7 +52,10 @@ export function PatientTable({ pacientes }: PatientTableProps) {
           const edad = p.fecha_nacimiento
             ? differenceInYears(new Date(), new Date(p.fecha_nacimiento))
             : null
-          const obraSocial = resolverObraSocial(p)
+          // Fallback SIEMPRE, igual que la vista desktop: antes esta card OCULTABA el
+          // badge cuando no había obra social, así que el mismo paciente se veía distinto
+          // según el ancho de pantalla. Ahora las dos vistas dicen lo mismo.
+          const obraSocial = resolverObraSocial(p) ?? SIN_OBRA_SOCIAL_LABEL
 
           return (
             <div
@@ -87,11 +90,9 @@ export function PatientTable({ pacientes }: PatientTableProps) {
                       · {edad} años
                     </span>
                   )}
-                  {obraSocial && (
-                    <Badge variant="outline" className="text-[10px] font-normal h-4 px-1.5">
-                      {obraSocial}
-                    </Badge>
-                  )}
+                  <Badge variant="outline" className="text-[10px] font-normal h-4 px-1.5">
+                    {obraSocial}
+                  </Badge>
                 </div>
               </div>
 
@@ -155,7 +156,7 @@ export function PatientTable({ pacientes }: PatientTableProps) {
               const edad = p.fecha_nacimiento
                 ? differenceInYears(new Date(), new Date(p.fecha_nacimiento))
                 : '—'
-              const obraSocial = resolverObraSocial(p) ?? '—'
+              const obraSocial = resolverObraSocial(p) ?? SIN_OBRA_SOCIAL_LABEL
 
               return (
                 <TableRow

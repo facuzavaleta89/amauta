@@ -1,0 +1,213 @@
+-- ============================================================================
+-- Migration 045 — Catálogo: eliminar la fila 'Particular / Sin obra social'
+-- ============================================================================
+--
+-- ── QUÉ HACE ────────────────────────────────────────────────────────────────
+--   1. Suelta la FK: pone `obra_social_id = NULL` en todo paciente que apunte a la
+--      fila del catálogo cuyo nombre sea exactamente 'Particular / Sin obra social'.
+--   2. Borra esa fila de `public.obras_sociales`.
+--
+--   El paso 1 NO es opcional: `pacientes.obra_social_id INTEGER REFERENCES
+--   public.obras_sociales(id)` no declara `ON DELETE`, así que Postgres aplica el
+--   default `NO ACTION` y el DELETE aborta con un 23503 si queda una sola fila
+--   referenciando. Soltar la FK ANTES es lo que hace que este archivo pueda correr
+--   solo, sin intervención manual previa.
+--
+-- ── POR QUÉ SE BORRA ────────────────────────────────────────────────────────
+--   "Particular / Sin obra social" existía DOS VECES en la app, con el texto exacto
+--   repetido y guardando cosas DISTINTAS:
+--
+--     · Como opción HARDCODEADA del formulario de pacientes
+--       (`src/components/pacientes/patient-form.tsx`, `<SelectItem value="particular">`).
+--       Su handler escribe `obra_social_id = NULL` y `obra_social_otro = NULL`: el
+--       paciente queda SIN NINGUNA obra social.
+--     · Como FILA REAL del catálogo, sembrada por el seed de la migración 001.
+--       Elegirla escribe `obra_social_id = <id de esa fila>`: el paciente queda
+--       VINCULADO A UN REGISTRO.
+--
+--   Las dos aparecían en el mismo `<Select>`, con el mismo texto, separadas apenas
+--   por un `<div role="separator">` (la del catálogo cae ordenada por nombre, entre
+--   "PAMI" y "Provincia Salud"). No había forma de distinguirlas desde la UI.
+--
+--   Consecuencia: DOS PACIENTES IGUALMENTE PARTICULARES QUEDABAN MODELADOS DISTINTO
+--   según cuál de las dos filas idénticas clickeó quien hizo el alta. Y eso se
+--   propagaba:
+--     · Cualquier filtro o agrupación por obra social los SEPARA.
+--     · El snapshot `obra_social_nombre` de pedidos y certificados —que se CONGELA al
+--       emitir (regla de negocio 5) y no se regenera— guardaba `NULL` para unos y la
+--       cadena 'Particular / Sin obra social' para otros. Al primero el PDF le omite
+--       la fila "Obra Social"; al segundo se la imprime. Divergencia grabada para
+--       siempre en documentos que son inmutables por diseño.
+--     · El campo "Número de Afiliado" del formulario se deshabilita para los del
+--       primer grupo y NO para los del segundo — de una obra social que, por
+--       definición, no existe.
+--
+--   DECISIÓN DE PRODUCTO (tomada): "Particular / Sin obra social" se modela como
+--   AUSENCIA de obra social — `obra_social_id IS NULL` y sin texto libre. NO se
+--   representa con una fila de catálogo. El literal pasa a ser un valor de
+--   PRESENTACIÓN, no de datos: vive en la constante compartida
+--   `SIN_OBRA_SOCIAL_LABEL` (`src/lib/pacientes/obra-social.ts`), que las superficies
+--   de render aplican como fallback del `null` que devuelve `resolverObraSocial`.
+--
+--   ⚠ La opción hardcodeada del formulario SE QUEDA tal cual. Lo que se elimina es el
+--   duplicado del catálogo, que es el que sobra: el catálogo enumera COBERTURAS, y
+--   "no tener cobertura" no es una cobertura.
+--
+-- ── POR QUÉ ESTA MIGRACIÓN EXISTE SI LA BASE YA ESTÁ ASÍ ────────────────────
+--   ⚠ En la base de PRODUCCIÓN esa fila YA FUE BORRADA A MANO, sin migración que lo
+--   registre. Estado verificado sobre la base viva antes de escribir esto:
+--
+--     · `obras_sociales` tiene 13 filas con ids 1..12 y 14 (IOSEP, migración 035).
+--       El id 13 está HUECO: es el que ocupaba 'Particular / Sin obra social'.
+--     · CERO pacientes apuntan a esa fila (de los 12 cargados: 4 sin obra social,
+--       6 con `obra_social_otro` como texto libre, 2 con una del catálogo).
+--
+--   O sea que acá las dos sentencias van a afectar 0 filas: es un NO-OP contra la
+--   base actual. Este archivo NO existe para arreglar producción — existe para que la
+--   base y las migraciones vuelvan a decir lo mismo, y sobre todo para que CUALQUIER
+--   ENTORNO NUEVO que corra las migraciones desde cero NO REVIVA la ambigüedad. Sin
+--   este archivo, el seed de la 001 vuelve a sembrar la fila y el bug renace intacto
+--   en el próximo entorno.
+--
+--   Es exactamente el criterio de la migración 029 (drift de RLS): un cambio hecho a
+--   mano sobre la base es deuda hasta que queda versionado.
+--
+-- ── NO SE TOCA `001_pacientes.sql` ──────────────────────────────────────────
+--   Mismo argumento que la 035 (seed de IOSEP), invertido. Esa migración ya está
+--   aplicada: editar su INSERT no cambiaría nada en la base real, y como la secuencia
+--   NO corre desde cero (ver CLAUDE.md → nota técnica 6: consolidación de baseline
+--   pendiente), tampoco se re-ejecutaría en un entorno nuevo. Sería un cambio
+--   cosmético que daría la FALSA IMPRESIÓN de que la fila nunca existió, y encima
+--   dejaría a la 045 sin nada que hacer y sin explicación de por qué está.
+--
+-- ── IDEMPOTENTE ─────────────────────────────────────────────────────────────
+--   Las dos sentencias se apoyan en un `IN (SELECT …)` sobre el NOMBRE, no en un id
+--   hardcodeado. Si la fila no existe, el subselect devuelve el conjunto vacío, el
+--   `IN` no matchea nada y ambas afectan 0 filas SIN ERROR. Correr esto dos veces —o
+--   contra una base donde ya se borró a mano, que es el caso— es seguro.
+--
+--   ⚠ Se busca POR NOMBRE y nunca por `id = 13`: ese id es un artefacto de la
+--   secuencia `SERIAL` en una base sembrada desde cero, no un valor escrito en
+--   ninguna migración. En un entorno donde el seed haya corrido distinto, el id sería
+--   otro y un `WHERE id = 13` borraría la fila equivocada. El nombre, en cambio, es
+--   `TEXT NOT NULL UNIQUE`: identifica la fila sin ambigüedad.
+--
+-- ── NO TOCA ─────────────────────────────────────────────────────────────────
+--   Ni el esquema, ni RLS, ni ninguna otra fila del catálogo, ni `obra_social_otro`
+--   (la vía de escape de texto libre es intencional y se queda), ni los documentos ya
+--   emitidos (su `obra_social_nombre` es un snapshot inmutable — regla de negocio 5).
+--
+-- Fecha: 2026-08-20
+-- ============================================================================
+
+BEGIN;
+
+-- ── 1. Soltar la FK de los pacientes que apunten a esa fila ─────────────────
+-- Los deja como "sin obra social", que es exactamente lo que la fila significaba.
+-- No se toca `obra_social_otro`: si alguno tuviera texto libre además del id, ese
+-- texto es un dato real del paciente y sobrevive.
+-- ⚠ Sin `WHERE obra_social_id IS NOT NULL` extra: el `IN` ya excluye los NULL.
+UPDATE public.pacientes
+   SET obra_social_id = NULL
+ WHERE obra_social_id IN (
+         SELECT id
+           FROM public.obras_sociales
+          WHERE nombre = 'Particular / Sin obra social'
+       );
+
+-- ── 2. Borrar la fila del catálogo ──────────────────────────────────────────
+-- Con el paso 1 hecho dentro de la MISMA transacción, ya no queda ninguna FK
+-- apuntando y el DELETE no puede fallar por 23503.
+DELETE FROM public.obras_sociales
+ WHERE nombre = 'Particular / Sin obra social';
+
+COMMIT;
+
+
+-- ============================================================================
+-- VERIFICACIÓN (correr DESPUÉS del COMMIT)
+-- ============================================================================
+--
+-- 1) La fila ya no está. ESPERADO: 0 filas.
+--
+-- SELECT id, nombre
+--   FROM public.obras_sociales
+--  WHERE nombre = 'Particular / Sin obra social';
+--
+--
+-- 2) Catálogo completo. ESPERADO en la base de producción: 13 filas, ids 1..12 y 14.
+--    (El id 13 queda hueco a propósito: `SERIAL` no reutiliza ids.)
+--
+-- SELECT id, nombre FROM public.obras_sociales ORDER BY id;
+--
+--
+-- 3) Ningún paciente quedó apuntando a un id inexistente. ESPERADO: 0 filas.
+--    (Es imposible que devuelva algo —la FK lo impide—, pero confirma que el paso 1
+--    hizo su trabajo si esta migración se corre en un entorno donde SÍ había filas.)
+--
+-- SELECT p.id, p.nombre_completo, p.obra_social_id
+--   FROM public.pacientes p
+--   LEFT JOIN public.obras_sociales o ON o.id = p.obra_social_id
+--  WHERE p.obra_social_id IS NOT NULL
+--    AND o.id IS NULL;
+--
+--
+-- 4) Distribución de cobertura, para leer el estado real del tenant.
+--    ESPERADO en producción (12 pacientes): 4 'sin obra social', 6 'texto libre',
+--    2 'catálogo'.
+--
+-- SELECT CASE
+--          WHEN obra_social_id IS NOT NULL                      THEN 'catálogo'
+--          WHEN COALESCE(btrim(obra_social_otro), '') <> ''     THEN 'texto libre'
+--          ELSE                                                      'sin obra social'
+--        END AS cobertura,
+--        count(*)
+--   FROM public.pacientes
+--  GROUP BY 1
+--  ORDER BY 1;
+--
+--    ⚠ Ese CASE es el equivalente SQL del criterio de `resolverObraSocial`
+--    (`src/lib/pacientes/obra-social.ts`) y del filtro "Particular / Sin obra social"
+--    del listado (`src/app/(app)/pacientes/page.tsx`). Si alguna vez se cambia uno,
+--    se cambian los tres.
+--
+--
+-- 5) Comprobación funcional en la app (no SQL): al dar de alta o editar un paciente,
+--    el selector "Cobertura médica" debe mostrar 'Particular / Sin obra social' UNA
+--    SOLA VEZ — arriba del separador, como opción hardcodeada. Si aparece dos veces,
+--    esta migración no se aplicó.
+--
+-- ============================================================================
+
+
+-- ============================================================================
+-- REVERSIBLE — cómo volver atrás
+-- ============================================================================
+--
+-- ⚠ LA REVERSIÓN ES PARCIAL, Y CONVIENE SABERLO ANTES DE CORRERLA.
+--
+--   Se puede recrear la FILA, pero NO se puede recuperar QUÉ PACIENTES la apuntaban:
+--   el `UPDATE … SET obra_social_id = NULL` del paso 1 es destructivo y no deja
+--   rastro (`pacientes` no tiene tabla de auditoría; la única del esquema es
+--   `turnos_audit_log`). Al revertir, esos pacientes quedan como "sin obra social" —
+--   que, dicho sea de paso, es semánticamente lo mismo que apuntar a esa fila, así
+--   que la pérdida es de forma y no de significado.
+--
+--   ⚠ El `id` tampoco vuelve a ser el mismo: `SERIAL` toma el siguiente valor de la
+--   secuencia, no reutiliza el hueco. Si algo dependiera del id 13 (nada en el repo
+--   lo hace: todo busca por nombre), se rompería.
+--
+--   En la base de producción esta reversión es un NO-OP práctico: como el borrado a
+--   mano ya había ocurrido y 0 pacientes la apuntaban, correr el INSERT de abajo
+--   simplemente vuelve a introducir la ambigüedad que la migración vino a cerrar.
+--
+--   ⚠ Y no alcanza con el SQL: revertir de verdad exige TAMBIÉN volver atrás los
+--   cambios de código de esta tanda (la constante `SIN_OBRA_SOCIAL_LABEL`, el filtro
+--   del listado y los fallbacks de render), o el catálogo va a ofrecer la fila
+--   mientras la UI sigue tratando la ausencia como el caso canónico.
+--
+-- INSERT INTO public.obras_sociales (nombre) VALUES
+--   ('Particular / Sin obra social')
+-- ON CONFLICT (nombre) DO NOTHING;
+--
+-- ============================================================================

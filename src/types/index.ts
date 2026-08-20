@@ -11,7 +11,7 @@
 
 export * from './roles'      // UserRole, Profile, PermisosAsistente, Matricula, SolicitudAsistente, helpers…
 export * from './paciente'   // ObraSocial, Paciente, PacienteWithObraSocial, PacienteBusqueda, inserts/updates
-export * from './consulta'   // ConsultaEstado, Consulta, ConsultaConRelaciones, inserts/updates
+export * from './consulta'   // ConsultaEstado, Consulta, inserts/updates
 export * from './pedido'     // Pedido, Certificado, Receta, Evolucion, Estudio
 export * from './turno'      // TurnoEstado, Turno, TurnoConPaciente, TurnoParaRecordatorio, BloqueoAgenda, TurnoAuditLog, inserts/updates
 export * from './difusion'   // DifusionEstado, DifusionCanal, DifusionPost, DifusionEnvio
