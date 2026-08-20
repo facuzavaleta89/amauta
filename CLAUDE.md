@@ -85,9 +85,9 @@ del usuario actual.
 
 | Tabla | Qué es | Tenant |
 |---|---|---|
-| `profiles` | Extiende `auth.users`: rol, `medico_id`, firma/sello, 12 permisos | — |
+| `profiles` | Extiende `auth.users`: rol, `medico_id`, firma/sello, 12 permisos, `dni` (opcional, único **global** — mig. 044, nota 27) | — |
 | `obras_sociales` | Catálogo (lectura pública autenticada) | — |
-| `pacientes` | Pacientes (DNI único). `archivado_at` → archivar en vez de borrar | `creado_por` |
+| `pacientes` | Pacientes (DNI único **por tenant** desde la mig. 043 — nota 27). `archivado_at` → archivar en vez de borrar | `creado_por` |
 | `historia_clinica` | ⚠ **DORMIDA** (modelo viejo de HC: documento único de antecedentes 1:1). **La app ya no la lee ni la escribe**: se dio de baja el endpoint `POST /api/pacientes/[id]/historia` y el insert de fila vacía del alta de pacientes. **La tabla NO se dropeó** (Ley 26.529) y conserva sus filas históricas | vía `pacientes` |
 | `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología). `campos_extra` (JSONB) ad-hoc. `creado_por` = **autor** (mig. 038; ⚠ **NULL** en las anteriores, y **no** es el tenant) | `medico_id` |
 | `estudios` | Archivos adjuntos por paciente (subir/ver/descargar/borrar **implementado**). Bucket privado `estudios` (migración 026), ruta `{medico_id}/{paciente_id}/{uuid}.{ext}` | vía `pacientes` |
@@ -149,10 +149,15 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 > no podía leer**, lo que además de 404 falsos producía **falsos negativos de solapamiento** — el
 > helper de solapamiento consulta con el **cliente de sesión**, recibía `[]` y daba la franja por
 > libre, dejando crear un turno encima de otro (ver **nota técnica 23**).
-> ⚠ **Lo único que todavía las diferencia es el ROL:** las 4 de `bloqueos_agenda` están en
-> `TO authenticated` (037) y las de `turnos` siguen en `{public}` — la 039 usó `ALTER POLICY`, que
-> **preserva el rol**. No es explotable (las políticas cuelgan de `get_medico_id()`, que para `anon`
-> no resuelve), pero la normalización queda pendiente: ver `PENDIENTES.md` → Bloque B.
+> ✅ **Y desde la migración `042` tampoco las diferencia el ROL.** Durante dos migraciones sí: las 4
+> de `bloqueos_agenda` estaban en `TO authenticated` (037) y las de `turnos` seguían en `{public}`,
+> porque la 039 usó `ALTER POLICY`, que **preserva el rol**. Nunca fue explotable (las políticas
+> cuelgan de `get_medico_id()`, que para `anon` no resuelve), y la **042 lo cerró barriendo el
+> proyecto entero**: las **49** políticas de `public` que no declaraban `TO` —en **18 tablas**, no
+> solo la agenda— pasaron a `TO authenticated`, otra vez con `ALTER POLICY` para tocar **solo el rol**
+> y no reescribir una sola expresión. Hoy las **65** políticas del esquema `public` están en
+> `{authenticated}` y **ninguna** en `{public}`. Las dos tablas de la agenda son idénticas en criterio
+> de lectura y en rol.
 
 ---
 
@@ -1083,6 +1088,63 @@ cuatro nacieron de encontrar el mismo criterio duplicado y divergido en varios a
     - **Que un archivo de tipos tenga valores de runtime no es una excepción**: `types/roles.ts` ya
       exporta `PERMISOS_DEFAULT`, `PERMISO_LABELS` y `TITULOS_DISPONIBLES`. Lo que **no** va ahí es
       lógica; solo el valor y su JSDoc.
+27. **Unicidad de identificadores: el alcance depende de QUIÉN es el sujeto del dato, no de que el
+    campo se llame `dni`.** Hay dos columnas `dni` en el esquema y sus constraints son **opuestas a
+    propósito**. Antes de "emparejarlas" por simetría —o de agregarle un UNIQUE a la matrícula—, leer
+    esto: las tres decisiones están tomadas y las tres tienen un motivo que no se ve desde el nombre
+    de la columna.
+    - **`pacientes.dni` → `UNIQUE (creado_por, dni)`, POR TENANT** (migración 043; antes era
+      `pacientes_dni_key UNIQUE (dni)`, global). `pacientes` es **multi-tenant**: el DNI describe a un
+      **tercero registrado por un médico**, y la misma persona puede ser paciente de **dos
+      consultorios sin relación entre sí**. La unicidad global era un **bug de modelo**: el primer
+      médico que cargaba un DNI se lo reservaba para toda la instalación y al segundo le respondía
+      *"Ya existe un paciente registrado con este DNI"* — un mensaje **falso**, porque para él ese
+      paciente no existe (la RLS ni se lo muestra).
+      ⚠ **`idx_pacientes_dni` NO se dropea:** el índice de la constraint es `(creado_por, dni)` y no
+      sirve para buscar por `dni` solo, que no es su prefijo izquierdo.
+    - **`profiles.dni` → `UNIQUE (dni)`, GLOBAL** (migración 044). `profiles` **no pertenece a ningún
+      tenant**: es la tabla de **usuarios del sistema**, la extensión de `auth.users`, y ahí el DNI
+      identifica al **dueño de la cuenta**. Una misma persona no debería tener dos cuentas
+      profesionales, así que el alcance global es exactamente lo que se busca. La columna es
+      **nullable** y convive con los perfiles que no lo tienen: en un índice único **los NULL no se
+      comparan entre sí** (`NULLS DISTINCT`, el default). ⚠ Por eso mismo, **vacío se guarda `NULL` y
+      nunca `''`**: las cadenas vacías **sí** colisionan entre sí, y el segundo usuario que dejara el
+      campo en blanco recibiría un error de duplicado sin haber escrito nada.
+    - **Dicho corto:** en `pacientes` el DNI describe a un **tercero** dentro del ámbito de un médico;
+      en `profiles` identifica al **titular de la cuenta** en toda la instalación. Distinto sujeto,
+      distinto alcance. **No es una inconsistencia y no hay que unificarlas.**
+    - ⚠ **UN UNIQUE SOBRE EL NÚMERO DE MATRÍCULA SERÍA INCORRECTO — no es un one-liner pendiente.**
+      Es la trampa que este punto viene a evitar. En Argentina **los números de matrícula se repiten
+      entre jurisdicciones**: cada colegio provincial los otorga por su cuenta, así que la MP 1234 de
+      una provincia y la MP 1234 de otra son **dos profesionales distintos**, ambos legítimos. Y un
+      mismo profesional puede tener **varias** a la vez (nacional + una o más provinciales + la de
+      especialidad) — por eso `profiles.matriculas` es un **array JSONB** `[{tipo, numero}]` y no una
+      columna escalar. Un UNIQUE sobre el número solo **rechazaría altas válidas**. Si alguna vez se
+      quisiera unicidad de matrícula, tendría que ser **compuesta —tipo + número + jurisdicción/entidad
+      emisora—**, y hoy **la jurisdicción ni siquiera se guarda**: exigiría cambiar el modelo (lo
+      canónico sería normalizar a una tabla `matriculas` con FK a `profiles`). O sea que no es una
+      constraint que falte, es un rediseño que **nadie pidió**. Ver `PENDIENTES.md`, donde el ítem
+      está cerrado como **DESCARTADO**.
+    - **El DNI del profesional es OPCIONAL a nivel producto**, no "opcional por ahora": la ley
+      argentina **no lo exige** ni en la historia clínica ni en los certificados — el identificador
+      legal del ejercicio es la **matrícula**, que ya se estampa en los PDF vía `emisor_snapshot`
+      (regla de negocio 11). Se volvería necesario solo si la app emitiera **receta electrónica
+      formal** (hoy bloqueada por ANMAT, regla 7) o **facturara**. Por eso **no se pide en el
+      registro** —sería fricción en el alta por un dato que no hace falta— sino en la **edición de
+      perfil**, y lo cargan **médicos y asistentes por igual**: es un dato de la persona, no de la
+      identidad de ejercicio (contrastar con `matriculas`, `titulo` y `firma_url`, que la UI reserva
+      al médico).
+    - ⚠ **Un paciente y un profesional PUEDEN compartir DNI, y eso se cumple solo.** `pacientes` y
+      `profiles` son tablas separadas con constraints separadas: un asistente —o el propio médico—
+      puede ser también paciente del consultorio. **No agregar un UNIQUE cruzado** ni un chequeo de
+      *"este DNI ya existe como profesional"* al dar de alta un paciente: sería romper un caso de uso
+      válido creyendo que se previene un duplicado.
+    - **Manejo del choque en la app:** `actualizarPerfil` (`(app)/perfil/actions.ts`) intercepta el
+      **23505** y responde *"Ese DNI ya está registrado en otra cuenta."*. Es obligatorio y no
+      cosmético: sin ese intercepto el error cae al `catch`, y `mensajeDeError` devuelve el texto
+      **crudo** de Postgres, que el formulario muestra tal cual en un toast. Mismo criterio que
+      `POST /api/pacientes` y `PATCH /api/pacientes/[id]`. ⚠ El chequeo va **por forma** (acceso a
+      `.code`), nunca con `instanceof` — ver la convención de `catch`.
     - **Escribir el centinela legible, no un código corto.** Nunca debería llegar a la UI, pero si un
       llamador futuro lo mostrara sin reconocerlo, un texto entendible degrada mejor que un
       `'E_NOROWS'`.
