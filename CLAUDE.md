@@ -62,7 +62,7 @@ Node LTS 20+. Tailwind v4 se configura en `src/app/globals.css` con `@theme`
     /shared          → reutilizables (qr-verificacion, page-header…)
     /pacientes /turnero /pedidos /certificados /difusion /perfil
     /mensajes /notas /notificaciones /dashboard /recetas
-  /constants         → nav-items.ts (navegación por rol+permiso), obra-sociales.ts,
+  /constants         → nav-items.ts (navegación por rol+permiso),
                        difusion.ts (DIFUSION_LIMITE_DIARIO, compartida cliente/servidor)
   /contexts          → permisos-context.tsx (+ MensajesContext para badge no leídos)
   /hooks             → stubs vacíos (la lógica vive en Server Components/Actions)
@@ -668,7 +668,7 @@ organización** (no consolidar en un archivo, no crear uno por entidad).
 |---|---|
 | `roles.ts` | `UserRole`, `Profile` (+`Insert`/`Update`), `PermisosAsistente`, `PermisoKey`, `PERMISOS_DEFAULT`, `PERMISO_LABELS`, `PERMISOS_GRUPOS`, `Matricula`, `MatriculaTipo`, `TITULOS_DISPONIBLES`, `TituloPreset`, `SolicitudAsistente` (+`Insert`/`Update`), `SolicitudEstado`, **`Asistente`** (se mudó desde `perfil-form.tsx`: es el shape que declara `obtenerAsistentes()` y consume `/perfil`) |
 | `paciente.ts` | `Paciente` (+`Insert`/`Update`), `PacienteWithObraSocial`, `ObraSocial`, **`PacienteBusqueda`** (proyección de `GET /api/pacientes?q=`: **9 campos** + `obras_sociales ( nombre )`; incluye `obra_social_otro` desde el fix de la obra social como texto libre) |
-| `consulta.ts` | `Consulta` (+`Insert`/`Update`), `ConsultaEstado`, `ConsultaConRelaciones`, `CampoExtra`, `CampoExtraSeccion` |
+| `consulta.ts` | `Consulta` (+`Insert`/`Update`), `ConsultaEstado`, `CampoExtra`, `CampoExtraSeccion`. ⚠ `ConsultaConRelaciones` se **eliminó** (código muerto: cero consumidores en toda la app) |
 | `pedido.ts` | ⚠ **cinco entidades:** `Pedido`, `Certificado` (+`CertificadoTipo`), `Receta`, `Evolucion` y `Estudio` (cada una con sus `Insert`/`Update`), más **`EmisorSnapshot`** (regla de negocio 11). ⚠ **`HistoriaClinica*` se eliminó** al dar de baja el modelo viejo de HC (eran 6) |
 | `turno.ts` | `Turno` (+`Insert`/`Update`), `TurnoEstado`, `BloqueoAgenda` (+`Insert`), `TurnoAuditLog`, más **dos proyecciones con join**: **`TurnoConPaciente`** (`GET /api/turnero` → `paciente:paciente_id (id, nombre_completo)`) y **`TurnoParaRecordatorio`** (cron → `paciente:paciente_id(nombre_completo, email, telefono)`) |
 | `mensaje.ts` | `MensajeInterno`, `MensajeInsertar`, `MensajeFormValues`, `MensajeNoLeido`, `MensajeLectura` |
@@ -686,7 +686,7 @@ es `schema.sql`.
 > ⚠ **El shape de un join embebido lo fija CADA ENDPOINT, no la tabla — dos proyecciones de la misma
 > relación NO son intercambiables.** Varios de estos tipos modelan una **respuesta concreta de la
 > API**, no una fila: `TurnoConPaciente`, `TurnoParaRecordatorio`, `PacienteBusqueda`,
-> `ConsultaConRelaciones`, `PacienteWithObraSocial` y `MensajeLectura`.
+> `PacienteWithObraSocial` y `MensajeLectura`.
 > **El caso testigo son los dos tipos de turno:** el turnero embebe `id + nombre_completo` (para
 > navegar a la ficha) y el cron embebe `nombre_completo + email + telefono` (para mandar el
 > recordatorio). **Ninguno es subconjunto del otro**, así que reusar uno en lugar del otro
