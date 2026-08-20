@@ -27,7 +27,7 @@ import { BlockSlotModal } from './block-slot-modal'
 // ── Categorías: mapa de estilos ─────────────────────────────
 import type { LucideIcon } from 'lucide-react'
 
-export const CATEGORIA_STYLES: Record<string, { accentClass: string; label: string; icon: LucideIcon }> = {
+const CATEGORIA_STYLES: Record<string, { accentClass: string; label: string; icon: LucideIcon }> = {
   turno_medico:   { accentClass: 'categoria-turno-medico',   label: 'Turno médico',   icon: Stethoscope },
   curso:          { accentClass: 'categoria-curso',          label: 'Curso',          icon: GraduationCap },
   personal:       { accentClass: 'categoria-personal',       label: 'Personal',       icon: User },
