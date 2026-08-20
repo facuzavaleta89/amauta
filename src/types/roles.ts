@@ -126,6 +126,13 @@ export interface Profile extends PermisosAsistente {
   role: UserRole
   avatar_url: string | null
   medico_id: string | null   // null si es médico; uuid del médico si es asistente
+  /**
+   * DNI del profesional (médico o asistente). OPCIONAL — migración 044.
+   * ⚠ No confundir con `Paciente.dni`: éste identifica al USUARIO de la app. No se
+   * imprime en documentos (el identificador legal del ejercicio es la matrícula) y
+   * no entra en `EmisorSnapshot`. Único en toda la instalación (`profiles_dni_key`).
+   */
+  dni: string | null
   /** @deprecated Usar matriculas (jsonb) en su lugar */
   matricula?: string | null
   matriculas: Matricula[]    // columna jsonb nueva
@@ -156,6 +163,7 @@ export interface ProfileUpdate {
   matriculas?: Matricula[]
   titulo?: string | null
   logo_url?: string | null
+  dni?: string | null
 }
 
 // ── ASISTENTES VINCULADOS (proyección de /perfil) ──────────

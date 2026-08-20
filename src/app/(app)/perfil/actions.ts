@@ -28,12 +28,16 @@ function mensajeDeError(e: unknown): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Actualizar datos básicos (Nombre, Matrículas y Título)
+// Actualizar datos básicos (Nombre, DNI, Matrículas y Título)
 // ─────────────────────────────────────────────────────────────
+// ⚠ El `dni` va SIN condicionar por rol: lo cargan médicos y asistentes por igual
+// (es un dato de la persona, no de la identidad de ejercicio). Contrastar con
+// `matriculas` y `titulo`, que el formulario manda solo si es médico.
 export async function actualizarPerfil(
   fullName: string,
   matriculas?: Matricula[],
-  titulo?: string | null
+  titulo?: string | null,
+  dni?: string | null
 ): Promise<{ error: string | null }> {
   try {
     const supabase = await createClient()
@@ -82,16 +86,54 @@ export async function actualizarPerfil(
       return { error: 'El título no puede superar los 30 caracteres.' }
     }
 
+    // Validar DNI (OPCIONAL — migración 044).
+    // Vacío o solo espacios ⇒ NULL, no cadena vacía: la columna es nullable y tiene
+    // UNIQUE, y varias cadenas vacías SÍ colisionarían entre sí (los NULL no).
+    // Mismo criterio que `paciente.schema.ts` (7-8 dígitos, solo números) y un mensaje
+    // distinto por tipo de falla. ⚠ El chequeo de formato va PRIMERO: con las longitudes
+    // adelante, un 'abcd' respondería "debe tener al menos 7 dígitos", que despista.
+    const dniTrim = dni?.trim() || ''
+    let cleanedDni: string | null = null
+    if (dniTrim) {
+      if (!/^\d+$/.test(dniTrim)) {
+        return { error: 'El DNI solo debe contener números.' }
+      }
+      if (dniTrim.length < 7) {
+        return { error: 'El DNI debe tener al menos 7 dígitos.' }
+      }
+      if (dniTrim.length > 8) {
+        return { error: 'El DNI no puede tener más de 8 dígitos.' }
+      }
+      cleanedDni = dniTrim
+    }
+
     const { error } = await supabase
       .from('profiles')
       .update({
         full_name: cleanedName,
         matriculas: cleanedMatriculas,
         titulo: cleanedTitulo,
+        dni: cleanedDni,
       })
       .eq('id', user.id)
 
-    if (error) throw error
+    if (error) {
+      // ⚠ 23505 = unique_violation. `profiles_dni_key` (migración 044) es la PRIMERA
+      // constraint de unicidad que esta action puede violar; la otra de la tabla es
+      // `profiles_pkey`, y un UPDATE no toca el `id`, así que un 23505 acá solo puede
+      // ser el DNI. Sin este intercepto el error caía al `catch`, y `mensajeDeError`
+      // devuelve el texto CRUDO de Postgres —que el formulario muestra tal cual en un
+      // toast—: el usuario leería 'duplicate key value violates unique constraint
+      // "profiles_dni_key"'. Mismo criterio que POST /api/pacientes y PATCH
+      // /api/pacientes/[id].
+      // ⚠ Se chequea por FORMA (acceso a `.code`), nunca con `instanceof`: este `error`
+      // es el objeto PLANO de supabase-js, no una instancia de Error. Ver el JSDoc de
+      // `mensajeDeError` arriba.
+      if (error.code === '23505') {
+        return { error: 'Ese DNI ya está registrado en otra cuenta.' }
+      }
+      throw error
+    }
 
     revalidatePath('/perfil')
     return { error: null }
