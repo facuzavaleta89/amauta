@@ -65,7 +65,7 @@ Node LTS 20+. Tailwind v4 se configura en `src/app/globals.css` con `@theme`
   /constants         → nav-items.ts (navegación por rol+permiso),
                        difusion.ts (DIFUSION_LIMITE_DIARIO, compartida cliente/servidor)
   /contexts          → permisos-context.tsx (+ MensajesContext para badge no leídos)
-  /hooks             → stubs vacíos (la lógica vive en Server Components/Actions)
+  /hooks             → use-view-mode.ts (preferencia mosaico/lista; los 4 stubs se eliminaron)
   /lib
     /supabase        → client.ts (browser) · server.ts (RSC/actions) · admin.ts (service role, bypass RLS)
     /agenda          → solapamiento.ts (criterio ÚNICO de "franja ocupada" — ver nota 23)
@@ -86,7 +86,7 @@ del usuario actual.
 | Tabla | Qué es | Tenant |
 |---|---|---|
 | `profiles` | Extiende `auth.users`: rol, `medico_id`, firma/sello, 12 permisos, `dni` (opcional, único **global** — mig. 044, nota 27) | — |
-| `obras_sociales` | Catálogo (lectura pública autenticada) | — |
+| `obras_sociales` | Catálogo (lectura pública autenticada). ⚠ **No tiene fila para "sin obra social"**: eso se modela como AUSENCIA (la homónima del seed se eliminó en la mig. **045** — nota 28) | — |
 | `pacientes` | Pacientes (DNI único **por tenant** desde la mig. 043 — nota 27). `archivado_at` → archivar en vez de borrar | `creado_por` |
 | `historia_clinica` | ⚠ **DORMIDA** (modelo viejo de HC: documento único de antecedentes 1:1). **La app ya no la lee ni la escribe**: se dio de baja el endpoint `POST /api/pacientes/[id]/historia` y el insert de fila vacía del alta de pacientes. **La tabla NO se dropeó** (Ley 26.529) y conserva sus filas históricas | vía `pacientes` |
 | `consultas` | Consultas cronológicas de HC (Bloque 1, diabetología). `campos_extra` (JSONB) ad-hoc. `creado_por` = **autor** (mig. 038; ⚠ **NULL** en las anteriores, y **no** es el tenant) | `medico_id` |
@@ -637,6 +637,24 @@ que dejó el Grupo 1 y da de baja el último eslabón del modelo viejo de HC:
    alta de pacientes. **La tabla `historia_clinica` quedó DORMIDA**, no dropeada. ⚠ El valor
    `origen='desde_hc'` **se conservó**: lo usa el flujo vivo de consultas.
 
+**GRUPO 3 — obra social "particular" y limpieza del turnero, migración 045** (2026-08-20).
+**045 es la última migración aplicada.** Dos frentes independientes:
+1. **"Particular / Sin obra social" pasa a modelarse como AUSENCIA (migración 045).** Se eliminó
+   del catálogo la fila homónima que sembraba la 001 —convivía con la opción hardcodeada del
+   formulario y hacía que dos pacientes igualmente particulares quedaran modelados distinto—, con
+   `UPDATE` previo de los pacientes que la apuntaran. El literal se unificó en
+   **`SIN_OBRA_SOCIAL_LABEL`**, aplicado como fallback **en los consumidores** (⚠ `resolverObraSocial`
+   **no cambió**, y la difusión es una excepción deliberada). `/pacientes` sumó el **filtro** de
+   pacientes sin obra social (centinela `FILTRO_SIN_OBRA_SOCIAL`) y un **contador de resultados
+   permanente**. Ver **nota técnica 28**.
+2. **Escapado de LIKE unificado + limpieza (sin migración).** Nuevo **`sanitizarTextoBusqueda`**,
+   que absorbió a la `sanitizeSearchQuery` muerta y llevó el escapado a `/pedidos` y
+   `/certificados`, que no lo tenían. Y se eliminaron: el estado `currentView` de
+   `calendar-view.tsx` con sus props `viewDidMount`/`datesSet` (no sostenían nada visible), el
+   `export` de `CATEGORIA_STYLES`, el tipo `ConsultaConRelaciones`, el stub
+   `src/constants/obra-sociales.ts` y una prop muerta de la página de historia clínica, que además
+   sumó filtro de tenant a la query del paciente.
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
 ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live), la
@@ -699,16 +717,18 @@ es `schema.sql`.
 
 ## Mapa de helpers compartidos
 
-Criterios que viven en **un solo lugar**. Antes de escribir uno nuevo, mirar si ya está acá: los
-cuatro nacieron de encontrar el mismo criterio duplicado y divergido en varios archivos.
+Criterios que viven en **un solo lugar**. Antes de escribir uno nuevo, mirar si ya está acá: casi
+todos nacieron de encontrar el mismo criterio duplicado y divergido en varios archivos.
 
 | Helper | Archivo | Qué resuelve |
 |---|---|---|
 | `resolverObraSocial`, tipo `ConObraSocial` | `src/lib/pacientes/obra-social.ts` | Criterio ÚNICO de la obra social de un paciente: `obras_sociales?.nombre ?? (obra_social_otro?.trim() \|\| null)`. Unificó **12 sitios** que no eran idénticos (unos trimeaban y otros no). Módulo **neutro** y de parámetro **estructural**, para aceptar las filas sin tipar de supabase-js |
+| **`SIN_OBRA_SOCIAL_LABEL`**, **`FILTRO_SIN_OBRA_SOCIAL`** | `src/lib/pacientes/obra-social.ts` | El literal `'Particular / Sin obra social'` y el centinela de URL del filtro de `/pacientes` (`'sin-obra-social'`). ⚠ **El fallback se aplica en cada CONSUMIDOR, NUNCA dentro de `resolverObraSocial`** — ver **nota técnica 28** |
 | `resolverTenant`, `tenantDeProfile`, **`resolverAcceso`** | `src/lib/auth/tenant.ts` | Resolución del tenant (`medico_id` efectivo) y autorización por permiso. `tenantDeProfile` es la variante **pura**, para quien ya leyó el `profile`. `resolverAcceso` suma el chequeo de permiso y acepta **un permiso o un array (OR)**. Ver **nota técnica 24** |
 | `formatFechaAR`, `formatFecha`, `formatFechaLarga`, `TZ_AR` | `src/lib/utils/format-date.ts` | Formateo de fechas en zona AR. El motor lanza; los dos wrappers degradan al texto crudo. Ver **nota técnica 18** |
 | **`parseFechaHoraAR`** | `src/lib/utils/format-date.ts` | La **inversa**: ancla una hora de PARED argentina (sin offset) al instante correcto, para persistirla en un `timestamptz`. Ver **nota técnica 25** |
 | `buscarSolapamientos` | `src/lib/agenda/solapamiento.ts` | Criterio ÚNICO de "franja ocupada" de la agenda. Ver **nota técnica 23** |
+| **`sanitizarTextoBusqueda`** | `src/lib/validations/shared.ts` | Criterio ÚNICO para meter el `?q=` de una búsqueda dentro de un `ilike`: `trim` → `slice(maxLen)` → escape de `%`, `_` y `\`. ⚠ **El escapado va DESPUÉS del recorte de longitud**: al revés, el corte puede partir al medio un par `\%` y dejar un backslash colgado. Lo usan los **4** buscadores por nombre/DNI (`/pacientes`, `GET /api/pacientes`, `/pedidos`, `/certificados`). ⚠ El resultado es para el **patrón**, no para la UI: el texto escapado no vuelve a pantalla (los llamadores mantienen el `q` crudo aparte), y no sirve para un `eq`/`in`/`fts` |
 | `BotonCrearConPermiso` | `src/components/shared/boton-crear-con-permiso.tsx` | Botón de acción que se **deshabilita** (en vez de rebotar contra `/sin-acceso`) cuando falta el permiso. Client Component: lee del `PermisosProvider`, así que sirve en páginas Server que **no** consultan `profiles`, sin agregarles una query. Es **solo UX** — la autorización real la hacen la página destino y el endpoint |
 
 ---
@@ -1148,3 +1168,42 @@ cuatro nacieron de encontrar el mismo criterio duplicado y divergido en varios a
     - **Escribir el centinela legible, no un código corto.** Nunca debería llegar a la UI, pero si un
       llamador futuro lo mostrara sin reconocerlo, un texto entendible degrada mejor que un
       `'E_NOROWS'`.
+28. **"Particular / Sin obra social" es AUSENCIA de dato, no una fila de catálogo — y el fallback
+    del literal se aplica en CADA CONSUMIDOR, nunca dentro de `resolverObraSocial`.** Un paciente
+    particular es el que tiene `obra_social_id IS NULL` **y** `obra_social_otro` nulo o en blanco.
+    La fila homónima que sembraba la 001 se **eliminó** (migración **045**): el catálogo enumera
+    coberturas, y "no tener cobertura" no es una cobertura.
+    - **El literal vive UNA vez**, en `SIN_OBRA_SOCIAL_LABEL` (`src/lib/pacientes/obra-social.ts`),
+      y **nadie lo escribe a mano**. Es un valor de **presentación**, no de datos. Misma lección que
+      dejó `DIFUSION_LIMITE_DIARIO` (dos constantes del `100` que podían separarse en silencio).
+    - ⚠ **`resolverObraSocial` NO cambió y no hay que cambiarlo:** sigue devolviendo `string | null`.
+      Los consumidores escriben `resolverObraSocial(p) ?? SIN_OBRA_SOCIAL_LABEL`. **Colapsar el
+      fallback adentro del helper rompería el modal de difusión**
+      (`components/difusion/enviar-modal.tsx`), que **detecta al paciente sin obra social por el
+      `null`**: con él arma la bandera `haySinObra` y la opción "Sin obra social" de su filtro
+      (centinela propio `SIN_OBRA = '__sin__'`). Si el helper dejara de devolver `null`, esa opción
+      **desaparecería del filtro** y los particulares se colarían como una obra social más en la
+      lista de `obrasUnicas`.
+    - **La EXCEPCIÓN deliberada, entonces, son dos archivos:**
+      `api/difusion/destinatarios/route.ts` y `components/difusion/enviar-modal.tsx`. Son los únicos
+      consumidores que **no** aplican el fallback y tienen su propio texto (`'Sin obra social'`, en
+      minúscula) y su propio centinela. **No "unificarlos" con el resto.**
+    - **Dónde SÍ se aplica el fallback** (todos con `?? SIN_OBRA_SOCIAL_LABEL`): la ficha del
+      paciente, la tabla de `/pacientes` en sus **dos** vistas (desktop y móvil — antes la móvil
+      **ocultaba** el badge y el mismo paciente se veía distinto según el ancho de pantalla), el
+      dashboard, las tarjetas de resumen de los formularios de pedido y certificado, la **escritura**
+      del snapshot `obra_social_nombre` de esos documentos, y los PDF de consulta e historia clínica.
+    - ⚠ **En documentos, el fallback va SOLO en la ESCRITURA del snapshot, nunca en la lectura.**
+      Los pedidos y certificados **ya emitidos** conservan su `obra_social_nombre` en `NULL` y sus
+      plantillas y previews siguen **omitiendo la fila** con la guarda
+      `{doc.obra_social_nombre && …}`. Agregarle un fallback a la lectura **reescribiría la
+      apariencia de documentos ya firmados**, que es justo lo que el congelado del PDF impide (regla
+      de negocio 5). Consecuencia aceptada: conviven documentos viejos sin la línea de obra social y
+      nuevos con ella.
+    - **El filtro de `/pacientes`** usa el centinela `FILTRO_SIN_OBRA_SOCIAL` (`'sin-obra-social'`,
+      texto — no colisiona con los ids `SERIAL` del catálogo) y la page lo traduce a
+      `obra_social_id IS NULL` **Y** `obra_social_otro` nulo o en blanco. ⚠ **Las dos condiciones
+      hacen falta:** hay pacientes con `obra_social_id` nulo que **sí** tienen obra social, cargada
+      como texto libre. Y el "en blanco" se resuelve con el operador `match` de PostgREST contra
+      `^\s*$`, porque `resolverObraSocial` trimea: un `'   '` es "sin obra social" para la app, y un
+      `IS NULL` a secas lo dejaría afuera.

@@ -934,6 +934,32 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     —repartido entre `formatFechaLarga` y `fmtFecha`— y la prop **`mode`** muerta de `ConsultaForm`
     (que era el tercer punto del ítem del "nudo de tipos"; ver Bloque A → *Lint preexistente*).
 
+- **✅ RESUELTO (2026-08-20) — dos de las cuatro búsquedas por texto NO escapaban los
+  metacaracteres de LIKE. Severidad BAJA. PREEXISTENTE.** `/pacientes` (listado) y
+  `GET /api/pacientes` ya recortaban la longitud y escapaban `%`, `_` y `\` con la expresión escrita
+  a mano, pero **`/pedidos` y `/certificados` pasaban el texto crudo** a su `ilike`.
+  - **Qué pasaba:** un `%` tecleado convertía la búsqueda en un comodín (buscar `%` devolvía todo) y
+    un `_` matcheaba cualquier carácter. **No era una vulnerabilidad** —PostgREST parametriza y la
+    RLS acota el tenant igual—, pero el buscador **mentía sobre lo que encontró**.
+  - **Fix:** el criterio se unificó en **`sanitizarTextoBusqueda`** (`lib/validations/shared.ts`),
+    que hace `trim` → `slice(maxLen)` → escape, **en ese orden**, y hoy lo usan los **4** buscadores.
+  - ⚠ **Hallazgo de paso:** en ese mismo archivo existía **`sanitizeSearchQuery`**, exportada,
+    documentada como *"Limita y sanitiza el parámetro ?q"*, con **cero consumidores** y que **NO
+    escapaba nada** (solo `trim` + `slice`). Era peor que la duplicación: quien la usara creyendo el
+    docstring escribía una búsqueda sin escapar. Quedó **absorbida** por el helper nuevo.
+  - ⚠ **Los llamadores mantienen DOS variables** (`q` crudo para la UI, `qSanitizado` solo para el
+    patrón): mostrar el escapado le devolvería `50\%` a quien escribió `50%`.
+
+- **✅ HECHO (2026-08-20) — contador de resultados permanente en el listado de `/pacientes`.**
+  ⚠ **No era un bug: es una mejora de UX** que entró con la tanda del filtro de obra social, y se
+  anota acá solo para que quede registro. `/pacientes` era la sección **más filtrada de la app**
+  (texto, obra social, sexo y archivados) y **la única sin contador**.
+  - Muestra siempre `N pacientes` / `1 paciente` (singular y plural), con `(incluye archivados)`
+    cuando el toggle está activo. **Permanente**, no condicionado a que haya búsqueda — a diferencia
+    de los de `/pedidos` y `/certificados`, que solo aparecen con `?q=`.
+  - El número es **exacto**: esa query no tiene `.limit()` ni paginación, así que es el total real y
+    no una página.
+
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
   Bloque 4 de `turnos` (`categoria/origen/consulta_id` + sus 3 CHECK) y
@@ -947,6 +973,27 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   la 013. Es una limitación **preexistente** a esta tanda. Resolverlo implica una
   consolidación de baseline: mover los `CREATE` al principio del historial, o generar un
   `000_baseline.sql` aplicable y reordenar. Trabajo aparte, no hecho.
+  - **⚠ CASO TESTIGO (2026-08-20) — el costo de esta deuda ya se pagó una vez, en horas de
+    diagnóstico sobre un problema que no existía.**
+    La migración **001** siembra 13 obras sociales, la última `'Particular / Sin obra social'`. En la
+    base de **producción** esa fila **no existía**: el catálogo tenía los ids **1..12 y 14**, con el
+    **13 hueco**. **Ninguna migración la borraba** — fue eliminada **a mano sobre la base**, sin
+    dejar registro en el historial.
+    **La consecuencia no fue un bug de la app, fue un bug de la documentación.** `PENDIENTES.md` y
+    `schema.sql` describieron durante meses una **ambigüedad activa** entre esa fila y la opción
+    homónima del formulario de pacientes. En la base viva esa ambigüedad ya no existía. Un
+    diagnóstico hecho **sólo contra el repo** la dio por vigente, y hubo que corregirlo contrastando
+    contra la base.
+    **La lección, que es lo que este ítem viene a dejar asentado: leer el disco NO alcanza cuando la
+    base pudo haber divergido.** Todo diagnóstico sobre **estado de datos o de esquema** —qué filas
+    hay, qué constraints rigen, qué políticas están activas— tiene que **contrastar el repo contra la
+    base viva** antes de concluir. Las migraciones dicen lo que se *pretendió* aplicar; sólo la base
+    dice lo que *rige*.
+    Es **exactamente** el tipo de divergencia que la consolidación del baseline viene a eliminar: con
+    un baseline aplicable desde cero, "lo que dicen las migraciones" y "lo que hay en la base" dejan
+    de poder separarse en silencio. Mientras tanto, la divergencia es posible y **ya ocurrió al menos
+    dos veces** — ésta y el **drift de RLS** que corrigió la migración 029, donde las políticas de la
+    base habían sido editadas a mano hacia versiones **más permisivas** que las migraciones fuente.
 - **✅ RESUELTO (2026-07-24) — desalineación 030 ↔ base en ÍNDICES.** El archivo de la
   migración 030 había quedado con los índices de una versión previa (nombres
   `idx_consultas_paciente`/`idx_consultas_medico`, sin el de `fecha_hora`, y sin ninguno de
@@ -995,9 +1042,28 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   `src/lib/utils/calcular-imc.ts` se **borró** (el IMC ya se calcula inline en
   `consulta-detail.tsx:252-257`) y `src/lib/utils/format-date.ts` se **reutilizó** como casa del
   helper `formatFechaAR` (ver el fix de zona horaria en "Bugs menores detectados").
+- **✅ RESUELTO (2026-08-20) — el stub `src/constants/obra-sociales.ts`.** ⚠ **Este archivo
+  desmentía la línea de abajo:** su contenido íntegro era `export {};` y tenía **cero
+  importadores**, así que los stubs que quedaban no eran uno sino **dos**. Sobrevivió a las dos
+  limpiezas anteriores porque aquéllas barrieron componentes, hooks y `src/lib/utils/`, pero no
+  `src/constants/`. Se **eliminó**, y con él la mención de la línea de `/constants` en `CLAUDE.md` →
+  Estructura de carpetas, que lo listaba como si tuviera contenido.
+- **✅ RESUELTO (2026-08-20) — el tipo `ConsultaConRelaciones` (`types/consulta.ts`).** Declaraba
+  una `Consulta` con un `paciente?` embebido (nombre, DNI, fecha de nacimiento, obra social y
+  afiliado) y tenía **cero consumidores** en toda la app; la única otra aparición era el comentario
+  del barrel. Se eliminó el tipo, la mención del barrel y las **dos** de `CLAUDE.md` (el Mapa de
+  tipos y el bloque de advertencia sobre proyecciones de joins, que lo usaba de caso testigo).
+- **✅ RESUELTO (2026-08-20) — prop muerta en la página de historia clínica.**
+  `(app)/pacientes/[id]/historia/page.tsx` construía una prop `paciente` con **cinco** campos
+  —incluida una llamada a `resolverObraSocial` con su aserción de tipo— pero `HistoriaClinicaView`
+  **solo lee `nombre_completo`**, y sus hijos reciben `pacienteId`, no el objeto. Se recortaron los
+  4 campos muertos, la llamada al helper, la aserción, y el `.select()`, que pasó de 8 columnas más
+  el join `obras_sociales(nombre)` a **`'id, nombre_completo, archivado_at'`**.
 - **Queda 1 stub, a propósito:** `src/lib/pdf/receta-template.tsx`. Se **mantuvo** como
   marcador del template de recetas, bloqueado por ANMAT pero a implementar cuando se
   certifique. Eliminarlo o implementarlo cuando se desbloquee la funcionalidad.
+  ⚠ Ahora **sí** es el único: el conteo de esta línea era incorrecto hasta que se borró
+  `src/constants/obra-sociales.ts` (ver arriba).
 - **✅ RESUELTO (tanda 1A, 2026-07-30) — `src/app/page.tsx` era la plantilla de
   `create-next-app`.** Se reemplazó el "Get started by editing…" (logo de Next, enlaces a
   `vercel.com`/`nextjs.org`) por un Server Component mínimo que hace `redirect('/dashboard')` con
@@ -1559,36 +1625,64 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - ⚠ El cambio **propaga** a `form.getValues()`, `form.setValue()` (`:279`, `:281`, `:292`) y al
     `field` de cada `FormField` (12 campos numéricos): hay que **compilar** para confirmar que la
     combinación RHF 7 + Zod 4 + `@hookform/resolvers` acepta la firma sin arrastrar otros errores.
-- **⚠ DECISIÓN PENDIENTE (2026-07-30) — `calendar-view.tsx:156`, el `currentView` "sin usar".**
-  (Línea corrida por la serie "lint a 0"; antes figuraba como `:125`.) El linter marcaba
-  `currentView`, pero **`setCurrentView` SÍ se usa** (`viewDidMount` y `datesSet`): borrar el estado
-  entero habría quitado un re-render que hoy ocurre al cambiar de vista, o sea un **cambio de
-  comportamiento disfrazado de limpieza**. Quedó como
-  `const [, setCurrentView] = useState('timeGridWeek')` con el porqué comentado en el código. Si
-  se decide eliminar el estado completo, evaluar antes si ese re-render hace falta para el
-  turnero — es una decisión aparte, no lint.
-  - **Dato nuevo (2026-08-06):** como el `changeView` ahora está **diferido a un microtask**, el
-    `setCurrentView` que disparan `viewDidMount`/`datesSet` ocurre **un microtask más tarde** que
-    antes. Hoy no cambia nada (el valor no se lee), pero si alguna vez ese estado se usa de verdad,
-    este timing es parte del cuadro.
+- **✅ RESUELTO (2026-08-20) — el `currentView` "sin usar" de `calendar-view.tsx` se eliminó.**
+  Este ítem estaba abierto como **decisión pendiente** desde el 2026-07-30 y pedía textualmente
+  *"evaluar antes si ese re-render hace falta para el turnero"*. Se evaluó y **no hacía falta**:
+  - **Qué se borró:** el `const [, setCurrentView] = useState('timeGridWeek')` (con su comentario) y
+    los props **`viewDidMount` y `datesSet`** del `<FullCalendar>`, que eran sus únicos llamadores.
+    Los props se fueron **enteros**, no como arrow vacías: `datesSet` es un punto de extensión
+    legítimo de FullCalendar y un handler vacío invita a que alguien le cuelgue algo sin contexto.
+  - **Por qué el re-render no sostenía nada:** ningún elemento del JSX depende del tipo de vista ni
+    del rango de fechas —el título, los botones de navegación y el indicador de vista activa los
+    pinta FullCalendar en su **propio DOM**—; no se lee la API de FullCalendar en el cuerpo del
+    render (las 6 apariciones de `calendarRef` están en efectos, en el microtask o en handlers); y
+    el único punto donde el tipo de vista decide qué se pinta (`eventContent`, que alterna entre el
+    componente de mes y el de semana) lo obtiene de **`arg.view.type`**, el argumento que le pasa
+    FullCalendar, no del estado.
+  - ⚠ **Dato que además desinflaba la premisa:** en **navegación de fechas** el setter recibía
+    siempre el mismo string y **React hacía bail-out sin re-renderizar**. El re-render sólo ocurría
+    en los cambios de vista, donde era redundante — FullCalendar ya se había re-renderizado solo.
+  - **La viñeta "Dato nuevo (2026-08-06)"** sobre el timing del `setCurrentView` respecto del
+    microtask **dejó de aplicar** y se eliminó con el ítem. ⚠ El `queueMicrotask` en sí **no se
+    tocó** y sigue plenamente vigente (`CLAUDE.md` → nota técnica 21).
+- **✅ RESUELTO (2026-08-20) — `CATEGORIA_STYLES` dejó de exportarse.** La constante de estilos de
+  categorías de `calendar-view.tsx` estaba declarada con `export` pero sus 4 usos eran todos
+  internos del propio archivo; el único símbolo que alguien importa de ese módulo es `CalendarView`.
+  Se quitó la palabra `export` y quedó local. **No se cambió** ni el nombre, ni el tipo, ni el
+  contenido, ni los lugares donde se usa.
 
 ### Datos / catálogo
-- **⚠ "Particular / Sin obra social": la ambigüedad está CONFIRMADA (verificado 2026-08-08).**
-  Existe como **registro real** en la seed de `obras_sociales` (migración 001) **y** como opción
-  hardcodeada del formulario. Este ítem pedía *"verificar que no haya duplicación/ambigüedad"*: la
-  verificación está hecha y **sí la hay**.
-  - **Las dos opciones son visualmente idénticas en el `<Select>` y guardan cosas distintas:**
-    - `patient-form.tsx:244` → `<SelectItem value="particular">Particular / Sin obra social</SelectItem>`,
-      cuyo handler (`:72-74`) pone **`obra_social_id = undefined` y `obra_social_otro = ''`**: el
-      paciente queda **sin ninguna obra social**.
-    - La **fila del catálogo con el mismo texto** → guarda **`obra_social_id = <id de esa fila>`**: el
-      paciente queda **vinculado a un registro real**.
-  - **Consecuencia:** dos pacientes "particulares" quedan modelados distinto según **cuál de las dos
-    filas clickeó** quien lo dio de alta, y **cualquier filtro o agrupación por obra social los
-    separa**. No hay forma de distinguirlo desde la UI: se ven iguales.
-  - **Decisión de producto pendiente: quitar una de las dos.** ⚠ Si se elige borrar la fila del
-    catálogo, hay que **revisar antes los pacientes que ya la apuntan** (quedarían con un
-    `obra_social_id` colgado); si se elige quitar la opción hardcodeada, el cambio es solo de UI.
+- **✅ RESUELTO (migración 045, 2026-08-20) — "Particular / Sin obra social": la ambigüedad se
+  cerró eliminando la fila del catálogo.** El ítem original pedía *"verificar que no haya
+  duplicación/ambigüedad"*; la verificación (2026-08-08) confirmó que sí la había, porque el texto
+  existía **dos veces**: como **fila real** en la seed de `obras_sociales` (migración 001) y como
+  **opción hardcodeada** del `<Select>` de `patient-form.tsx`. Las dos se veían idénticas en la UI y
+  guardaban cosas distintas —la del catálogo escribía `obra_social_id = <id de esa fila>`; la
+  hardcodeada deja al paciente **sin ninguna obra social**—, así que dos pacientes igualmente
+  particulares quedaban modelados distinto según cuál de las dos clickeó quien hizo el alta, y
+  cualquier filtro o agrupación por obra social los separaba.
+  - **DECISIÓN DE PRODUCTO TOMADA: "sin obra social" se modela como AUSENCIA** — `obra_social_id
+    IS NULL` y sin texto libre —, **nunca como una fila de catálogo**. El catálogo enumera
+    coberturas, y "no tener cobertura" no es una cobertura. El literal pasó a ser un valor de
+    **presentación**, no de datos.
+  - ✅ **La fila se eliminó del catálogo** (migración **045**, gemela `MIGRACION-21`, ya aplicada),
+    con un `UPDATE` previo que suelta la FK de los pacientes que la apuntaran — obligatorio, porque
+    `pacientes.obra_social_id` no declara `ON DELETE` y el `DELETE` habría abortado con 23503.
+    Idempotente: busca **por nombre** (no por id, que es un artefacto de la secuencia `SERIAL`) y
+    afecta 0 filas si no existe.
+  - ✅ **La opción hardcodeada del formulario SE QUEDA**, que es la que sobrevive de las dos.
+  - ✅ **El literal se unificó** en la constante compartida `SIN_OBRA_SOCIAL_LABEL`
+    (`lib/pacientes/obra-social.ts`), aplicada como fallback en los consumidores. Ver `CLAUDE.md` →
+    Mapa de helpers compartidos.
+  - ✅ **El listado de `/pacientes` ganó la opción de filtro** "Particular / Sin obra social", con
+    el centinela `FILTRO_SIN_OBRA_SOCIAL` en la URL.
+  - ⚠ **La descripción que este ítem traía del handler era FALSA y no se arrastra al cierre.**
+    Decía que la rama `particular` escribía `obra_social_id = undefined` y `obra_social_otro = ''`.
+    Hace tiempo que escribe **`null` y `null`**, ambos explícitos: el `undefined` se perdía en el
+    `JSON.stringify` del submit y la columna conservaba el valor viejo (era un bug real, arreglado
+    por su cuenta), y un `''` en `obra_social_otro` lo colapsa a `null` el `.transform()` del
+    `pacienteSchema`. Las referencias a líneas del ítem viejo (`:244`, `:72-74`) también estaban
+    corridas.
 - **✅ RESUELTO PARCIALMENTE (migración 035, 2026-08-07) — faltaban obras sociales de la zona en el
   catálogo (IOSEP). CAPA 2 del bug de obra social; NO es código.** Detectado al diagnosticar el bug de
   la obra social que no se muestra (ver Bloque A → "Bugs menores detectados").
@@ -1728,6 +1822,28 @@ Información Pública**). Hallazgos:
   Al migrar a `resolverAcceso` pasaron al criterio **fail-closed** (`!permiso`), que ante lo
   inesperado deniega. **Cambio estrictamente más restrictivo: no habilita nada que estuviera
   cerrado**, y con las columnas actuales no altera ningún caso real.
+
+- **✅ RESUELTO (2026-08-20) — la página de historia clínica leía al paciente sin filtro de tenant
+  en el código.** `(app)/pacientes/[id]/historia/page.tsx` consultaba `pacientes` con `.eq('id', id)`
+  a secas, apoyándose enteramente en la RLS, **teniendo el `tenantMedicoId` ya resuelto tres líneas
+  más arriba** y usándolo en la query de `consultas` de abajo. Se le agregó
+  `.eq('creado_por', tenantMedicoId)`, con el mismo comentario justificativo que usa el listado.
+  - **No era explotable:** `pacientes_select` exige `creado_por = get_medico_id()`, así que un
+    paciente ajeno ya devolvía 0 filas y caía en el mismo `notFound()`. Es **defensa en profundidad**,
+    y no cambia qué filas vuelven.
+  - ⚠ **La columna es `creado_por`, NO `medico_id`** (`pacientes` es la excepción del esquema). En
+    ese mismo archivo conviven las dos formas y **ambas son correctas**: la query de `consultas` sí
+    usa `medico_id`. No unificarlas.
+  - ⬜ **SIGUE ABIERTO — el mismo patrón queda en otras 6 queries a `pacientes`**, todas cubiertas
+    por la RLS y ninguna explotable: las **dos** de `(app)/pacientes/[id]/page.tsx` (la de
+    `generateMetadata` y la principal), `(app)/pacientes/[id]/estudios/page.tsx`,
+    `api/pacientes/[id]/historia/pdf/route.ts`, y las de `dashboard/{stats-cards,recent-patients}.tsx`.
+    ⚠ Dos de ellas llevan un comentario que dice que se apoyan en la RLS **a propósito**, así que no
+    fue un olvido. El candidato más claro si se decide cerrarlo es `(app)/pacientes/[id]/page.tsx`,
+    hermano directo del que sí se corrigió.
+    *(Distinto es el caso de `/pedidos` y `/certificados`: esas tablas **no tienen** columna de
+    tenant directa —su tenant es indirecto vía `pacientes`—, así que la excepción del criterio las
+    cubre y ahí no hay nada que agregar.)*
 
 ### Autenticación, sesiones y registro
 - **⚠ Auto-registro como médico (riesgo conocido, aceptado por ahora).** `handle_new_user`

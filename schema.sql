@@ -96,6 +96,12 @@
 -- Unicidad GLOBAL, deliberadamente lo opuesto a la 043 — ver CLAUDE.md → nota técnica 27.
 -- Opcional a nivel producto; se captura en la edición de perfil, no en el registro, y la
 -- cargan médicos y asistentes por igual),
+-- 045 (catálogo: se ELIMINA la fila 'Particular / Sin obra social' de obras_sociales, con
+-- UPDATE previo que suelta la FK de los pacientes que la apuntaran. "Sin obra social" pasa
+-- a modelarse como AUSENCIA. ⚠ En producción esa fila YA HABÍA SIDO BORRADA A MANO, sin
+-- migración que lo registrara: la 045 es un no-op contra esa base y existe para que un
+-- entorno nuevo no reviva la ambigüedad. Ver PENDIENTES.md → "Esquema sin migración
+-- fuente", donde el episodio quedó como caso testigo del ítem de consolidación de baseline),
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -220,15 +226,22 @@ CREATE INDEX idx_profiles_medico ON public.profiles(medico_id);
 
 -- ── obras_sociales ──────────────────────────────────────────────────────────
 -- Catálogo de obras sociales. Lectura pública para autenticados.
--- NOTA: la seed incluye 'Particular / Sin obra social' como registro real.
---   ⚠ Ese registro CONVIVE con una opción "Particular" hardcodeada en el formulario de
---   pacientes, y las dos guardan cosas distintas (la del catálogo escribe obra_social_id;
---   la hardcodeada deja el paciente sin obra social). Ambigüedad confirmada — ver
---   PENDIENTES.md → "Datos / catálogo".
+-- NOTA: el catálogo NO tiene fila para "sin obra social", y es deliberado.
+--   La seed de la 001 incluía 'Particular / Sin obra social' como registro real, que
+--   convivía con una opción homónima hardcodeada en el formulario de pacientes. Las dos
+--   se veían idénticas en el <Select> y guardaban cosas distintas (la del catálogo
+--   escribía obra_social_id; la hardcodeada deja al paciente sin obra social), así que
+--   dos pacientes igualmente particulares quedaban modelados distinto.
+--   ✅ La migración 045 ELIMINÓ la fila del catálogo. Decisión de producto: "sin obra
+--   social" se representa como AUSENCIA — obra_social_id IS NULL y sin texto libre —,
+--   nunca como una fila. El literal quedó como valor de PRESENTACIÓN en la constante
+--   SIN_OBRA_SOCIAL_LABEL. Ver CLAUDE.md → nota técnica 28.
 -- NOTA: este archivo NO incluye el INSERT del catálogo (vive en las migraciones). El
---   contenido actual = las 13 filas de la seed de la 001 + 'IOSEP', agregada por la
---   migración 035 (obra social común en la zona del consultorio, que hasta entonces se
---   venía cargando como texto libre en pacientes.obra_social_otro).
+--   contenido actual = las 13 filas de la seed de la 001, MENOS 'Particular / Sin obra
+--   social' (borrada por la 045), MÁS 'IOSEP', agregada por la migración 035 (obra social
+--   común en la zona del consultorio, que hasta entonces se venía cargando como texto
+--   libre en pacientes.obra_social_otro).
+--   ⚠ El id que ocupaba la fila borrada queda HUECO: SERIAL no reutiliza ids.
 CREATE TABLE public.obras_sociales (
   id     SERIAL PRIMARY KEY,
   nombre TEXT NOT NULL UNIQUE
