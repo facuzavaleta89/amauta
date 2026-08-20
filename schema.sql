@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→040).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→044).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -69,8 +69,7 @@
 -- negativo de solapamiento del asistente con `gestionar_turnos` y SIN `ver_turnos`, que
 -- escribía turnos que no podía leer. Es AMPLIACIÓN de acceso [A → A OR B]: nadie que hoy
 -- lea turnos deja de leerlos. ⚠ Se hizo con ALTER POLICY, que preserva el rol, así que
--- `turnos_select` sigue en {public} — la normalización a TO authenticated de las 4
--- políticas de `turnos` queda pendiente aparte),
+-- `turnos_select` quedó en {public} — eso lo cerró después la 042),
 -- 040 (`turnos_audit_log` registra también los DELETE: columna `medico_id` [tenant
 -- DESNORMALIZADO, backfilleado, NOT NULL] + índice; `turno_id` pasa a NULLABLE y su FK de
 -- ON DELETE CASCADE a ON DELETE SET NULL —el CASCADE borraba el historial completo del
@@ -79,7 +78,24 @@
 -- DELETE, fijando la dirección de forma explícita y cerrando la discrepancia histórica
 -- BEFORE/AFTER; y `audit_select` deja de resolver el tenant por JOIN al turno —que hacía
 -- invisibles las filas huérfanas— para leer `medico_id` de la propia fila, normalizada a
--- TO authenticated).
+-- TO authenticated),
+-- 041 (`consultas.proximo_turno_sugerido` pasa de DATE a TIMESTAMPTZ: la columna truncaba
+-- en silencio la hora del próximo control y todo se agendaba a las 09:00),
+-- 042 (normalización de RLS: las 49 políticas del esquema `public` que NO declaraban
+-- cláusula `TO` —o sea `{public}`, `anon` incluido— pasan a `TO authenticated`, en 18
+-- tablas. Se hizo con ALTER POLICY, que cambia SOLO el rol: ninguna expresión se
+-- reescribió, así que la lógica de autorización quedó idéntica. Cierra el seguimiento que
+-- habían dejado abierto la 037 y la 039. Resultado: las 65 políticas de `public` quedan en
+-- {authenticated}, cero en {public}. Defensa en profundidad, no un parche de urgencia: las
+-- 49 ya colgaban de get_medico_id()/auth.uid(), que para `anon` no resuelven),
+-- 043 (`pacientes.dni`: se dropea `pacientes_dni_key UNIQUE (dni)` y se crea
+-- `pacientes_creado_por_dni_key UNIQUE (creado_por, dni)`. La unicidad GLOBAL era un bug de
+-- modelo multi-tenant: impedía que dos médicos sin relación atendieran al mismo paciente.
+-- `idx_pacientes_dni` se CONSERVA — desde acá es el único índice sobre `dni` solo),
+-- 044 (`profiles.dni`: columna TEXT NULLABLE nueva + `profiles_dni_key UNIQUE (dni)`.
+-- Unicidad GLOBAL, deliberadamente lo opuesto a la 043 — ver CLAUDE.md → nota técnica 27.
+-- Opcional a nivel producto; se captura en la edición de perfil, no en el registro, y la
+-- cargan médicos y asistentes por igual),
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -162,6 +178,12 @@ CREATE TABLE public.profiles (
   -- Multi-tenancy: si es asistente, apunta al médico dueño del tenant.
   medico_id   UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
 
+  -- Documento de identidad del USUARIO de la app (médico o asistente). Migración 044.
+  -- ⚠ OPCIONAL a nivel producto y NULLABLE: los perfiles previos no lo tienen y la ley
+  -- argentina no lo exige (el identificador legal del ejercicio es la matrícula). Se
+  -- carga en la edición de perfil, nunca en el registro. NO es el DNI del paciente.
+  dni         TEXT,
+
   -- Identidad profesional del médico (se estampan en los PDF).
   matricula   TEXT,                          -- @deprecated → usar matriculas (jsonb)
   firma_url   TEXT,                           -- Firma digitalizada (base64/URL)
@@ -185,7 +207,14 @@ CREATE TABLE public.profiles (
   crear_pedidos         BOOLEAN NOT NULL DEFAULT FALSE,
   ver_certificados      BOOLEAN NOT NULL DEFAULT FALSE,
   crear_certificados    BOOLEAN NOT NULL DEFAULT FALSE,
-  acceso_mensajeria     BOOLEAN NOT NULL DEFAULT FALSE
+  acceso_mensajeria     BOOLEAN NOT NULL DEFAULT FALSE,
+
+  -- migración 044 — unicidad GLOBAL del DNI, deliberadamente lo OPUESTO a la constraint
+  -- por tenant de `pacientes` (mig. 043): `profiles` es la tabla de USUARIOS del sistema,
+  -- no pertenece a ningún tenant, y una persona no debería tener dos cuentas.
+  -- Los perfiles sin DNI conviven: en un índice único los NULL no se comparan entre sí.
+  -- El porqué de la asimetría, en CLAUDE.md → nota técnica 27.
+  CONSTRAINT profiles_dni_key UNIQUE (dni)
 );
 CREATE INDEX idx_profiles_medico ON public.profiles(medico_id);
 
@@ -209,7 +238,7 @@ CREATE TABLE public.obras_sociales (
 -- Pacientes del consultorio. creado_por = UUID del médico dueño (tenant key).
 CREATE TABLE public.pacientes (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  dni              TEXT NOT NULL UNIQUE,
+  dni              TEXT NOT NULL,             -- ⚠ único POR TENANT, no global: ver la constraint de abajo (mig. 043)
   nombre_completo  TEXT NOT NULL,
   fecha_nacimiento DATE NOT NULL,
   sexo             TEXT NOT NULL CHECK (sexo IN ('masculino', 'femenino', 'otro')),
@@ -223,8 +252,16 @@ CREATE TABLE public.pacientes (
   creado_por       UUID NOT NULL REFERENCES public.profiles(id),  -- tenant key
   archivado_at     TIMESTAMPTZ,                -- NULL = activo; con valor = archivado (Ley 26.529). Migración 024.
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- migración 043 — reemplazó a `pacientes_dni_key UNIQUE (dni)`, que era unicidad
+  -- GLOBAL y por eso impedía que DOS médicos distintos atendieran al mismo paciente.
+  -- Ahora el DNI es único DENTRO de cada tenant. ⚠ Contrastar con `profiles.dni`, que
+  -- sí es único global y a propósito (ver esa tabla y CLAUDE.md → nota técnica 27).
+  CONSTRAINT pacientes_creado_por_dni_key UNIQUE (creado_por, dni)
 );
+-- ⚠ idx_pacientes_dni NO es redundante desde la 043: el índice de la constraint es
+-- (creado_por, dni) y no sirve para buscar por `dni` solo (no es prefijo izquierdo).
 CREATE INDEX idx_pacientes_dni         ON public.pacientes(dni);
 CREATE INDEX idx_pacientes_nombre      ON public.pacientes(nombre_completo);
 CREATE INDEX idx_pacientes_obra_social ON public.pacientes(obra_social_id);
@@ -705,13 +742,13 @@ ALTER TABLE public.notificaciones ENABLE ROW LEVEL SECURITY;
 --   (La migración 029 dropeó la política duplicada "Medicos ven sus propias
 --    notificaciones", redundante con notificaciones_select.)
 CREATE POLICY "notificaciones_select" ON public.notificaciones
-  FOR SELECT USING (medico_id = auth.uid());
+  FOR SELECT TO authenticated USING (medico_id = auth.uid());
 CREATE POLICY "notificaciones_insert" ON public.notificaciones
-  FOR INSERT WITH CHECK (medico_id = get_medico_id());
+  FOR INSERT TO authenticated WITH CHECK (medico_id = get_medico_id());
 CREATE POLICY "notificaciones_update" ON public.notificaciones
-  FOR UPDATE USING (medico_id = auth.uid());
+  FOR UPDATE TO authenticated USING (medico_id = auth.uid());
 CREATE POLICY "notificaciones_delete" ON public.notificaciones
-  FOR DELETE USING (medico_id = auth.uid());
+  FOR DELETE TO authenticated USING (medico_id = auth.uid());
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
@@ -973,7 +1010,7 @@ ALTER TABLE public.mensajes_lecturas     ENABLE ROW LEVEL SECURITY;
 
 -- ── profiles ────────────────────────────────────────────────────────────────
 CREATE POLICY "profiles_select" ON public.profiles
-  FOR SELECT USING (
+  FOR SELECT TO authenticated USING (
     auth.uid() = id
     OR public.get_user_role(auth.uid()) = 'medico'
     OR medico_id = auth.uid()
@@ -981,31 +1018,31 @@ CREATE POLICY "profiles_select" ON public.profiles
     OR medico_id = public.get_user_medico_id(auth.uid())
   );
 CREATE POLICY "profiles_update_own" ON public.profiles
-  FOR UPDATE USING (auth.uid() = id);
+  FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- ── obras_sociales ──────────────────────────────────────────────────────────
 CREATE POLICY "obras_sociales_select_all" ON public.obras_sociales
-  FOR SELECT USING (auth.role() = 'authenticated');
+  FOR SELECT TO authenticated USING (auth.role() = 'authenticated');
 
 -- ── pacientes ───────────────────────────────────────────────────────────────
 CREATE POLICY "pacientes_select" ON public.pacientes
-  FOR SELECT USING (creado_por = get_medico_id() AND public.check_permiso(auth.uid(), 'ver_pacientes'));
+  FOR SELECT TO authenticated USING (creado_por = get_medico_id() AND public.check_permiso(auth.uid(), 'ver_pacientes'));
 CREATE POLICY "pacientes_insert" ON public.pacientes
-  FOR INSERT WITH CHECK (creado_por = get_medico_id() AND public.check_permiso(auth.uid(), 'editar_pacientes'));
+  FOR INSERT TO authenticated WITH CHECK (creado_por = get_medico_id() AND public.check_permiso(auth.uid(), 'editar_pacientes'));
 CREATE POLICY "pacientes_update" ON public.pacientes
-  FOR UPDATE USING (creado_por = get_medico_id() AND public.check_permiso(auth.uid(), 'editar_pacientes'));
+  FOR UPDATE TO authenticated USING (creado_por = get_medico_id() AND public.check_permiso(auth.uid(), 'editar_pacientes'));
 CREATE POLICY "pacientes_delete" ON public.pacientes
-  FOR DELETE USING (creado_por = auth.uid() AND public.get_user_role(auth.uid()) = 'medico');
+  FOR DELETE TO authenticated USING (creado_por = auth.uid() AND public.get_user_role(auth.uid()) = 'medico');
 
 -- ── historia_clinica ────────────────────────────────────────────────────────
 CREATE POLICY "historia_select" ON public.historia_clinica
-  FOR SELECT USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+  FOR SELECT TO authenticated USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = historia_clinica.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "historia_insert" ON public.historia_clinica
-  FOR INSERT WITH CHECK (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+  FOR INSERT TO authenticated WITH CHECK (public.check_permiso(auth.uid(), 'ver_historia_clinica')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = historia_clinica.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "historia_update" ON public.historia_clinica
-  FOR UPDATE USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+  FOR UPDATE TO authenticated USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = historia_clinica.paciente_id AND creado_por = get_medico_id()));
 -- Restaurada por la migración 029 (la base había perdido el chequeo de rol médico).
 -- Borrar una HC es exclusivo del médico: la Ley 26.529 obliga a conservarla.
@@ -1020,11 +1057,11 @@ CREATE POLICY "historia_delete" ON public.historia_clinica
 --   cualquier asistente acceso ALL a las consultas del tenant, salteando
 --   check_permiso(). Las cuatro políticas de abajo son las únicas correctas.
 CREATE POLICY "consultas_select" ON public.consultas
-  FOR SELECT USING (public.check_permiso(auth.uid(), 'ver_historia_clinica') AND medico_id = get_medico_id());
+  FOR SELECT TO authenticated USING (public.check_permiso(auth.uid(), 'ver_historia_clinica') AND medico_id = get_medico_id());
 CREATE POLICY "consultas_insert" ON public.consultas
-  FOR INSERT WITH CHECK (public.check_permiso(auth.uid(), 'crear_consultas') AND medico_id = get_medico_id());
+  FOR INSERT TO authenticated WITH CHECK (public.check_permiso(auth.uid(), 'crear_consultas') AND medico_id = get_medico_id());
 CREATE POLICY "consultas_update" ON public.consultas
-  FOR UPDATE USING (medico_id = get_medico_id() AND (
+  FOR UPDATE TO authenticated USING (medico_id = get_medico_id() AND (
     public.get_user_role(auth.uid()) = 'medico'
     OR public.check_permiso(auth.uid(), 'crear_consultas')
     OR public.check_permiso(auth.uid(), 'finalizar_consultas')));
@@ -1056,23 +1093,23 @@ CREATE POLICY "consultas_delete" ON public.consultas
 -- accedía — mismo hueco que tenía consultas antes de la 025). El delete queda
 -- exclusivo del médico. El predicado de tenant usa get_medico_id() en las cuatro.
 CREATE POLICY "estudios_select" ON public.estudios
-  FOR SELECT USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+  FOR SELECT TO authenticated USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "estudios_insert" ON public.estudios
-  FOR INSERT WITH CHECK (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+  FOR INSERT TO authenticated WITH CHECK (public.check_permiso(auth.uid(), 'ver_historia_clinica')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "estudios_update" ON public.estudios
-  FOR UPDATE USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
+  FOR UPDATE TO authenticated USING (public.check_permiso(auth.uid(), 'ver_historia_clinica')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "estudios_delete" ON public.estudios
-  FOR DELETE USING (public.get_user_role(auth.uid()) = 'medico'
+  FOR DELETE TO authenticated USING (public.get_user_role(auth.uid()) = 'medico'
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = estudios.paciente_id AND creado_por = get_medico_id()));
 
 -- ── evoluciones ─────────────────────────────────────────────────────────────
 CREATE POLICY "evoluciones_select" ON public.evoluciones
-  FOR SELECT USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()));
+  FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "evoluciones_insert" ON public.evoluciones
-  FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()));
+  FOR INSERT TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM public.pacientes WHERE id = evoluciones.paciente_id AND creado_por = get_medico_id()));
 -- update/delete restaurados por la migración 029 (la base había perdido el chequeo
 -- de rol médico): modificar/eliminar evoluciones es exclusivo del médico.
 CREATE POLICY "evoluciones_update" ON public.evoluciones
@@ -1099,13 +1136,14 @@ CREATE POLICY "evoluciones_delete" ON public.evoluciones
 --   ENCIMA de otro. Unificar el criterio en el helper no cerraba esto (solo concentraba el
 --   bug); se cierra acá, en la base.
 --   Es AMPLIACIÓN de acceso (A → A OR B): nadie que ya leyera turnos dejó de leerlos.
--- ⚠ ROL: la 039 usó ALTER POLICY (cambia el USING EN EL LUGAR, sin el instante en que la
+-- ✅ ROL: la 039 usó ALTER POLICY (cambia el USING EN EL LUGAR, sin el instante en que la
 --   política no existe) y `ALTER POLICY` sin `TO` PRESERVA el rol, así que esta política
---   sigue en {public} — a diferencia de las 4 de bloqueos_agenda, ya en `authenticated`
---   desde la 037. Sin impacto explotable (cuelga de get_medico_id(), que para `anon` no
---   resuelve), pero la normalización de las 4 de `turnos` queda PENDIENTE. Ver PENDIENTES.md.
+--   quedó un tiempo en {public} mientras las 4 de bloqueos_agenda ya estaban en
+--   `authenticated` desde la 037. Nunca fue explotable (cuelga de get_medico_id(), que para
+--   `anon` no resuelve), y la 042 cerró la diferencia: las 4 de `turnos` están en
+--   `TO authenticated`, igual que las 65 del esquema `public`.
 CREATE POLICY "turnos_select" ON public.turnos
-  FOR SELECT USING (
+  FOR SELECT TO authenticated USING (
     medico_id = get_medico_id()
     AND (
       public.check_permiso(auth.uid(), 'ver_turnos')
@@ -1113,15 +1151,15 @@ CREATE POLICY "turnos_select" ON public.turnos
     )
   );
 CREATE POLICY "turnos_insert" ON public.turnos
-  FOR INSERT WITH CHECK (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+  FOR INSERT TO authenticated WITH CHECK (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 CREATE POLICY "turnos_update" ON public.turnos
-  FOR UPDATE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+  FOR UPDATE TO authenticated USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 -- ⚠ turnos_delete YA NO es solo-médico (migración 033): la agenda es una unidad de
 -- permiso, así que el asistente con gestionar_turnos también borra. Antes era
 -- `medico_id = auth.uid() AND get_user_role(auth.uid()) = 'medico'`, y como el endpoint
 -- DELETE sí dejaba pasar al asistente, el borrado le fallaba en silencio (0 filas + 200).
 CREATE POLICY "turnos_delete" ON public.turnos
-  FOR DELETE USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
+  FOR DELETE TO authenticated USING (medico_id = get_medico_id() AND public.check_permiso(auth.uid(), 'gestionar_turnos'));
 
 -- ── bloqueos_agenda ─────────────────────────────────────────────────────────
 -- Las tres de escritura comparten el mismo criterio (tenant + gestionar_turnos) desde
@@ -1137,9 +1175,9 @@ CREATE POLICY "turnos_delete" ON public.turnos
 --   (src/app/api/turnero/bloqueos/[id]/route.ts). El OR neutraliza ese riesgo por diseño.
 -- ✅ `turnos_select` YA ESPEJA ESTE CRITERIO (migración 039): durante dos migraciones esta
 --   política y la de `turnos` tuvieron criterios distintos, y ese hueco quedó cerrado. Las
---   dos tablas de la agenda leen con el mismo USING. Lo único que todavía las diferencia es
---   el ROL: las 4 de acá están en `authenticated` (037) y las de `turnos` siguen en
---   {public} — ver la nota de turnos_select y PENDIENTES.md.
+--   dos tablas de la agenda leen con el mismo USING. ✅ Y desde la 042 tampoco las diferencia
+--   el ROL: las 4 de acá lo tenían desde la 037 y las 4 de `turnos` se normalizaron ahí. Las
+--   dos tablas de la agenda son hoy idénticas en criterio de lectura y en rol.
 CREATE POLICY "bloqueos_select" ON public.bloqueos_agenda
   FOR SELECT TO authenticated USING (
     medico_id = get_medico_id()
@@ -1174,26 +1212,26 @@ CREATE POLICY "audit_select" ON public.turnos_audit_log
 
 -- ── pedidos ─────────────────────────────────────────────────────────────────
 CREATE POLICY "pedidos_select" ON public.pedidos
-  FOR SELECT USING (public.check_permiso(auth.uid(), 'ver_pedidos')
+  FOR SELECT TO authenticated USING (public.check_permiso(auth.uid(), 'ver_pedidos')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = pedidos.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "pedidos_insert" ON public.pedidos
-  FOR INSERT WITH CHECK (public.check_permiso(auth.uid(), 'crear_pedidos')
+  FOR INSERT TO authenticated WITH CHECK (public.check_permiso(auth.uid(), 'crear_pedidos')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = pedidos.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "pedidos_update" ON public.pedidos
-  FOR UPDATE USING (public.check_permiso(auth.uid(), 'crear_pedidos')
+  FOR UPDATE TO authenticated USING (public.check_permiso(auth.uid(), 'crear_pedidos')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = pedidos.paciente_id AND creado_por = get_medico_id()));
 -- Sin política de DELETE: los pedidos NO se borran, solo se anulan (regla de negocio 5).
 -- La política pedidos_delete fue dropeada en la migración 025 (sin DELETE, RLS lo niega).
 
 -- ── certificados ────────────────────────────────────────────────────────────
 CREATE POLICY "certificados_select" ON public.certificados
-  FOR SELECT USING (public.check_permiso(auth.uid(), 'ver_certificados')
+  FOR SELECT TO authenticated USING (public.check_permiso(auth.uid(), 'ver_certificados')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = certificados.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "certificados_insert" ON public.certificados
-  FOR INSERT WITH CHECK (public.check_permiso(auth.uid(), 'crear_certificados')
+  FOR INSERT TO authenticated WITH CHECK (public.check_permiso(auth.uid(), 'crear_certificados')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = certificados.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "certificados_update" ON public.certificados
-  FOR UPDATE USING (public.check_permiso(auth.uid(), 'crear_certificados')
+  FOR UPDATE TO authenticated USING (public.check_permiso(auth.uid(), 'crear_certificados')
     AND EXISTS (SELECT 1 FROM public.pacientes WHERE id = certificados.paciente_id AND creado_por = get_medico_id()));
 -- Sin política de DELETE: los certificados NO se borran, solo se anulan (regla de negocio 5).
 -- La política certificados_delete fue dropeada en la migración 025 (sin DELETE, RLS lo niega).
@@ -1204,7 +1242,7 @@ CREATE POLICY "certificados_update" ON public.certificados
 -- chequeo de rol médico). Con la emisión bloqueada por ANMAT y sin endpoint de
 -- escritura, la RLS es la ÚNICA defensa de esta tabla.
 CREATE POLICY "recetas_select" ON public.recetas
-  FOR SELECT USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = get_medico_id()));
+  FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.pacientes WHERE id = recetas.paciente_id AND creado_por = get_medico_id()));
 CREATE POLICY "recetas_insert" ON public.recetas
   FOR INSERT TO authenticated
   WITH CHECK (public.get_user_role(auth.uid()) = 'medico'
@@ -1231,53 +1269,53 @@ CREATE POLICY "recetas_delete" ON public.recetas
 --   historia_clinica— NO tocó difusión deliberadamente. Si alguna vez se quisiera
 --   restringir, hay que agregar un permiso granular de difusión (hoy no existe).
 CREATE POLICY "difusion_select" ON public.difusion_posts
-  FOR SELECT USING (medico_id = get_medico_id());
+  FOR SELECT TO authenticated USING (medico_id = get_medico_id());
 CREATE POLICY "difusion_insert" ON public.difusion_posts
-  FOR INSERT WITH CHECK (medico_id = get_medico_id());
+  FOR INSERT TO authenticated WITH CHECK (medico_id = get_medico_id());
 CREATE POLICY "difusion_update" ON public.difusion_posts
-  FOR UPDATE USING (medico_id = get_medico_id());
+  FOR UPDATE TO authenticated USING (medico_id = get_medico_id());
 CREATE POLICY "difusion_delete" ON public.difusion_posts
-  FOR DELETE USING (medico_id = get_medico_id());
+  FOR DELETE TO authenticated USING (medico_id = get_medico_id());
 
 -- ── difusion_envios ─────────────────────────────────────────────────────────
 CREATE POLICY "envios_select" ON public.difusion_envios
-  FOR SELECT USING (EXISTS (SELECT 1 FROM public.difusion_posts WHERE id = difusion_envios.post_id AND medico_id = get_medico_id()));
+  FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.difusion_posts WHERE id = difusion_envios.post_id AND medico_id = get_medico_id()));
 CREATE POLICY "envios_insert" ON public.difusion_envios
-  FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM public.difusion_posts WHERE id = difusion_envios.post_id AND medico_id = get_medico_id()));
+  FOR INSERT TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM public.difusion_posts WHERE id = difusion_envios.post_id AND medico_id = get_medico_id()));
 
 -- ── solicitudes_asistente ───────────────────────────────────────────────────
 CREATE POLICY "solicitudes_select" ON public.solicitudes_asistente
-  FOR SELECT USING (solicitante_id = auth.uid() OR medico_id = auth.uid());
+  FOR SELECT TO authenticated USING (solicitante_id = auth.uid() OR medico_id = auth.uid());
 CREATE POLICY "solicitudes_insert" ON public.solicitudes_asistente
-  FOR INSERT WITH CHECK (solicitante_id = auth.uid());
+  FOR INSERT TO authenticated WITH CHECK (solicitante_id = auth.uid());
 CREATE POLICY "solicitudes_update" ON public.solicitudes_asistente
-  FOR UPDATE USING (medico_id = auth.uid());
+  FOR UPDATE TO authenticated USING (medico_id = auth.uid());
 
 -- ── notas ───────────────────────────────────────────────────────────────────
-CREATE POLICY "notas_select_own" ON public.notas FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "notas_insert_own" ON public.notas FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "notas_update_own" ON public.notas FOR UPDATE USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
-CREATE POLICY "notas_delete_own" ON public.notas FOR DELETE USING (user_id = auth.uid());
+CREATE POLICY "notas_select_own" ON public.notas FOR SELECT TO authenticated USING (user_id = auth.uid());
+CREATE POLICY "notas_insert_own" ON public.notas FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+CREATE POLICY "notas_update_own" ON public.notas FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+CREATE POLICY "notas_delete_own" ON public.notas FOR DELETE TO authenticated USING (user_id = auth.uid());
 
 -- ── mensajes_internos ───────────────────────────────────────────────────────
 CREATE POLICY "mensajes_ver" ON public.mensajes_internos
-  FOR SELECT USING (
+  FOR SELECT TO authenticated USING (
     remitente_id = auth.uid()
     OR (NOT es_grupal AND destinatario_id = auth.uid())
     OR (es_grupal AND medico_id = get_medico_id()));
 CREATE POLICY "mensajes_insertar" ON public.mensajes_internos
-  FOR INSERT WITH CHECK (remitente_id = auth.uid() AND medico_id = get_medico_id());
+  FOR INSERT TO authenticated WITH CHECK (remitente_id = auth.uid() AND medico_id = get_medico_id());
 CREATE POLICY "mensajes_marcar_leido" ON public.mensajes_internos
-  FOR UPDATE USING (NOT es_grupal AND destinatario_id = auth.uid())
+  FOR UPDATE TO authenticated USING (NOT es_grupal AND destinatario_id = auth.uid())
   WITH CHECK (NOT es_grupal AND destinatario_id = auth.uid());
 CREATE POLICY "mensajes_borrar" ON public.mensajes_internos
-  FOR DELETE USING (remitente_id = auth.uid() OR medico_id = auth.uid());
+  FOR DELETE TO authenticated USING (remitente_id = auth.uid() OR medico_id = auth.uid());
 
 -- ── mensajes_lecturas ───────────────────────────────────────────────────────
 CREATE POLICY "lecturas_select_own" ON public.mensajes_lecturas
-  FOR SELECT USING (user_id = auth.uid());
+  FOR SELECT TO authenticated USING (user_id = auth.uid());
 CREATE POLICY "lecturas_insert_own" ON public.mensajes_lecturas
-  FOR INSERT WITH CHECK (user_id = auth.uid());
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
 -- │ STORAGE — buckets privados `estudios` (mig. 026) y `documentos` (mig. 027) │

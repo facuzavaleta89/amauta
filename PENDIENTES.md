@@ -390,21 +390,27 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - ⚠ **Este ítem quedó marcado como pendiente más tiempo del que correspondía** (se arregló en la
     `ba5188d` y siguió figurando abierto hasta el pase de docs del Grupo 4).
 
-- **⚠ PENDIENTE NUEVO (2026-08-11) — las 4 políticas de `turnos` siguen en `{public}`; falta
-  normalizarlas a `TO authenticated`. Severidad BAJA, defensa en profundidad.** Lo destapó la 039.
-  - **El estado:** `turnos_select` nació en la 005 y se rehízo en la 015 **sin cláusula `TO`**, y en
-    Postgres eso equivale a **`TO PUBLIC`**: la política se evalúa para todos los roles, `anon`
-    incluido. La **029** normalizó otras tablas y la **037** normalizó las **4** de
-    `bloqueos_agenda`, pero **`turnos` quedó afuera de las dos**.
-  - ⚠ **La 039 lo dejó así A PROPÓSITO, no por descuido:** usó `ALTER POLICY`, y `ALTER POLICY` sin
-    `TO` **preserva el rol tal como esté**. Se eligió no mezclar dos cambios en una migración cuyo
-    objetivo era el `USING`. Está documentado en el encabezado de la propia migración.
-  - **No es explotable hoy:** las políticas cuelgan de `get_medico_id()`, que para `anon` no resuelve.
-  - **Salida:** una migración de **normalización de RLS** que las lleve a `TO authenticated`. ⚠ Conviene
-    hacerla **de una sola vez y barriendo el proyecto entero** (no solo `turnos`): son 4 políticas acá,
-    y vale auditar de paso qué otras tablas quedaron sin `TO`. Requiere **DROP + CREATE** de cada una
-    —`ALTER POLICY` no cambia el rol—, así que hay que re-emitir cada expresión **textualmente**, como
-    hizo la 037. Ver Bloque B → *"Aislamiento por tenant a nivel base de datos"*.
+- **✅ RESUELTO (migración 042, 2026-08-18) — políticas RLS sin cláusula `TO`, o sea evaluadas para
+  `{public}`.** Lo destapó la 039 mirando `turnos`, y al barrer el proyecto **el alcance real
+  resultó mucho mayor**.
+  - ⚠ **NO eran 4 políticas: eran 49, repartidas en 18 tablas.** Este ítem se abrió como *"las 4 de
+    `turnos`"* porque ese fue el hallazgo puntual, pero la auditoría previa a la migración encontró
+    que la 029 y la 037 habían normalizado **solo lo que tocaban**, y que todo lo demás seguía como
+    había nacido. Queda anotado porque el número equivocado estuvo meses en este archivo.
+  - **El estado que había:** una política sin cláusula `TO` equivale en Postgres a **`TO PUBLIC`** —
+    se evalúa para todos los roles, `anon` incluido. **No era explotable**: las 49 colgaban de
+    `get_medico_id()` o de `auth.uid()`, que para `anon` no resuelven. Era **defensa en profundidad y
+    consistencia de esquema**, no un parche de urgencia.
+  - **Cómo se hizo:** con **`ALTER POLICY … TO authenticated`**, que cambia **solo el rol** y deja las
+    expresiones intactas. ⚠ Este ítem proponía **DROP + CREATE** re-emitiendo cada expresión a mano, y
+    **eso habría sido un error**: habría reintroducido el drift de `difusion_posts` (la 008 las define
+    como solo-médico y la base las tiene tenant-only, que es la decisión vigente — nota técnica 14) y
+    habría puesto en riesgo el `WITH CHECK` asimétrico de las 12 políticas de UPDATE, de las que
+    **diez no lo declaran** y **dos sí**. Con `ALTER POLICY` no hay texto que copiar mal.
+  - **Resultado verificado en la base:** las **65** políticas del esquema `public` quedaron en
+    `{authenticated}`, **cero** en `{public}`. Las 16 que ya lo tenían no se tocaron.
+  - Con esto se cierra el último seguimiento que habían dejado abiertos la 037 y la 039: las dos
+    tablas de la agenda son hoy idénticas en criterio de lectura **y en rol**.
 
 - **📌 NOTA DE DECISIÓN (2026-08-11), no es un pendiente que espere input — `historia_clinica` queda
   DORMIDA.** Se registra acá para que no se reabra como pregunta abierta en una futura tanda.
@@ -421,72 +427,62 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     tóxicos, actividad física/laboral, perímetro de cintura) **no tienen equivalente en `consultas`**,
     así que recuperarlos es traer de vuelta la funcionalidad, no mapear columnas.
 
-### Modelo de datos — reglas de unicidad (DECIDIDO, sin aplicar)
+### Modelo de datos — reglas de unicidad (✅ CERRADA, 2026-08-19/20)
 
-> Tanda de **migración**, no de código. Son **decisiones de modelo ya tomadas** (2026-08-05) que hoy
-> **no están reflejadas en la base**. ⚠ **Ninguna se aplica sin auditar antes los datos existentes**
-> (ver "Requisitos comunes" al final) y **las reglas conviene confirmarlas con el médico como
-> co-decisor** — las de acá son las **decisiones de partida**, no un hecho consumado.
+> Tanda de **migración** cerrada: de las tres reglas decididas el 2026-08-05, **dos se aplicaron**
+> (migraciones **043** y **044**, con su auditoría previa de duplicados) y **una se DESCARTÓ** por
+> incorrecta. El porqué de los alcances —y de por qué el UNIQUE de matrícula no se hace— vive en
+> `CLAUDE.md` → **nota técnica 27**, que es la referencia única; acá solo queda el registro de qué
+> se hizo.
 
-- **⚠ DECIDIDO (2026-08-05) — el DNI de paciente debe ser único POR MÉDICO, no global.**
-  - **Estado actual verificado:** `pacientes.dni` es **`TEXT NOT NULL UNIQUE`** (`schema.sql:162`),
-    o sea **único en toda la base**. Consecuencia: **dos médicos distintos NO pueden tener al mismo
-    paciente** — el segundo choca contra la constraint del primero, aunque sean consultorios sin
-    ninguna relación. Rompe el aislamiento por tenant a nivel de modelo.
-  - **Decisión:** pasar a **único por médico**. ⚠ **La columna de tenant de `pacientes` es
-    `creado_por`, NO `medico_id`** (verificado en `schema.sql:172`; es la excepción del proyecto —
-    el resto de las tablas usa `medico_id`, ver `CLAUDE.md` → Modelo de datos). O sea:
-    **`UNIQUE (creado_por, dni)`**. Así el mismo paciente puede existir en la base de dos médicos
-    como **dos relaciones independientes**.
-  - ⚠ **Es un CAMBIO de constraint, no un agregado.** Hay que **dropear la UNIQUE global existente**
-    y **crear la compuesta**, en la misma migración. Es más delicado que agregar una: entre el drop y
-    el create la tabla queda sin protección, y si el create falla por duplicados **se queda sin
-    ninguna de las dos**. Envolver en transacción y **auditar duplicados antes** (ver requisitos).
-  - ⚠ **AUDITAR LA APP ANTES DE APLICAR — este cambio puede romper supuestos vigentes.** Puede haber
-    lógica que hoy asuma que **un DNI identifica a un único paciente globalmente**: búsquedas por DNI,
-    deduplicación al dar de alta, resolución de paciente en formularios, etc. Al pasar a
-    por-médico, una búsqueda por DNI **puede devolver más de una fila** a nivel base (aunque la RLS
-    filtre por tenant). **Hay que revisarlo caso por caso**, no asumir que la RLS lo cubre todo.
-  - **Casos borde a decidir en la tanda:**
-    - **Pacientes sin DNI:** hoy la columna es `NOT NULL`, así que no aplica. Si alguna vez se
-      permitiera `NULL` (p. ej. recién nacidos, indocumentados), recordar que en Postgres **una
-      UNIQUE permite múltiples `NULL`** — habría que decidir si eso es aceptable o hace falta un
-      índice parcial.
-    - **Archivado:** ¿un paciente **archivado** (`archivado_at IS NOT NULL`, regla de negocio 9)
-      sigue ocupando su DNI dentro del tenant? Si se decide que no, la constraint tendría que ser un
-      **índice único parcial** `WHERE archivado_at IS NULL` — pero ⚠ eso permitiría **duplicar el DNI
-      archivando y recreando**, lo que choca con la conservación de la HC. **Decisión de producto,
-      no técnica.**
+- **✅ RESUELTO (migración 043, 2026-08-19) — el DNI de paciente ahora es único POR MÉDICO.**
+  Se dropeó `pacientes_dni_key UNIQUE (dni)` y se creó **`pacientes_creado_por_dni_key
+  UNIQUE (creado_por, dni)`**, las dos en la misma transacción (entre el DROP y el CREATE la tabla
+  queda sin protección de unicidad, y la transacción cierra esa ventana).
+  - **La auditoría previa dio limpio:** 0 duplicados de `(creado_por, dni)` sobre 11 pacientes en 7
+    tenants, 0 filas sin DNI. La constraint entró sin fallar.
+  - ⚠ **`idx_pacientes_dni` se CONSERVÓ.** Hasta la 043 era redundante con el índice de la constraint
+    vieja; desde la 043 es el **único** índice sobre `dni` solo, porque el de la constraint nueva es
+    `(creado_por, dni)` y `dni` no es su prefijo izquierdo.
+  - **La auditoría de la app no encontró nada que ajustar:** no existe una sola query con
+    `.eq('dni', …)` en el repo, ningún `.single()` cuelga de una búsqueda por DNI, y las dos
+    validaciones de duplicado (`POST /api/pacientes` y `PATCH /api/pacientes/[id]`) no consultan la
+    base: reaccionan al **23505**, así que el cambio de constraint las volvió **más correctas** — el
+    mensaje *"Ya existe un paciente registrado con este DNI"* antes le mentía al segundo médico.
+  - **Los dos casos borde que este ítem dejaba abiertos siguen igual y no requieren decisión:** la
+    columna sigue `NOT NULL` (no hay pacientes sin DNI), y un paciente **archivado sigue ocupando su
+    DNI** dentro del tenant — `archivado_at` no participa de la constraint, que es lo que evita
+    duplicar un DNI archivando y recreando.
 
-- **⚠ DECIDIDO (2026-08-05) — los profesionales no pueden compartir matrícula ni DNI.**
-  - **Estado actual verificado:** `profiles` **no tiene NINGUNA constraint UNIQUE** más allá de la PK
-    (`schema.sql:112-147`). Ni matrícula ni DNI.
-  - **(a) UNIQUE de matrícula, por `tipo` + `numero`.** Dos profesionales no pueden compartir la
-    misma matrícula (MP/MN/ME + número).
-    ⚠ **Complejidad técnica real: las matrículas viven en una columna JSONB**
-    (`profiles.matriculas`, `[{tipo, numero}]`, migración 030), **no en columnas planas**, y además
-    son **varias por profesional** (hasta 5, validado en `perfil/actions.ts`). Un `ADD CONSTRAINT
-    UNIQUE` **no aplica**: haría falta un **índice de expresión** sobre elementos del JSONB —que en
-    Postgres **no puede garantizar unicidad entre elementos de arrays de filas distintas** con un
-    índice B-tree común— o bien **repensar la estructura** (tabla `matriculas` normalizada con FK a
-    `profiles`, que sería lo canónico). **Evaluar las dos opciones en la tanda; no asumir que es un
-    one-liner.**
-    > Nota: existe además la columna **`matricula` (TEXT) deprecada** (nota técnica 3). Decidir si se
-    > la borra en la misma migración o si queda para después — pero **no** ponerle la UNIQUE a ella.
-  - **(b) UNIQUE de DNI de profesional.** Dos perfiles profesionales no pueden compartir DNI (es lo
-    que identifica a la persona).
-    ⚠ **PRECONDICIÓN QUE CAMBIA EL TAMAÑO DE ESTO: la columna NO EXISTE.** Verificado — `profiles`
-    **no tiene `dni`** en el `CREATE TABLE`, **ninguna migración se lo agrega**, el tipo TS `Profile`
-    no lo declara y **la app nunca lo captura** (ni el form de perfil ni el de registro lo piden).
-    Así que no es "agregar una UNIQUE": es, en orden,
-    1. **crear la columna** (`ALTER TABLE profiles ADD COLUMN dni TEXT`),
-    2. decidir **nullabilidad** — los perfiles ya existentes no lo tienen, así que o entra `NULL` o
-       hay que backfillear; ⚠ con `NULL` la UNIQUE **no protege nada hasta que se cargue**, porque
-       Postgres permite múltiples `NULL`,
-    3. **capturarlo en la UI** (perfil y/o registro) y validarlo,
-    4. **recién ahí** la UNIQUE tiene efecto.
-    **Es una funcionalidad nueva, no una constraint.** Conviene decidir si entra en esta tanda o sale
-    a una propia.
+- **❌ DESCARTADO (2026-08-20) — (a) UNIQUE de matrícula profesional. No se hace, y no es deuda.**
+  La regla decidida el 2026-08-05 (*"dos profesionales no pueden compartir matrícula"*) **es
+  incorrecta como constraint**, no cara: en Argentina **los números de matrícula se repiten entre
+  jurisdicciones**, así que un UNIQUE sobre el número rechazaría altas perfectamente válidas.
+  Cualquier unicidad de matrícula tendría que ser **compuesta** (tipo + número + jurisdicción), y la
+  jurisdicción hoy **ni se guarda**. El razonamiento completo —y por qué esto **no** es un one-liner
+  pendiente— vive en **`CLAUDE.md` → nota técnica 27**; no se duplica acá.
+  > La complejidad técnica que este ítem ya anotaba (las matrículas viven en un **JSONB**
+  > `[{tipo, numero}]`, hasta 5 por profesional, y un `ADD CONSTRAINT UNIQUE` no aplica) **sigue
+  > siendo cierta** — pero es la razón secundaria. La principal es que la regla en sí estaba mal.
+  > La columna **`matricula` (TEXT) deprecada** (nota técnica 3) queda como estaba: no se le pone
+  > UNIQUE y su baja sigue sin agendarse.
+
+- **✅ RESUELTO (migración 044 + captura en la UI, 2026-08-20) — (b) UNIQUE de DNI de profesional.**
+  Este ítem advertía que **no era "agregar una UNIQUE"** sino cuatro pasos, porque la columna no
+  existía. Se hicieron los cuatro:
+  1. **Columna:** `profiles.dni TEXT` **NULLABLE** (los 23 perfiles existentes —10 médicos, 13
+     asistentes— no tenían el dato; `NOT NULL` habría hecho fallar el ALTER).
+  2. **Constraint:** `profiles_dni_key UNIQUE (dni)`, de alcance **GLOBAL** — deliberadamente lo
+     opuesto a la 043. El porqué, en **`CLAUDE.md` → nota técnica 27**.
+  3. **Captura en la UI:** input en el tab *Datos* de `/perfil`, **visible para los dos roles** y
+     **fuera** del bloque gateado por `isMedico` donde viven matrículas y título. **No** se pide en
+     el registro, para no meter fricción en el alta. Vacío se guarda **`NULL`**, nunca `''`.
+  4. **Validación** en `actualizarPerfil` (7-8 dígitos, solo números, mensaje distinto por tipo de
+     falla) **+ intercepto del 23505** con mensaje propio.
+  - ⚠ **Sobre la advertencia de que "con NULL la UNIQUE no protege nada hasta que se cargue":** es
+    cierta y **es el comportamiento buscado**. El DNI del profesional es **opcional a nivel
+    producto** (la ley no lo exige; ver nota técnica 27), así que la constraint no está para forzar
+    la carga sino para impedir que **dos cuentas** declaren el mismo documento.
 
 - **✅ REGLA TRANSVERSAL YA RESUELTA POR DISEÑO — un paciente y un profesional PUEDEN compartir DNI.**
   Un asistente (o el propio médico) puede ser **también paciente** del consultorio, y eso debe seguir
@@ -504,20 +500,12 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   —RLS, `get_medico_id()`, `check_permiso()`, navegación y todos los guards— no se justifica por un
   caso que el consultorio no tiene.
 
-- **Requisitos comunes de la tanda (aplican a TODAS las constraints de arriba):**
-  1. ⚠ **Auditar duplicados en la base REAL antes de aplicar nada.** Si ya existe un DNI de paciente
-     repetido entre médicos, dos matrículas iguales o —cuando exista la columna— dos DNI de
-     profesional repetidos, **la migración falla al crear la constraint**. La auditoría es de **solo
-     lectura** y va **primero**; según lo que aparezca, puede hacer falta un paso de limpieza de
-     datos **acordado con el médico**, no resuelto por criterio técnico.
-  2. **Seguir el flujo de migraciones del proyecto:** migración **versionada** en
-     `supabase/migrations/` + **archivo suelto `MIGRACION-NN-descripcion.sql`** en la raíz,
-     **ejecución manual en el SQL Editor** por el dueño del proyecto, y **verificación contra la base
-     real** — no contra `schema.sql`, que es un snapshot y ya tuvo drift (migración `029`).
-  3. **Actualizar `schema.sql`** al terminar, y revisar si algún tipo de `src/types/` queda
-     desalineado (sección "Desajustes tipo TypeScript ↔ esquema DB").
-  4. **Confirmar las reglas con el médico** como co-decisor antes de aplicar: definen qué se puede
-     cargar y qué no en el sistema real.
+- **✅ Requisitos comunes de la tanda — cumplidos.** Auditoría de duplicados **de solo lectura y
+  previa** en las dos migraciones (la 043 dio 0 duplicados de `(creado_por, dni)`; la 044 no
+  necesitaba una, la columna nacía vacía); flujo de migraciones del proyecto respetado —versionada en
+  `supabase/migrations/` + suelta `MIGRACION-NN-…` en la raíz, **ejecución manual** en el SQL Editor y
+  **verificación contra la base real**, no contra `schema.sql`—; y `schema.sql` + `src/types/roles.ts`
+  actualizados al cierre. Ninguna de las dos necesitó limpieza de datos.
 
 ### Bugs menores detectados
 - **✅ RESUELTO (migración 034, 2026-08-07) — un asistente DESVINCULADO no podía volver a solicitar
@@ -1686,8 +1674,9 @@ Información Pública**). Hallazgos:
     039 pide el **mismo `USING` que `bloqueos_select`**: `ver_turnos` OR `gestionar_turnos`. Las dos
     tablas de la agenda quedaron con el mismo criterio de lectura. Detalle en **Bloque A → "Agenda y
     RLS"**.
-    ⚠ **Lo único que sigue abierto de esa familia es el ROL:** las 4 políticas de `turnos` siguen en
-    `{public}` y falta normalizarlas a `TO authenticated` (ver el ítem propio más arriba).
+    ✅ **Y el ROL también quedó cerrado (migración 042, 2026-08-18):** las 4 políticas de `turnos`
+    pasaron a `TO authenticated`, dentro de la normalización de las **49** que no declaraban `TO` en
+    **18 tablas**. Detalle en **Bloque A → "Agenda y RLS"**.
 - **`consultas_delete` se endureció (migración 038, 2026-08-08) — nota de seguridad.** La política
   ahora exige, además del tenant, que la fila esté en **`estado = 'borrador'`**. Es **defensa en
   profundidad de la regla de negocio 1 y de la Ley 26.529**: una consulta **finalizada** pasó a ser
