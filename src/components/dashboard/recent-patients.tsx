@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Users, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { formatFechaAR } from '@/lib/utils/format-date'
-import { resolverObraSocial } from '@/lib/pacientes/obra-social'
+import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL } from '@/lib/pacientes/obra-social'
 
 /**
  * Proyección PROPIA de este componente. No pasa por `GET /api/pacientes`, así que NO es
@@ -64,7 +64,7 @@ export async function RecentPatients() {
         ) : (
           <div className="space-y-1">
             {pacientes.map((p) => {
-              const obraSocial = resolverObraSocial(p) ?? '—'
+              const obraSocial = resolverObraSocial(p) ?? SIN_OBRA_SOCIAL_LABEL
               return (
                 <Link
                   key={p.id}

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award, Archive, FolderOpen } from 'lucide-react'
 import Link from 'next/link'
-import { resolverObraSocial } from '@/lib/pacientes/obra-social'
+import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL } from '@/lib/pacientes/obra-social'
 import { differenceInYears, format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { formatFecha } from '@/lib/utils/format-date'
@@ -237,7 +237,7 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
           <CardContent className="flex flex-wrap gap-6">
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">Obra Social</p>
-              <p className="text-sm font-medium">{obraSocialNombre ?? '—'}</p>
+              <p className="text-sm font-medium">{obraSocialNombre ?? SIN_OBRA_SOCIAL_LABEL}</p>
             </div>
             {paciente.numero_afiliado && (
               <div className="space-y-1">

@@ -108,14 +108,3 @@ export interface ConsultaUpdate extends Partial<Omit<ConsultaInsert, 'paciente_i
   id: string
 }
 
-/** Consulta con datos de paciente y médico (para PDF y listados enriquecidos) */
-export interface ConsultaConRelaciones extends Consulta {
-  paciente?: {
-    nombre_completo: string
-    dni: string
-    fecha_nacimiento: string
-    obras_sociales?: { nombre: string } | null
-    obra_social_otro?: string | null
-    numero_afiliado?: string | null
-  }
-}

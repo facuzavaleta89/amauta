@@ -6,7 +6,7 @@ import { cargarMedicoFirmante } from '@/lib/pdf/documentos'
 import React from 'react'
 import type { DocumentProps } from '@react-pdf/renderer'
 import { sanitizePdfFilename } from '@/lib/utils'
-import { resolverObraSocial, type ConObraSocial } from '@/lib/pacientes/obra-social'
+import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL, type ConObraSocial } from '@/lib/pacientes/obra-social'
 import { resolverAcceso } from '@/lib/auth/tenant'
 
 interface RouteParams {
@@ -58,7 +58,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       fecha_nacimiento: paciente.fecha_nacimiento,
       // ⚠ La aserción reemplaza al cast previo: sin tipos generados de `Database`,
       // supabase-js infiere el embebido como ARRAY y PostgREST devuelve un OBJETO.
-      obra_social_nombre: resolverObraSocial(paciente as unknown as ConObraSocial),
+      // El fallback hace que la fila "Obra Social" del PDF deje de OMITIRSE para los
+      // pacientes particulares: el template la pinta con una guarda
+      // `{paciente.obra_social_nombre && …}`, así que con `null` desaparecía entera.
+      // ⚠ Esto NO es un snapshot: el PDF de consulta/HC se genera AL VUELO en cada
+      // descarga, leyendo al paciente en vivo. No hay nada congelado que corregir.
+      obra_social_nombre: resolverObraSocial(paciente as unknown as ConObraSocial) ?? SIN_OBRA_SOCIAL_LABEL,
       numero_afiliado: paciente.numero_afiliado ?? null,
     }
     // Médico firmante: helper compartido (admin client; ya autorizamos el acceso arriba)
