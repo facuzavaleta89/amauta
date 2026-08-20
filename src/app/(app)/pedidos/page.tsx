@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { PlusCircle, ClipboardList, FileText, Calendar, Search, X, Ban } from 'lucide-react'
 import Link from 'next/link'
 import { formatFecha } from '@/lib/utils/format-date'
+import { sanitizarTextoBusqueda } from '@/lib/validations/shared'
 
 export const metadata = {
   title: 'Pedidos de Estudios — Amauta',
@@ -21,6 +22,10 @@ export default async function PedidosPage({ searchParams }: Props) {
 
   const params = await searchParams
   const q = params?.q?.trim() ?? ''
+  // ⚠ DOS variables a propósito: `q` (crudo) es lo que ve el usuario —el `defaultValue`
+  // del input y el texto "N resultados para …"— y `qSanitizado` es SOLO el patrón del
+  // `ilike`. Mostrar el escapado le devolvería `50\%` cuando escribió `50%`.
+  const qSanitizado = sanitizarTextoBusqueda(q)
 
   const supabase = await createClient()
 
@@ -33,9 +38,9 @@ export default async function PedidosPage({ searchParams }: Props) {
     .order('fecha_pedido', { ascending: false })
     .limit(50)
 
-  if (q) {
+  if (qSanitizado) {
     // Busca por nombre o DNI
-    query = query.or(`paciente_nombre.ilike.%${q}%,paciente_dni.ilike.%${q}%`)
+    query = query.or(`paciente_nombre.ilike.%${qSanitizado}%,paciente_dni.ilike.%${qSanitizado}%`)
   }
 
   const { data: pedidos } = await query
