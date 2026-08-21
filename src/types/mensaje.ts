@@ -51,6 +51,18 @@ export interface MensajeInterno {
   /** Referencia al mensaje original si es una respuesta */
   parent_id: string | null
   created_at: string
+  /**
+   * Fecha del último mensaje del HILO — columna real (migración 047), no calculada.
+   *
+   * ⚠ Solo es significativa en los mensajes RAÍZ (`parent_id === null`), que son los
+   * que lista la bandeja: en una respuesta vale su propio `created_at` y no se lee.
+   * La mantiene el trigger `mensajes_actividad_trigger`, que la sube al insertar una
+   * respuesta. **No se recalcula al borrar**, a propósito (ver la migración).
+   *
+   * Es la columna por la que la bandeja ORDENA y el valor que alimenta el CURSOR de la
+   * paginación por keyset (`obtenerBandeja`).
+   */
+  ultima_actividad_at: string
   // Joins opcionales
   remitente?: { full_name: string; role: UserRole } | null
   destinatario?: { full_name: string; role: UserRole } | null

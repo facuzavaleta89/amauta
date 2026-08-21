@@ -32,7 +32,9 @@ export default async function MensajesPage() {
     redirect('/sin-acceso')
   }
 
-  const { threads, currentUserId } = await obtenerBandeja()
+  // Primera página. `obtenerBandeja` tiene los dos parámetros OPCIONALES justamente
+  // para que esta llamada siga siendo la de siempre: el tamaño sale de BANDEJA_PAGINA.
+  const { threads, currentUserId, hayMas } = await obtenerBandeja()
 
   const { data: usuarios } = await obtenerUsuariosTenant()
 
@@ -45,6 +47,7 @@ export default async function MensajesPage() {
       <Bandeja
         threads={threads}
         currentUserId={currentUserId}
+        hayMasInicial={hayMas}
         usuarios={usuarios ?? []}
       />
     </div>
