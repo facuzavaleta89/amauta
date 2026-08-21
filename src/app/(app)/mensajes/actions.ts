@@ -1,9 +1,34 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import { tenantDeProfile } from '@/lib/auth/tenant'
+import { resolverAcceso, tenantDeProfile } from '@/lib/auth/tenant'
+import { uuidSchema } from '@/lib/validations/shared'
 import type { MensajeInterno, RespuestaEstadoLectura } from '@/types/mensaje'
 import { revalidatePath } from 'next/cache'
+
+/**
+ * Respuesta ÚNICA para "el mensaje no existe" y para "existe pero no podés verlo".
+ *
+ * ⚠ Deliberadamente indistinguibles: estas actions reciben un id ARBITRARIO del
+ * cliente, así que dos mensajes distintos dejarían deducir por prueba y error qué ids
+ * existen en la instalación. Un id inválido (no-UUID) devuelve lo mismo, por el mismo
+ * motivo.
+ */
+const NO_ENCONTRADO = 'Mensaje no encontrado'
+
+/**
+ * Traduce el `motivo` de `resolverAcceso` a los textos que esta pantalla ya usaba,
+ * para que las tres actions respondan igual ante la misma causa.
+ *
+ * ⚠ El orden de los chequeos de `resolverAcceso` es parte de su contrato (perfil →
+ * permiso → tenant, ver CLAUDE.md → nota 24): un `'sin-tenant'` garantiza que el
+ * permiso YA pasó.
+ */
+function mensajeDeAcceso(motivo: 'sin-perfil' | 'sin-permiso' | 'sin-tenant'): string {
+  return motivo === 'sin-permiso' ? 'Sin acceso a mensajería'
+       : motivo === 'sin-tenant'  ? 'Sin médico vinculado'
+       : 'Perfil no encontrado'
+}
 
 /**
  * Obtiene todos los mensajes raíz (sin parent_id) del usuario actual.
@@ -43,9 +68,16 @@ export async function obtenerBandeja(): Promise<{
   if (!medicoId) return { threads: [], currentUserId: user.id, error: 'Sin médico vinculado' }
 
   // Paso 1: mensajes raíz sin join a profiles
+  //
+  // El `.eq('medico_id', …)` es defensa en profundidad: la RLS `mensajes_ver` ya
+  // filtra, pero pide MENOS que esta pantalla — sus dos primeras ramas
+  // (`remitente_id = auth.uid()`, `destinatario_id = auth.uid()`) NO miran el tenant,
+  // así que un individual sobrevive a un cambio de médico. Hasta acá el `medicoId` se
+  // calculaba, se validaba y NO se usaba: el aislamiento quedaba entero en la RLS.
   const { data: msgs, error } = await supabase
     .from('mensajes_internos')
     .select('*, lecturas:mensajes_lecturas(user_id, leido_at)')
+    .eq('medico_id', medicoId)
     .is('parent_id', null)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -88,6 +120,7 @@ export async function obtenerBandeja(): Promise<{
   const { data: respuestas, error: respError } = await supabase
     .from('mensajes_internos')
     .select('parent_id, es_grupal, remitente_id, leido, lecturas:mensajes_lecturas(user_id)')
+    .eq('medico_id', medicoId)      // defensa en profundidad, igual que el paso 1
     .in('parent_id', idsRaiz)
     .neq('remitente_id', user.id)   // las mías nunca son "no leídas" para mí
     .overrideTypes<RespuestaEstadoLectura[], { merge: false }>()
@@ -130,6 +163,15 @@ export async function obtenerBandeja(): Promise<{
 
 /**
  * Obtiene el hilo completo: mensaje raíz + todas sus respuestas cronológicas.
+ *
+ * ⚠ Recibe un id ARBITRARIO del cliente (llega del `?hilo=` de la URL), así que es una
+ * SUPERFICIE DE ACCESO por id y no puede confiar solo en la RLS: `mensajes_ver` no
+ * exige `acceso_mensajeria` y sus ramas de mensajes individuales no miran el tenant.
+ * Las guardas de app son las que hacen cumplir las reglas de producto.
+ *
+ * ⚠ Si el id es de una RESPUESTA, se NORMALIZA a su raíz en vez de rechazarlo —
+ * mismo criterio `parent_id ?? id` con el que `obtenerMensajesNoLeidos` arma el
+ * `thread_id` de los enlaces de la campanita.
  */
 export async function obtenerHilo(parentId: string): Promise<{
   mensajes: MensajeInterno[]
@@ -139,19 +181,52 @@ export async function obtenerHilo(parentId: string): Promise<{
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { mensajes: [], error: 'No autenticado' }
 
-  // Paso 1: traer raíz y respuestas sin joins a profiles
-  const { data: raiz, error: raizError } = await supabase
+  // El id viene del cliente: se valida con el schema que ya usan los Route Handlers
+  // del repo, no con uno nuevo. Un id mal formado responde NO_ENCONTRADO —igual que
+  // uno ajeno— para no distinguir "inválido" de "no tuyo".
+  if (!uuidSchema.safeParse(parentId).success) {
+    return { mensajes: [], error: NO_ENCONTRADO }
+  }
+
+  const acceso = await resolverAcceso(supabase, user.id, 'acceso_mensajeria')
+  if (!acceso.ok) return { mensajes: [], error: mensajeDeAcceso(acceso.motivo) }
+  const medicoId = acceso.tenantMedicoId
+
+  // Paso 1: el mensaje pedido, ACOTADO AL TENANT.
+  // `maybeSingle` y no `single`: "no hay fila" es un caso esperado (id ajeno, id
+  // inexistente, RLS que filtra) y no un error que haya que distinguir.
+  const { data: pedido } = await supabase
     .from('mensajes_internos')
     .select('*, lecturas:mensajes_lecturas(user_id, leido_at)')
     .eq('id', parentId)
-    .single()
+    .eq('medico_id', medicoId)
+    .maybeSingle()
 
-  if (raizError || !raiz) return { mensajes: [], error: 'Mensaje no encontrado' }
+  if (!pedido) return { mensajes: [], error: NO_ENCONTRADO }
+
+  // Normalización a la raíz: si nos pasaron una respuesta, el hilo es el de su padre.
+  // Sin esto la action devolvía esa respuesta COMO SI fuera raíz, con cero hijos.
+  let raiz = pedido
+  if (pedido.parent_id) {
+    const { data: verdadera } = await supabase
+      .from('mensajes_internos')
+      .select('*, lecturas:mensajes_lecturas(user_id, leido_at)')
+      .eq('id', pedido.parent_id)
+      .eq('medico_id', medicoId)
+      .maybeSingle()
+
+    // ⚠ La raíz puede faltar legítimamente: `parent_id` es `ON DELETE SET NULL`, pero
+    // una respuesta cuyo padre se borró queda con `parent_id` NULL, así que llegar acá
+    // con un padre inhallable significa que no lo puedo ver. Se devuelve la respuesta
+    // sola —es un mensaje que SÍ tengo permitido leer— en vez de negar el acceso.
+    if (verdadera) raiz = verdadera
+  }
 
   const { data: respuestas, error: respError } = await supabase
     .from('mensajes_internos')
     .select('*, lecturas:mensajes_lecturas(user_id, leido_at)')
-    .eq('parent_id', parentId)
+    .eq('parent_id', raiz.id)
+    .eq('medico_id', medicoId)
     .order('created_at', { ascending: true })
 
   if (respError) return { mensajes: [], error: respError.message }
@@ -186,31 +261,70 @@ export async function obtenerHilo(parentId: string): Promise<{
 /**
  * Elimina un mensaje por su ID.
  * Si es el mensaje raíz, elimina también todas sus respuestas.
+ *
+ * ⚠ EXCLUSIVO DEL MÉDICO TITULAR. La UI ya mostraba el botón solo a él, pero eso es
+ * UX: esta action es invocable por cualquier cliente autenticado, y la RLS
+ * `mensajes_borrar` (`remitente_id = auth.uid() OR medico_id = auth.uid()`) dejaba
+ * pasar a un asistente borrando SUS PROPIOS mensajes, incluso sin `acceso_mensajeria`.
  */
 export async function eliminarMensaje(id: string): Promise<{ error?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'No autenticado' }
 
-  // 1. Borrar todas las respuestas de este mensaje si es raíz
+  if (!uuidSchema.safeParse(id).success) return { error: NO_ENCONTRADO }
+
+  const acceso = await resolverAcceso(supabase, user.id, 'acceso_mensajeria')
+  if (!acceso.ok) return { error: mensajeDeAcceso(acceso.motivo) }
+
+  if (acceso.role !== 'medico') {
+    return { error: 'Solo el médico puede eliminar mensajes' }
+  }
+  const medicoId = acceso.tenantMedicoId
+
+  // ⚠ EL ORDEN NO SE PUEDE INVERTIR, y no es una preferencia: `parent_id` declara
+  // `ON DELETE SET NULL`. Si se borrara la raíz primero, Postgres pondría en NULL el
+  // `parent_id` de todas sus respuestas ANTES de que el segundo DELETE corriera, y el
+  // `.eq('parent_id', id)` no matchearía ninguna: las respuestas quedarían huérfanas
+  // y —peor— visibles en la bandeja como hilos nuevos, porque la bandeja lista
+  // exactamente las filas con `parent_id IS NULL`.
+  //
+  // Tampoco se antepone un SELECT de verificación: `mensajes_ver` y `mensajes_borrar`
+  // son políticas DISTINTAS, y la primera es más estrecha (el médico no ve un
+  // individual entre dos asistentes, pero sí puede borrarlo). Un pre-chequeo por
+  // SELECT le sacaría ese alcance sin que nadie lo haya pedido.
+
+  // 1. Respuestas del hilo (0 filas si `id` es una respuesta suelta: no es un error).
   const { error: errorRespuestas } = await supabase
     .from('mensajes_internos')
     .delete()
     .eq('parent_id', id)
+    .eq('medico_id', medicoId)
 
   if (errorRespuestas) return { error: errorRespuestas.message }
 
-  // 2. Borrar el mensaje principal
-  const { error } = await supabase
+  // 2. El mensaje en sí, con GUARDA DE "0 FILAS" (la lección de la migración 033).
+  // La RLS filtra EN SILENCIO: sin el `.select()` y este chequeo, un borrado que la
+  // base rechaza devolvía `{}` —o sea, éxito— y la UI mostraba "Mensaje eliminado".
+  const { data: borrados, error } = await supabase
     .from('mensajes_internos')
     .delete()
     .eq('id', id)
+    .eq('medico_id', medicoId)
+    .select('id')
 
   if (error) return { error: error.message }
+
+  if (!borrados || borrados.length === 0) return { error: NO_ENCONTRADO }
 
   // Revalidar las páginas
   revalidatePath('/mensajes')
   revalidatePath('/notificaciones')
+  // ⚠ El contador de los dos badges se calcula en `(app)/layout.tsx`, y los grupos de
+  // rutas NO agregan segmento a la URL: ese layout solo se alcanza invalidando por la
+  // raíz. Sin esto, borrar un mensaje no leído dejaba el badge alto hasta el próximo
+  // refresh completo. Mismo criterio que `marcarMensajeLeido`.
+  revalidatePath('/', 'layout')
 
   return {}
 }

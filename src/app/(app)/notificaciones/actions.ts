@@ -1,7 +1,8 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import { resolverTenant, tenantDeProfile } from '@/lib/auth/tenant'
+import { resolverAcceso, tenantDeProfile } from '@/lib/auth/tenant'
+import { uuidSchema } from '@/lib/validations/shared'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { obtenerSolicitudesPendientes } from '@/app/onboarding/actions'
@@ -30,9 +31,39 @@ export async function enviarMensaje(formData: {
   const parsed = mensajeSchema.safeParse(formData)
   if (!parsed.success) return { error: parsed.error.issues[0].message }
 
-  // Obtener medico_id del remitente
-  const medicoId = await resolverTenant(supabase, user.id)
-  if (!medicoId) return { error: 'Sin médico vinculado' }
+  // ⚠ El permiso se le exigía al DESTINATARIO (más abajo) pero no al REMITENTE: un
+  // asistente sin `acceso_mensajeria` podía enviar. `resolverAcceso` cubre las dos
+  // cosas —permiso y tenant— en la misma query que antes hacía `resolverTenant`.
+  const acceso = await resolverAcceso(supabase, user.id, 'acceso_mensajeria')
+  if (!acceso.ok) {
+    return {
+      error: acceso.motivo === 'sin-permiso' ? 'Sin acceso a mensajería'
+           : acceso.motivo === 'sin-tenant'  ? 'Sin médico vinculado'
+           : 'Perfil no encontrado',
+    }
+  }
+  const medicoId = acceso.tenantMedicoId
+
+  // ⚠ `parent_id` se insertaba TAL CUAL, sin verificar nada. Era la vía para crear un
+  // hilo de TRES niveles: la base no lo impide (no hay constraint que prohíba un
+  // `parent_id` apuntando a un mensaje que ya tiene padre), pero la UI solo muestra
+  // dos —`obtenerHilo` trae la raíz y UN nivel de hijos—, así que un "nieto" quedaba
+  // invisible en pantalla y sin embargo `contarMensajesNoLeidos` lo contaba: un badge
+  // que no se puede bajar. Se exige que exista, sea del tenant y sea RAÍZ.
+  if (parsed.data.parent_id) {
+    const { data: padre } = await supabase
+      .from('mensajes_internos')
+      .select('id, parent_id')
+      .eq('id', parsed.data.parent_id)
+      .eq('medico_id', medicoId)
+      .maybeSingle()
+
+    // Un solo mensaje para las tres causas (no existe / otro tenant / no es raíz):
+    // el `parent_id` lo elige el cliente, así que distinguirlas dejaría sondear ids.
+    if (!padre || padre.parent_id !== null) {
+      return { error: 'El mensaje al que estás respondiendo no existe' }
+    }
+  }
 
   // Validar que el destinatario pertenezca al mismo tenant (si es individual)
   if (!parsed.data.es_grupal && parsed.data.destinatario_id) {
@@ -78,12 +109,32 @@ export async function marcarMensajeLeido(id: string) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'No autenticado' }
 
+  // ⚠ Mismas guardas que `obtenerHilo`: es la otra superficie de acceso POR ID del
+  // dominio. El id llega del cliente, y la RLS `mensajes_ver` no exige
+  // `acceso_mensajeria` ni aísla los individuales por tenant.
+  // Un id mal formado responde igual que uno ajeno: no se distingue "inválido" de
+  // "no tuyo" (misma regla de no filtrar existencia).
+  if (!uuidSchema.safeParse(id).success) return { error: 'Mensaje no encontrado' }
+
+  const acceso = await resolverAcceso(supabase, user.id, 'acceso_mensajeria')
+  if (!acceso.ok) {
+    return {
+      error: acceso.motivo === 'sin-permiso' ? 'Sin acceso a mensajería'
+           : acceso.motivo === 'sin-tenant'  ? 'Sin médico vinculado'
+           : 'Perfil no encontrado',
+    }
+  }
+  const medicoId = acceso.tenantMedicoId
+
   // Primero verificar si el mensaje es grupal o individual
+  // `maybeSingle` y no `single`: "no hay fila" es un caso esperado (id ajeno, de otro
+  // tenant, o inexistente), no un error que haya que distinguir.
   const { data: msg } = await supabase
     .from('mensajes_internos')
     .select('es_grupal')
     .eq('id', id)
-    .single()
+    .eq('medico_id', medicoId)
+    .maybeSingle()
 
   if (!msg) return { error: 'Mensaje no encontrado' }
 
@@ -114,6 +165,7 @@ export async function marcarMensajeLeido(id: string) {
       .from('mensajes_internos')
       .update({ leido: true, leido_at: new Date().toISOString() })
       .eq('id', id)
+      .eq('medico_id', medicoId)   // defensa en profundidad, igual que la lectura de arriba
       .eq('destinatario_id', user.id)
       .select('id')
       .overrideTypes<{ id: string }[], { merge: false }>()
@@ -144,8 +196,18 @@ export async function obtenerUsuariosTenant() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { data: [], error: 'No autenticado' }
 
-  const medicoId = await resolverTenant(supabase, user.id)
-  if (!medicoId) return { data: [], error: 'Sin médico vinculado' }
+  // Único consumidor: el selector de destinatarios de `(app)/mensajes/page.tsx`, o sea
+  // contexto de mensajería puro — por eso exigir el permiso acá no afecta a nadie más.
+  const acceso = await resolverAcceso(supabase, user.id, 'acceso_mensajeria')
+  if (!acceso.ok) {
+    return {
+      data: [],
+      error: acceso.motivo === 'sin-permiso' ? 'Sin acceso a mensajería'
+           : acceso.motivo === 'sin-tenant'  ? 'Sin médico vinculado'
+           : 'Perfil no encontrado',
+    }
+  }
+  const medicoId = acceso.tenantMedicoId
 
   // Traer: el médico + todos sus asistentes, excluyendo el usuario actual
   const { data: medico } = await supabase
@@ -176,13 +238,23 @@ export async function contarMensajesNoLeidos(): Promise<number> {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return 0
 
-    const medicoId = await resolverTenant(supabase, user.id)
-    if (!medicoId) return 0
+    // ⚠ `resolverAcceso` y no `resolverTenant`: suma el chequeo de `acceso_mensajeria`
+    // SIN pagar una query extra — las dos leen la MISMA fila de `profiles` una sola
+    // vez; la diferencia es que ésta proyecta también los 12 permisos. Ver el análisis
+    // de costo en RESPUESTA.md: esta action corre en (app)/layout.tsx, o sea en cada
+    // render de cada página, así que un round-trip de más se multiplicaría por toda la app.
+    const acceso = await resolverAcceso(supabase, user.id, 'acceso_mensajeria')
+    if (!acceso.ok) return 0
+    const medicoId = acceso.tenantMedicoId
 
     // 1) No leídos individuales (destinatario = yo, leido = false)
+    // ⚠ El `.eq('medico_id', …)` cierra la incoherencia que abrió el filtro de tenant
+    // de la bandeja: sin él, el badge contaba individuales de un tenant ANTERIOR que
+    // `obtenerBandeja` ya no lista, y el número no se podía bajar desde la UI.
     const { count: individuales } = await supabase
       .from('mensajes_internos')
       .select('id', { count: 'exact', head: true })
+      .eq('medico_id', medicoId)
       .eq('destinatario_id', user.id)
       .eq('leido', false)
       .eq('es_grupal', false)
@@ -223,15 +295,20 @@ export async function obtenerMensajesNoLeidos(): Promise<MensajeNoLeido[]> {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return []
 
-    const medicoId = await resolverTenant(supabase, user.id)
-    if (!medicoId) return []
+    // Mismo criterio que `contarMensajesNoLeidos`: permiso + tenant en UNA query.
+    const acceso = await resolverAcceso(supabase, user.id, 'acceso_mensajeria')
+    if (!acceso.ok) return []
+    const medicoId = acceso.tenantMedicoId
 
     const cols = 'id, parent_id, asunto, remitente_id, es_grupal, created_at'
 
-    // 1) Individuales no leídos (destinatario = yo)
+    // 1) Individuales no leídos (destinatario = yo, y DEL TENANT — ver el comentario
+    //    equivalente en `contarMensajesNoLeidos`: los dos tienen que contar lo mismo,
+    //    o el badge y su dropdown se contradicen entre sí.)
     const { data: individuales } = await supabase
       .from('mensajes_internos')
       .select(cols)
+      .eq('medico_id', medicoId)
       .eq('destinatario_id', user.id)
       .eq('leido', false)
       .eq('es_grupal', false)
