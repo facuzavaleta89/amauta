@@ -2,7 +2,8 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { resolverAcceso, tenantDeProfile } from '@/lib/auth/tenant'
-import { uuidSchema } from '@/lib/validations/shared'
+import { uuidSchema, isValidDateStr } from '@/lib/validations/shared'
+import { BANDEJA_PAGINA, BANDEJA_PAGINA_MAX } from '@/constants/mensajes'
 import type { MensajeInterno, RespuestaEstadoLectura } from '@/types/mensaje'
 import { revalidatePath } from 'next/cache'
 
@@ -40,14 +41,21 @@ function mensajeDeAcceso(motivo: 'sin-perfil' | 'sin-permiso' | 'sin-tenant'): s
  * remitente:remitente_id(full_name, role). Solución: fetch de mensajes
  * sin joins + fetch de profiles por separado + merge manual.
  */
-export async function obtenerBandeja(): Promise<{
+export async function obtenerBandeja(opciones?: {
+  /** `ultima_actividad_at` (ISO) del último hilo ya cargado. Sin él, primera página. */
+  cursor?: string
+  /** Tamaño de página. Se acota a [1, BANDEJA_PAGINA_MAX]. */
+  limite?: number
+}): Promise<{
   threads: MensajeInterno[]
   currentUserId: string
+  /** ¿Quedan hilos más viejos por cargar? Lo calcula el truco del `limite + 1`. */
+  hayMas: boolean
   error?: string
 }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { threads: [], currentUserId: '', error: 'No autenticado' }
+  if (!user) return { threads: [], currentUserId: '', hayMas: false, error: 'No autenticado' }
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -55,17 +63,42 @@ export async function obtenerBandeja(): Promise<{
     .eq('id', user.id)
     .single()
 
-  if (!profile) return { threads: [], currentUserId: user.id, error: 'Perfil no encontrado' }
+  if (!profile) return { threads: [], currentUserId: user.id, hayMas: false, error: 'Perfil no encontrado' }
 
   const isMedico = profile.role === 'medico'
   const tieneAcceso = isMedico || (profile.acceso_mensajeria ?? false)
-  if (!tieneAcceso) return { threads: [], currentUserId: user.id, error: 'Sin acceso a mensajería' }
+  if (!tieneAcceso) return { threads: [], currentUserId: user.id, hayMas: false, error: 'Sin acceso a mensajería' }
 
   // ⚠ `tenantDeProfile` y no `resolverTenant`: el `profile` de arriba se sigue
   // usando (`acceso_mensajeria`), así que una query interna sería una segunda
   // lectura de la misma fila.
   const medicoId = tenantDeProfile(profile, user.id)
-  if (!medicoId) return { threads: [], currentUserId: user.id, error: 'Sin médico vinculado' }
+  if (!medicoId) return { threads: [], currentUserId: user.id, hayMas: false, error: 'Sin médico vinculado' }
+
+  // ── Validación de los parámetros de paginación ────────────────────────────
+  // ⚠ VA DESPUÉS de las guardas de auth/permiso/tenant, no antes: primero se decide
+  // SI PUEDE, después QUÉ TRAE. Es el orden que fija el canon de `resolverAcceso`
+  // (CLAUDE.md → nota 24) y el que hace que un parámetro corrupto nunca sea la razón
+  // por la que alguien sin permiso reciba una respuesta distinta.
+  //
+  // ⚠ Esta action es invocable por CUALQUIER cliente autenticado, así que el tamaño de
+  // página necesita tope duro por arriba y piso por abajo. Mismo patrón que
+  // `GET /api/consultas`, la única otra paginación del repo:
+  //   const page  = Math.max(1, …);  const limit = Math.min(50, …)
+  // Sin el `Math.min`, un `limite: 100000` traería la tabla entera — y con ella TODAS
+  // las respuestas de esos hilos en el paso 3, que no tiene límite propio.
+  const limite = Math.min(
+    BANDEJA_PAGINA_MAX,
+    Math.max(1, Math.trunc(opciones?.limite ?? BANDEJA_PAGINA))
+  )
+
+  // ⚠ Un cursor inválido DEGRADA A LA PRIMERA PÁGINA, no devuelve error. Es el criterio
+  // del repo para los datos de entrada degenerados (mismo que `formatFecha`, que
+  // devuelve el texto crudo en vez de lanzar): un parámetro corrupto no debe vaciar la
+  // pantalla. `isValidDateStr` es el chequeo de fecha que ya usan los schemas de turnos
+  // y pedidos — no se escribe uno nuevo.
+  const cursor =
+    opciones?.cursor && isValidDateStr(opciones.cursor) ? opciones.cursor : null
 
   // Paso 1: mensajes raíz sin join a profiles
   //
@@ -74,16 +107,39 @@ export async function obtenerBandeja(): Promise<{
   // (`remitente_id = auth.uid()`, `destinatario_id = auth.uid()`) NO miran el tenant,
   // así que un individual sobrevive a un cambio de médico. Hasta acá el `medicoId` se
   // calculaba, se validaba y NO se usaba: el aislamiento quedaba entero en la RLS.
-  const { data: msgs, error } = await supabase
+  //
+  // ⚠ ORDEN por `ultima_actividad_at` (migración 047), no por `created_at`: un hilo
+  // viejo con una respuesta nueva tiene que SUBIR. La columna la mantiene un trigger.
+  //
+  // ⚠ Paginación por KEYSET (`.lt(cursor)`), no por offset. Con una lista ACUMULATIVA
+  // en el cliente, el offset DUPLICARÍA hilos: cualquier mensaje nuevo corre la ventana
+  // y la página 2 devolvería filas que la 1 ya trajo. El keyset compara contra un valor
+  // absoluto. El cursor es SIMPLE (solo la fecha) y no compuesto porque la auditoría
+  // previa no encontró ni un empate de `ultima_actividad_at`.
+  //
+  // ⚠ Se pide UNA FILA DE MÁS (`limite + 1`) para saber si quedan más, en vez de un
+  // `count: 'exact'`: el count obliga a Postgres a contar TODAS las filas que matchean
+  // en cada página, trabajo que crece con el tenant y que no se necesita — "cargar más"
+  // no muestra "página 3 de 17". El +1 cuesta una fila.
+  let query = supabase
     .from('mensajes_internos')
     .select('*, lecturas:mensajes_lecturas(user_id, leido_at)')
     .eq('medico_id', medicoId)
     .is('parent_id', null)
-    .order('created_at', { ascending: false })
-    .limit(100)
+    .order('ultima_actividad_at', { ascending: false })
+    .limit(limite + 1)
 
-  if (error) return { threads: [], currentUserId: user.id, error: error.message }
-  if (!msgs || msgs.length === 0) return { threads: [], currentUserId: user.id }
+  if (cursor) query = query.lt('ultima_actividad_at', cursor)
+
+  const { data: pagina, error } = await query
+
+  if (error) return { threads: [], currentUserId: user.id, hayMas: false, error: error.message }
+
+  // La fila extra del `limite + 1` NO se devuelve: solo dice que hay más.
+  const hayMas = (pagina?.length ?? 0) > limite
+  const msgs = (pagina ?? []).slice(0, limite)
+
+  if (msgs.length === 0) return { threads: [], currentUserId: user.id, hayMas: false }
 
   // Paso 2: perfiles de todos los participantes
   const userIds = [
@@ -158,7 +214,7 @@ export async function obtenerBandeja(): Promise<{
     tiene_respuestas_no_leidas: hilosConRespuestasNoLeidas.has(m.id),
   })) as MensajeInterno[]
 
-  return { threads, currentUserId: user.id }
+  return { threads, currentUserId: user.id, hayMas }
 }
 
 /**

@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { MessageSquare, Plus, Users, User, Send, Trash2 } from 'lucide-react'
+import { MessageSquare, Plus, Users, User, Send, Trash2, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils/cn'
@@ -12,7 +12,7 @@ import type { MensajeInterno } from '@/types/mensaje'
 import { HiloModal } from './hilo-modal'
 import { MensajeForm } from '@/components/notificaciones/mensaje-form'
 import { usePermisos } from '@/contexts/permisos-context'
-import { eliminarMensaje } from '@/app/(app)/mensajes/actions'
+import { eliminarMensaje, obtenerBandeja } from '@/app/(app)/mensajes/actions'
 import { toast } from 'sonner'
 
 interface Usuario {
@@ -24,20 +24,106 @@ interface Usuario {
 interface Props {
   threads: MensajeInterno[]
   currentUserId: string
+  /** ¿La primera página dejó hilos más viejos sin traer? Lo calcula `obtenerBandeja`. */
+  hayMasInicial: boolean
   usuarios: Usuario[]
 }
 
-export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Props) {
+export function Bandeja({ threads: initialThreads, currentUserId, hayMasInicial, usuarios }: Props) {
   const { esMedico } = usePermisos()
   const searchParams = useSearchParams()
   const [threads, setThreads] = useState<MensajeInterno[]>(initialThreads)
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [confirmDeleteThreadId, setConfirmDeleteThreadId] = useState<string | null>(null)
 
-  // Sincronizar el estado local cuando las props cambien (ej. al recibir un refresh del servidor)
+  // ── Paginación "cargar más" acumulativa ────────────────────────────────────
+  const [hayMas, setHayMas] = useState(hayMasInicial)
+  const [cargandoMas, setCargandoMas] = useState(false)
+  const [errorCarga, setErrorCarga] = useState<string | null>(null)
+  // ⚠ Cerrojo SÍNCRONO contra el doble clic. `disabled={cargandoMas}` no alcanza: entre
+  // el clic y el re-render que aplica el `setCargandoMas(true)` hay una ventana en la
+  // que un segundo clic entra igual — y las dos llamadas usarían EL MISMO cursor (el
+  // estado todavía no cambió), trayendo la misma página dos veces. Un ref se lee y se
+  // marca en el mismo tick, antes de cualquier `await`.
+  const cargandoRef = useRef(false)
+
+  /**
+   * MERGEA la lista del servidor con la acumulada, en vez de reemplazarla.
+   *
+   * ⚠ ESTE EFECTO ERA EL BUG MÁS SERIO DE LA PAGINACIÓN. Antes hacía
+   * `setThreads(initialThreads)`, o sea PISAR el estado entero. Y `initialThreads` es
+   * un array nuevo en cada render del servidor, así que disparaba en CADA revalidación
+   * de la ruta — incluida la que produce `marcarMensajeLeido` al ABRIR CUALQUIER HILO.
+   * O sea: el solo hecho de leer un mensaje descartaba todas las páginas cargadas de
+   * más, y si el hilo abierto estaba entre las descartadas, `hiloAbierto` pasaba a
+   * `null` y EL MODAL SE CERRABA SOLO MIENTRAS EL USUARIO LO LEÍA.
+   *
+   * Ahora indexa por id: lo que llega del servidor pisa su versión vieja (trae el
+   * estado de lectura fresco) y lo acumulado que el servidor no menciona SE CONSERVA.
+   * Después reordena por `ultima_actividad_at` desc, que es el orden de la bandeja: un
+   * hilo que subió por una respuesta nueva se reubica solo.
+   *
+   * ⚠ Lo que el merge NO puede saber es que un hilo se BORRÓ: "no vino del servidor" es
+   * indistinguible de "está en otra página". Por eso el borrado se saca del estado
+   * EXPLÍCITAMENTE, en su propio handler (ver `quitarThread`).
+   */
   useEffect(() => {
-    setThreads(initialThreads)
+    setThreads((prev) => {
+      const porId = new Map(prev.map((t) => [t.id, t]))
+      for (const t of initialThreads) porId.set(t.id, t)
+      return [...porId.values()].sort(
+        (a, b) =>
+          new Date(b.ultima_actividad_at).getTime() -
+          new Date(a.ultima_actividad_at).getTime()
+      )
+    })
   }, [initialThreads])
+
+  /** Saca un hilo del estado local. El merge no puede inferir un borrado (ver arriba). */
+  const quitarThread = useCallback((id: string) => {
+    setThreads((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  async function cargarMas() {
+    // Cerrojo síncrono: si ya hay una carga en vuelo, este clic no existe.
+    if (cargandoRef.current || !hayMas) return
+    cargandoRef.current = true
+    setCargandoMas(true)
+    setErrorCarga(null)
+
+    try {
+      // El cursor es la actividad del ÚLTIMO hilo de la lista — la más vieja, porque
+      // está ordenada desc. La action pide los que sean estrictamente anteriores.
+      const ultimo = threads[threads.length - 1]
+      const { threads: nuevos, hayMas: quedanMas, error } = await obtenerBandeja({
+        cursor: ultimo?.ultima_actividad_at,
+      })
+
+      if (error) {
+        setErrorCarga(error)
+        return
+      }
+
+      // Dedup por id: si un hilo subió de posición entre dos páginas podría venir dos
+      // veces, y concatenar sin filtrar lo mostraría duplicado (y React se quejaría por
+      // las keys repetidas).
+      setThreads((prev) => {
+        const porId = new Map(prev.map((t) => [t.id, t]))
+        for (const t of nuevos) if (!porId.has(t.id)) porId.set(t.id, t)
+        return [...porId.values()].sort(
+          (a, b) =>
+            new Date(b.ultima_actividad_at).getTime() -
+            new Date(a.ultima_actividad_at).getTime()
+        )
+      })
+      setHayMas(quedanMas)
+    } catch (e) {
+      setErrorCarga(e instanceof Error ? e.message : 'No se pudieron cargar más conversaciones')
+    } finally {
+      cargandoRef.current = false
+      setCargandoMas(false)
+    }
+  }
 
   // ── Hilo abierto: la URL es la ÚNICA fuente de verdad ──────────────────────
   // Se DERIVA en cada render (ni `useState` ni `useEffect`). Antes vivía en un
@@ -50,8 +136,11 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Pr
   // coincide — no hay mismatch ni hace falta un <Suspense> alrededor.
   const hiloId = searchParams.get('hilo')
   // ⚠ Si el id no está entre los threads cargados, el modal simplemente no abre
-  // (no rompe). `obtenerBandeja()` trae las 100 conversaciones más recientes:
-  // un hilo más viejo que eso queda fuera. Ver la limitación en RESPUESTA.md.
+  // (no rompe). Desde la paginación (migración 047) la lista ya no es "las 100 más
+  // recientes" sino LAS CARGADAS HASTA AHORA: la primera página trae `BANDEJA_PAGINA`
+  // hilos y cada "cargar más" suma otra tanda. Un hilo que todavía no se cargó queda
+  // fuera — y el orden por actividad hace que ese caso sea más raro, porque los hilos
+  // con mensajes recientes suben. Traer un hilo por id es otro frente, no éste.
   const hiloAbierto = hiloId ? threads.find((t) => t.id === hiloId) ?? null : null
 
   /**
@@ -256,6 +345,35 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Pr
               </div>
             )
           })}
+
+          {/* ── Cargar más ────────────────────────────────────────────────
+              Al FINAL de la lista, que es donde el usuario llega al scrollear.
+              ⚠ El error va ACÁ, junto al botón, y NO en un toast: es local a esta
+              acción y el usuario tiene que poder reintentar sin perder de vista qué
+              falló. Y lo ya cargado NO se toca — la lista de arriba sigue intacta. */}
+          {(hayMas || errorCarga) && (
+            <div className="pt-2 flex flex-col items-center gap-2">
+              {errorCarga && (
+                <p className="text-xs text-destructive text-center">{errorCarga}</p>
+              )}
+              {hayMas && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={cargarMas}
+                  disabled={cargandoMas}
+                  className="gap-2"
+                >
+                  {cargandoMas && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {cargandoMas
+                    ? 'Cargando…'
+                    : errorCarga
+                      ? 'Reintentar'
+                      : 'Cargar más conversaciones'}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -285,6 +403,11 @@ export function Bandeja({ threads: initialThreads, currentUserId, usuarios }: Pr
                   try {
                     const { error } = await eliminarMensaje(id)
                     if (error) throw new Error(error)
+                    // ⚠ Sacarlo del estado local es OBLIGATORIO, no una optimización:
+                    // el efecto de merge conserva lo acumulado y NO PUEDE distinguir
+                    // "este hilo se borró" de "este hilo está en otra página". Sin esto
+                    // el hilo borrado seguiría en la lista hasta un F5.
+                    quitarThread(id)
                     toast.success('Conversación eliminada')
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Error al eliminar')
