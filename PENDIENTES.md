@@ -573,6 +573,10 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   día del turno nocturno queda cerrado. **Confirmado en producción.** ⚠ Los formateos
   **client-side** (turnero, `turno-form`) **no se tocaron**: renderizan en la zona del navegador y
   no tenían el bug. Regla de uso en `CLAUDE.md` → nota técnica 18.
+  ⚠ **Ese "no tenían el bug" vale para el FORMATEO, no para la conversión input↔instante.** Es otro
+  eje, y ahí el turnero **sí** lo tenía: lo cerró la unificación de zona de 2026-08-21 (ver el ítem
+  de más abajo). Que un componente sea `'use client'` NO exime de fijar `TZ_AR` cuando se ancla una
+  hora de pared a un instante.
 - **✅ RESUELTO (Grupo 4, 2026-08-16) — todos los helpers de fecha unificados contra
   `formatFechaAR`.** Este ítem contaba **dos** helpers sin unificar; el censo encontró **seis
   implementaciones** (el canon + 5 duplicados), porque además de los dos anotados estaban los
@@ -959,6 +963,54 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     de los de `/pedidos` y `/certificados`, que solo aparecen con `?q=`.
   - El número es **exacto**: esa query no tiene `.limit()` ni paginación, así que es el total real y
     no una página.
+
+- **✅ RESUELTO (2026-08-21) — el turnero manejaba las fechas de sus inputs en zona del
+  DISPOSITIVO, no del consultorio. Severidad MEDIA-ALTA (latente). PREEXISTENTE.**
+  - **Qué pasaba:** los `<input type="datetime-local">` de `turno-form.tsx` y `block-slot-modal.tsx`
+    se llenaban y se leían con un par de helpers que trabajaban en la zona del **navegador**:
+    `reformatDateForInput` (`lib/utils/fecha-input.ts`, con `getTimezoneOffset()`) para entrar, y
+    `formatDateToIsoOutput` (`new Date(x).toISOString()`, **duplicado a mano** en los dos archivos)
+    para salir.
+  - ⚠ **No corrompía datos, pero MOSTRABA la hora equivocada.** Como los dos lados usaban la misma
+    zona, el round-trip era auto-consistente y el instante persistido nunca se movía. Lo que fallaba
+    era la **lectura**: un médico con el dispositivo fuera de Argentina veía sus turnos en la hora de
+    **su destino**, no en la del consultorio. Un turno de las 14:00 AR se le mostraba a las 19:00
+    desde Europa.
+  - ⚠ **El riesgo real estaba en el arreglo, no en el bug:** el par estaba **partido entre dos
+    archivos con criterios distintos**, así que convertir **un solo lado** a `TZ_AR` habría movido
+    los turnos varias horas **al abrir y guardar sin editar**, en silencio. Se convirtieron los dos.
+  - **Fix:** helper nuevo **`formatParaInputAR`** en el canon (`lib/utils/format-date.ts`), la
+    escritura ruteada por **`parseFechaHoraAR`**, las dos copias de `formatDateToIsoOutput`
+    eliminadas y **`lib/utils/fecha-input.ts` borrado** (quedó sin consumidores; era además el helper
+    de fecha fuera del canon que desmentía su afirmación de "casa única").
+  - **Decisión de producto asentada:** el turnero opera en **hora del consultorio**. Ver `CLAUDE.md`
+    → **nota técnica 25**, que ahora documenta el par y por qué no se toca una sola mitad.
+
+- **✅ RESUELTO (2026-08-21) — el buscador de pacientes del turnero fallaba en SILENCIO y mentía.
+  Severidad MEDIA. PREEXISTENTE. ⚠ NO estaba anotado en este backlog.** Lo encontré relevando otra
+  cosa en `turno-form.tsx`.
+  - **Qué se veía mal:** el efecto del buscador hacía `fetch` y saltaba directo a `await res.json()`,
+    **sin chequear `res.ok`**. Ante un fallo, el JSON de error no trae `data`, así que
+    `setPacientes(data.data || [])` dejaba la lista vacía **con el dropdown abierto** — o sea,
+    exactamente el mismo estado visual que "no hay coincidencias". El usuario leía **"No se
+    encontraron pacientes"** cuando la verdad era otra:
+    - **403** — el asistente **no tiene `ver_pacientes`**. Le decía que el paciente no existe.
+    - **429** — se pasó del rate limit (ese endpoint permite **60/min** y el buscador dispara con
+      debounce de 400 ms desde 3 caracteres, así que **se alcanza tecleando normal**).
+    - **Fallo de red / sin conexión** — caía en un `catch` que solo hacía `console.error(e)`,
+      **sin toast**. El buscador decía "sin resultados" estando offline.
+  - **Fix:** se chequea `res.ok` con el mismo patrón que el resto del archivo, **se cierra el
+    dropdown** (para que un fallo deje de parecerse a "sin resultados") y se avisa con
+    `toast.error('Error al buscar pacientes', { description })`.
+  - ⚠ **Dos detalles del fix que no son obvios y conviene no "simplificar":**
+    - El toast lleva un **`id` fijo** (`'busqueda-pacientes'`). El efecto corre con debounce en
+      **cada tecleo**, así que con la API caída habría habido **un toast por letra**; con un id
+      repetido Sonner **reemplaza** el aviso abierto en vez de apilar otro. Es el **primer uso de
+      `id`** en el repo.
+    - El efecto lleva un flag **`cancelled`** en el cleanup. `clearTimeout` solo cancela el timeout
+      **pendiente**: si el usuario sigue tecleando mientras un fetch ya salió, esa respuesta llega
+      igual — y ahora eso significaría **un toast por una búsqueda que el usuario ya abandonó**.
+      Mismo patrón que el efecto de `changeView` en `calendar-view.tsx`.
 
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
@@ -1507,29 +1559,57 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   vuelve a entrar desde FullCalendar. ⚠ El `any` de `extendedProps` **sigue ahí y va a seguir**: es de
   la librería. Que el turnero no tenga `any` **declarados** no significa que ese punto sea type-safe
   por arte de magia — lo sostiene esa aserción.
-- **Prolijidad del turnero (ítems chicos, sin urgencia).** Detectados al diagnosticar L2; ninguno es
-  lint ni se tocó:
-  - **Los 2 `throw new Error(errorData.error)` sin fallback** — `turno-form.tsx:241` y
-    `block-slot-modal.tsx:126`. Si el endpoint respondiera sin campo `error`, el toast mostraría
-    literalmente **"undefined"**. Otros dos sitios de esos mismos archivos **sí** se protegen con
-    `|| 'Error al eliminar'`. Se dejaron **byte a byte** en L2 a propósito: agregarles el fallback es
-    un **cambio de comportamiento**, ajeno al tipado, y merece decidirse aparte.
-  - **`@fullcalendar/core` no está declarado en `package.json`** (solo `daygrid`, `interaction`,
-    `react`, `timegrid`): es una **dependencia transitiva** que el código ya usaba antes de L2
-    (`calendar-view.tsx:8`, el locale `es`) y que ahora también usan los `import type`. Declararla
-    sería lo correcto, pero es un **cambio de dependencias**, no de código.
-  - **Helper duplicado `formatDateToIsoOutput`**, idéntico en `turno-form.tsx:80` y
-    `block-slot-modal.tsx:50`. Candidato a `lib/utils/`.
-  - **Quedan 4 llamadas imperativas más a la API de FullCalendar** (relevadas al cerrar B2, ver
-    `CLAUDE.md` → nota técnica 21). **Ninguna reporta el warning de `flushSync` hoy** y por eso no se
-    tocaron, pero conviene tener el inventario: **`refetchEvents()` en el efecto de
-    `[activeCategories]` es la única estructuralmente igual a la que hubo que diferir** (llamada
-    imperativa síncrona dentro de un `useEffect`) — **es el primer lugar donde mirar** si el warning
-    reaparece en otro flujo. Las otras tres (`refetchEvents()` en `handleEventDrop` /
-    `handleEventResize` y en `refreshAction`) corren en **handlers de evento**, fuera del render de
-    React, así que son seguras.
-  - **Indentación a 4 espacios** en los bloques `onDelete`/`onSubmit` de esos dos archivos, contra
-    los 2 del resto del repo. Cosmético; **no tocar dentro de una tanda de tipos** (ensuciaría el diff).
+- **✅ RESUELTO (2026-08-21) — Prolijidad del turnero.** Los cuatro ítems chicos que este punto
+  arrastraba desde el diagnóstico de L2 se cerraron en una tanda dedicada. ⚠ Tres de las cuatro
+  descripciones originales resultaron **inexactas** y se corrigen acá en vez de arrastrarse:
+  - ✅ **Los 2 `throw new Error(errorData.error)` sin fallback** (el `onSubmit` de `turno-form.tsx` y
+    el de `block-slot-modal.tsx`) ahora llevan `|| 'Error al guardar'`, en el mismo molde que el
+    `|| 'Error al eliminar'` que los `onDelete` ya tenían. Sin el fallback el toast mostraba
+    literalmente **"undefined"**.
+    ⚠ **Precisión que faltaba:** el bug **no era alcanzable** con los endpoints actuales — los cuatro
+    del turnero devuelven `error` en **todas** sus salidas de fallo (incluidas las de rate limit y
+    las de Zod), y en los caminos raros (500 con HTML, body vacío, red caída) `response.json()`
+    **lanza antes** de llegar al `new Error`. El arreglo es **defensivo y de simetría**, no
+    correctivo.
+  - ✅ **`@fullcalendar/core` declarado en `package.json`** (`^6.1.20`, igual que sus hermanos).
+    ⚠ **La descripción vieja era FALSA en el punto que más importaba: NO era una "dependencia
+    transitiva", era una PEER dependency** (`"peer": true` en `package-lock.json`; los cuatro
+    paquetes declarados la listan en `peerDependencies`). No estaba en el árbol por colgar de un
+    padre, sino porque **npm ≥7 auto-instala las peers** — y con `--legacy-peer-deps`, un flag que
+    se usa habitualmente para destrabar conflictos, **habría desaparecido**. Riesgo distinto y mayor
+    que el de una transitiva.
+    ⚠ **Y el segundo dato que faltaba:** `calendar-view.tsx` no solo la usa en `import type`, tiene un
+    **import de VALOR** (`import esLocale from '@fullcalendar/core/locales/es'`). Faltando la
+    dependencia **no rompía solo `tsc`: rompía el bundle**, y con él el locale del calendario.
+  - ✅ **El helper duplicado `formatDateToIsoOutput` se eliminó**, y los dos formularios pasaron a
+    usar el canon (`parseFechaHoraAR`).
+    ⚠ **La descripción vieja lo minimizaba.** No era "simple duplicación, candidato a `lib/utils/`":
+    era `new Date(localString).toISOString()`, o sea **el antipatrón que el JSDoc de
+    `parseFechaHoraAR` prohíbe textualmente**, y con la agravante de que **su mitad inversa ya
+    estaba extraída en otro archivo** (`lib/utils/fecha-input.ts`) **con otro criterio de zona** (la
+    del navegador). El par estaba partido, y eso convertía la deduplicación en un cambio delicado:
+    tocar un solo lado **corrompe fechas en silencio**. Ver el ítem de la unificación de zona del
+    turnero en *Bugs menores detectados* y `CLAUDE.md` → **nota técnica 25**.
+  - ✅ **Indentación normalizada a pasos de 2** en los dos archivos.
+    ⚠ **La descripción vieja decía "los bloques `onDelete`/`onSubmit`". El de `onSubmit` NO estaba
+    a 4 espacios:** su cuerpo, el `try`, el `fetch` y el `catch/finally` ya estaban bien; lo único
+    desalineado era **su literal `payload`**. El bloque realmente afectado era `onDelete` completo.
+    Se aprovechó para alinear también el JSX con indentación impar (el dropdown de sugerencias de
+    pacientes, sobre todo). ⚠ Se hizo **al final y en un commit propio**, con el diff verificado
+    como **exclusivamente de espacios** (`diff -w` vacío, mismo conteo de líneas).
+- **📌 REFERENCIA (no es una tarea) — inventario de las llamadas imperativas a la API de
+  FullCalendar.** Se conserva tal cual: **no describe trabajo pendiente**, dice **dónde mirar
+  primero** si el warning de `flushSync` reaparece. Relevado al cerrar B2, ver `CLAUDE.md` → nota
+  técnica 21.
+  - **Quedan 4 llamadas imperativas** y **ninguna reporta el warning hoy**, por eso no se tocaron.
+    **`refetchEvents()` en el efecto de `[activeCategories]` es la única estructuralmente igual a la
+    que hubo que diferir** (llamada imperativa síncrona dentro de un `useEffect`) — **es el primer
+    lugar donde mirar**. Las otras tres (`refetchEvents()` en `handleEventDrop` / `handleEventResize`
+    y en `refreshAction`) corren en **handlers de evento**, fuera del render de React, así que son
+    seguras.
+  - ⚠ **Sigue exacto tras la tanda de prolijidad:** ese trabajo no agregó ni quitó ninguna llamada
+    imperativa. Lo único que se eliminó de `calendar-view.tsx` en tandas recientes fueron callbacks
+    **pasivos** (`viewDidMount`/`datesSet`), que no son llamadas a la API.
 - **✅ RESUELTO (Grupo 4, 2026-08-16) — la convención de prefijo `_` se ADOPTÓ formalmente.**
   `eslint.config.mjs` define ahora `argsIgnorePattern: '^_'`, `varsIgnorePattern: '^_'` y conserva el
   `ignoreRestSiblings: true` que ya tenía. **Se preservó la severidad `warn`** de
