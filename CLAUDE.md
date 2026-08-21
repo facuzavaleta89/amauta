@@ -726,7 +726,8 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
 | **`SIN_OBRA_SOCIAL_LABEL`**, **`FILTRO_SIN_OBRA_SOCIAL`** | `src/lib/pacientes/obra-social.ts` | El literal `'Particular / Sin obra social'` y el centinela de URL del filtro de `/pacientes` (`'sin-obra-social'`). ⚠ **El fallback se aplica en cada CONSUMIDOR, NUNCA dentro de `resolverObraSocial`** — ver **nota técnica 28** |
 | `resolverTenant`, `tenantDeProfile`, **`resolverAcceso`** | `src/lib/auth/tenant.ts` | Resolución del tenant (`medico_id` efectivo) y autorización por permiso. `tenantDeProfile` es la variante **pura**, para quien ya leyó el `profile`. `resolverAcceso` suma el chequeo de permiso y acepta **un permiso o un array (OR)**. Ver **nota técnica 24** |
 | `formatFechaAR`, `formatFecha`, `formatFechaLarga`, `TZ_AR` | `src/lib/utils/format-date.ts` | Formateo de fechas en zona AR. El motor lanza; los dos wrappers degradan al texto crudo. Ver **nota técnica 18** |
-| **`parseFechaHoraAR`** | `src/lib/utils/format-date.ts` | La **inversa**: ancla una hora de PARED argentina (sin offset) al instante correcto, para persistirla en un `timestamptz`. Ver **nota técnica 25** |
+| **`parseFechaHoraAR`** | `src/lib/utils/format-date.ts` | La **inversa**: ancla una hora de PARED argentina (sin offset) al instante correcto, para persistirla en un `timestamptz`. ⚠ Forma **PAR** con `formatParaInputAR`. Ver **nota técnica 25** |
+| **`formatParaInputAR`** | `src/lib/utils/format-date.ts` | La otra mitad del par: instante → string `"YYYY-MM-DDTHH:mm"` para un `<input type="datetime-local">`, en zona AR. ⚠ **No se toca sola**: convertir un solo lado del par corrompe datos en silencio. Ver **nota técnica 25** |
 | `buscarSolapamientos` | `src/lib/agenda/solapamiento.ts` | Criterio ÚNICO de "franja ocupada" de la agenda. Ver **nota técnica 23** |
 | **`sanitizarTextoBusqueda`** | `src/lib/validations/shared.ts` | Criterio ÚNICO para meter el `?q=` de una búsqueda dentro de un `ilike`: `trim` → `slice(maxLen)` → escape de `%`, `_` y `\`. ⚠ **El escapado va DESPUÉS del recorte de longitud**: al revés, el corte puede partir al medio un par `\%` y dejar un backslash colgado. Lo usan los **4** buscadores por nombre/DNI (`/pacientes`, `GET /api/pacientes`, `/pedidos`, `/certificados`). ⚠ El resultado es para el **patrón**, no para la UI: el texto escapado no vuelve a pantalla (los llamadores mantienen el `q` crudo aparte), y no sirve para un `eq`/`in`/`fts` |
 | `BotonCrearConPermiso` | `src/components/shared/boton-crear-con-permiso.tsx` | Botón de acción que se **deshabilita** (en vez de rebotar contra `/sin-acceso`) cuando falta el permiso. Client Component: lee del `PermisosProvider`, así que sirve en páginas Server que **no** consultan `profiles`, sin agregarles una query. Es **solo UX** — la autorización real la hacen la página destino y el endpoint |
@@ -878,8 +879,9 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
     - ✅ **UNIFICADO (Grupo 4, 2026-08-16): `src/lib/utils/format-date.ts` es la casa ÚNICA del
       formateo de fechas.** Antes convivían **seis** implementaciones (este canon + 5 duplicados en
       `lib/utils.ts`, las dos plantillas PDF y `/verificar`), cinco de ellas sin zona fija. Hoy el
-      archivo expone tres funciones de **formateo** y **no hay ninguna otra** (desde el Grupo 5 suma
-      además `parseFechaHoraAR`, que hace el camino inverso — ver **nota técnica 25**):
+      archivo expone tres funciones de **formateo** y **no hay ninguna otra** (más el **par**
+      `parseFechaHoraAR` / `formatParaInputAR`, que convierten entre instante y hora de pared para
+      los `<input>` de fecha — ver **nota técnica 25**):
       - **`formatFechaAR(fecha, patron)`** — el **motor**. Fija `TZ_AR` y **lanza** ante una entrada
         inválida.
       - **`formatFecha(fecha, patron = 'd MMM yyyy')`** y **`formatFechaLarga(fecha)`** — wrappers
@@ -891,6 +893,11 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       con la unificación eso ya no importa, porque los wrappers fijan zona igual que el motor.
       ⚠ **No escribir un helper de fecha nuevo en otro archivo** ni llamar a `format()` de date-fns o
       `toLocaleDateString()` directamente desde el servidor.
+      ⚠ **Y la regla se hizo cumplir:** existía `src/lib/utils/fecha-input.ts` (`reformatDateForInput`),
+      un helper de fecha fuera de este archivo que convertía con `getTimezoneOffset()` — o sea, en la
+      zona del **NAVEGADOR**, no en `TZ_AR`. Mientras existió, "casa única" era **falso**. Se
+      **eliminó** al unificar la zona del turnero; su reemplazo es `formatParaInputAR`, acá adentro.
+      Hoy `src/lib/utils/` tiene **tres** archivos: `cn.ts`, `format-date.ts` y `verificar-permiso.ts`.
 19. **Notificaciones: el badge y la página derivan de UNA fuente compartida — no agregar una query
     suelta.** Todo lo "pendiente de leer" se normaliza a `ItemPendiente`
     (`src/types/notificacion.ts`) en `src/app/(app)/notificaciones/actions.ts`, y **la tabla
@@ -1072,9 +1079,47 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
     (`src/lib/utils/format-date.ts`), NUNCA `new Date('…T14:00')`.** Es la **inversa** de la nota 18:
     aquélla cubre la **salida** (instante → texto en zona AR), ésta la **entrada** (texto de pared en
     zona AR → instante). Las dos viven en el mismo archivo, que es la casa única de fechas.
-    - **Qué recibe y qué devuelve:** `parseFechaHoraAR('YYYY-MM-DDTHH:mm')` → `Date`. También acepta
-      `'YYYY-MM-DD'` a secas, que resuelve a la **medianoche AR**. El llamador decide la
-      serialización (`.toISOString()` para mandarlo al servidor).
+
+    ### ⚠⚠ `parseFechaHoraAR` y `formatParaInputAR` son un PAR. No se toca una sola.
+
+    Todo formulario con `<input type="date">`, `<input type="time">` o `<input type="datetime-local">`
+    hace un **round-trip** entre dos representaciones distintas de lo mismo:
+
+    ```
+    instante (timestamptz)  ──formatParaInputAR──▶  "hora de pared"  ──parseFechaHoraAR──▶  instante
+         lo que guarda la base        lo que ve y edita el usuario         lo que se persiste
+    ```
+
+    - **Las dos convierten entre HORA DE PARED e INSTANTE ABSOLUTO, en direcciones opuestas.** Una
+      lee, la otra escribe.
+    - **Las dos DEBEN usar la MISMA zona.** Hoy las dos fijan **`TZ_AR`**. Mientras eso se cumpla, el
+      round-trip conserva el instante **sin importar en qué zona esté el dispositivo**.
+    - ⚠ **Convertir UNA SOLA de las dos a otra zona CORROMPE DATOS, y en silencio.** Un usuario con el
+      dispositivo fuera de Argentina que **abra un registro y lo guarde SIN EDITARLO** vería el valor
+      **desplazado varias horas**, sin ningún error, sin toast y sin nada en los logs: el input
+      muestra una hora de pared calculada en una zona y la escritura la interpreta en otra. Se ve
+      recién cuando alguien nota que un turno se movió solo.
+    - **No es hipotético: es exactamente lo que se acaba de arreglar en el turnero.** El par estaba
+      **partido entre dos archivos con criterios de zona distintos** — la escritura era un
+      `new Date(...).toISOString()` **duplicado a mano** en `turno-form.tsx` y `block-slot-modal.tsx`,
+      y la lectura vivía en un `reformatDateForInput` que usaba `getTimezoneOffset()`
+      (`lib/utils/fecha-input.ts`, hoy **eliminado**). Los dos usaban la zona del **navegador**, así
+      que eran auto-consistentes por casualidad y el bug no se veía; pero convertir solo uno al
+      migrarlos habría movido los turnos.
+    - **Decisión de producto vigente: el turnero opera en HORA DEL CONSULTORIO, no del dispositivo.**
+      Un turno a las 14:00 es a las 14:00 en el consultorio, **lo mire quien lo mire y desde donde
+      sea**. Antes el médico de viaje veía sus turnos en la hora de su destino.
+
+    - **Qué recibe y qué devuelve cada una:**
+      - `parseFechaHoraAR('YYYY-MM-DDTHH:mm')` → `Date`. También acepta `'YYYY-MM-DD'` a secas, que
+        resuelve a la **medianoche AR**. El llamador decide la serialización (`.toISOString()` para
+        mandarlo al servidor).
+      - `formatParaInputAR(instante)` → `'YYYY-MM-DDTHH:mm'`. Acepta string ISO **con offset** o
+        `Date`. ⚠ Tiene una rama para valores **`'YYYY-MM-DD'` sin hora** que **NO convierte zona**:
+        les pega `T00:00` y listo. Es a propósito — pasarlos por el formateo los leería como
+        medianoche **UTC**, que en AR cae a las **21:00 del día anterior**, y el input abriría en el
+        día equivocado. Hoy ningún llamador la alcanza (`calendar-view.tsx` ya resuelve la selección
+        de la vista mes antes de pasarla), pero se conserva como red.
     - **Por qué existe (bug real, no precaución):** el usuario elige `2026-08-20` en un
       `<input type="date">` y `14:00` en un `<input type="time">`, y esos strings son hora de
       **pared** argentina, **sin offset**. Un ISO date-time sin offset lo interpreta el motor en la
@@ -1088,10 +1133,17 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
     - ⚠ **Ante una entrada inválida devuelve `Invalid Date`, NO lanza** — como `new Date`, y a
       diferencia de `formatFechaAR` (que sí lanza). **El llamador debe chequear** con
       `isNaN(d.getTime())` antes de usarlo.
-    - **Caso testigo:** la hora del próximo control de la HC. La columna
-      `consultas.proximo_turno_sugerido` era `DATE` y **descartaba la hora** (se agendaba todo a las
-      09:00); la migración **041** la pasó a `timestamptz` y el formulario dejó de perderla gracias a
-      este helper. Ver `PENDIENTES.md` → Bloque A → *Bugs menores detectados*.
+    - **Los DOS consumidores del par, hoy:**
+      1. **La hora del próximo control de la HC** (`consultas/consulta-detail.tsx`) — el caso que
+         originó el helper. La columna `consultas.proximo_turno_sugerido` era `DATE` y **descartaba
+         la hora** (se agendaba todo a las 09:00); la migración **041** la pasó a `timestamptz` y el
+         formulario dejó de perderla. Ver `PENDIENTES.md` → Bloque A → *Bugs menores detectados*.
+      2. **El turnero** (`turnero/turno-form.tsx` y `turnero/block-slot-modal.tsx`), desde la tanda
+         que unificó su zona horaria. Es el que usa **el par completo**, en los 12 sitios que llenan
+         sus `<input type="datetime-local">` más los 2 que arman el payload.
+      ⚠ **Los dos son Client Components**, y eso importa: la nota 18 acota su regla al servidor
+      porque el navegador ya está en la zona del usuario, pero acá **la zona del usuario es
+      justamente el problema**. Que el código corra en el cliente **NO** exime de fijar `TZ_AR`.
 26. **Un valor centinela compartido entre una Server Action y un componente cliente vive en un
     archivo de TIPOS, no en la action.** Un módulo **`'use server'`** solo puede exportar **funciones
     async**: una `export const` ahí **rompe el build**. Así que cuando el productor (la action) y el
