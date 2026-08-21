@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2, Ban, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { BloqueoFormData, bloqueoAgendaSchema } from '@/lib/validations/turno.schema'
-import { reformatDateForInput } from '@/lib/utils/fecha-input'
+import { formatParaInputAR, parseFechaHoraAR } from '@/lib/utils/format-date'
 import type { BloqueoAgenda } from '@/types'
 
 import {
@@ -48,18 +48,14 @@ interface BlockSlotModalProps {
   onSaved: () => void
 }
 
-function formatDateToIsoOutput(localString: string) {
-    return new Date(localString).toISOString()
-}
-
 export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, onSaved }: BlockSlotModalProps) {
   const [isLoading, setIsLoading] = useState(false)
 
   const form = useForm<BloqueoFormData>({
     resolver: zodResolver(bloqueoAgendaSchema),
     defaultValues: {
-      fecha_inicio: initialDates ? reformatDateForInput(initialDates.start) : '',
-      fecha_fin: initialDates ? reformatDateForInput(initialDates.end) : '',
+      fecha_inicio: initialDates ? formatParaInputAR(initialDates.start) : '',
+      fecha_fin: initialDates ? formatParaInputAR(initialDates.end) : '',
       motivo: '',
       es_recurrente: false
     }
@@ -69,15 +65,15 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
     if (open) {
       if (initialData) {
         form.reset({
-          fecha_inicio: reformatDateForInput(initialData.fecha_inicio),
-          fecha_fin: reformatDateForInput(initialData.fecha_fin),
+          fecha_inicio: formatParaInputAR(initialData.fecha_inicio),
+          fecha_fin: formatParaInputAR(initialData.fecha_fin),
           motivo: initialData.motivo || '',
           es_recurrente: initialData.es_recurrente || false
         })
       } else if (initialDates) {
         form.reset({
-          fecha_inicio: reformatDateForInput(initialDates.start),
-          fecha_fin: reformatDateForInput(initialDates.end),
+          fecha_inicio: formatParaInputAR(initialDates.start),
+          fecha_fin: formatParaInputAR(initialDates.end),
           motivo: '',
           es_recurrente: false
         })
@@ -86,32 +82,32 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
   }, [initialDates, initialData, open, form])
 
   async function onDelete() {
-      if (!initialData) return
-      setIsLoading(true)
-      try {
-          const response = await fetch(`/api/turnero/bloqueos/${initialData.id}`, { method: 'DELETE' })
-          if (!response.ok) {
-              const err = await response.json()
-              throw new Error(err.error || 'Error al eliminar')
-          }
-          toast.success('Bloqueo eliminado')
-          onSaved()
-          onOpenChange(false)
-      } catch (e) {
-          const description = e instanceof Error ? e.message : 'Error inesperado'
-          toast.error('Error al eliminar', { description })
-      } finally {
-          setIsLoading(false)
+    if (!initialData) return
+    setIsLoading(true)
+    try {
+      const response = await fetch(`/api/turnero/bloqueos/${initialData.id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || 'Error al eliminar')
       }
+      toast.success('Bloqueo eliminado')
+      onSaved()
+      onOpenChange(false)
+    } catch (e) {
+      const description = e instanceof Error ? e.message : 'Error inesperado'
+      toast.error('Error al eliminar', { description })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   async function onSubmit(data: BloqueoFormData) {
     setIsLoading(true)
     try {
       const payload = {
-          ...data,
-          fecha_inicio: formatDateToIsoOutput(data.fecha_inicio),
-          fecha_fin: formatDateToIsoOutput(data.fecha_fin)
+        ...data,
+        fecha_inicio: parseFechaHoraAR(data.fecha_inicio).toISOString(),
+        fecha_fin: parseFechaHoraAR(data.fecha_fin).toISOString()
       }
 
       const method = initialData ? 'PATCH' : 'POST'
@@ -124,7 +120,7 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
 
       if (!response.ok) {
         const errorData = await response.json()
-        throw new Error(errorData.error)
+        throw new Error(errorData.error || 'Error al guardar')
       }
 
       toast.success(initialData ? 'Bloqueo actualizado' : 'Horario bloqueado exitosamente')
@@ -160,48 +156,48 @@ export function BlockSlotModal({ open, onOpenChange, initialDates, initialData, 
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             
             <div className="grid grid-cols-2 gap-4">
-               <FormField
-                  control={form.control}
-                  name="fecha_inicio"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Inicio</FormLabel>
-                      <FormControl>
-                        <Input type="datetime-local" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="fecha_fin"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Fin</FormLabel>
-                      <FormControl>
-                        <Input type="datetime-local" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              <FormField
+                control={form.control}
+                name="fecha_inicio"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Inicio</FormLabel>
+                    <FormControl>
+                      <Input type="datetime-local" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="fecha_fin"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Fin</FormLabel>
+                    <FormControl>
+                      <Input type="datetime-local" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
 
-             <FormField
+            <FormField
               control={form.control}
               name="motivo"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Motivo <span className="text-muted-foreground font-normal">(opcional)</span></FormLabel>
                   <FormControl>
-                     <Textarea
-                       placeholder="Ej: Congreso médico, vacaciones, motivo personal..."
-                       className="resize-none"
-                       rows={3}
-                       {...field}
-                       value={field.value || ''}
-                     />
+                    <Textarea
+                      placeholder="Ej: Congreso médico, vacaciones, motivo personal..."
+                      className="resize-none"
+                      rows={3}
+                      {...field}
+                      value={field.value || ''}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
