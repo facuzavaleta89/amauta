@@ -104,3 +104,35 @@ export function formatFechaLarga(fecha: string | Date): string {
 export function parseFechaHoraAR(fechaHoraLocal: string): Date {
   return fromZonedTime(fechaHoraLocal, TZ_AR)
 }
+
+/**
+ * INVERSA de `parseFechaHoraAR`: instante → string de hora de PARED ARGENTINA en el
+ * formato `"YYYY-MM-DDTHH:mm"` que exige un `<input type="datetime-local">`.
+ *
+ * Las dos forman el PAR que usa todo formulario con inputs de fecha/hora:
+ *   base → `formatParaInputAR` → el usuario edita → `parseFechaHoraAR` → base
+ * y las dos anclan en `TZ_AR`, así que el round-trip conserva el instante **sin importar
+ * en qué zona esté el dispositivo**. ⚠ Convertir una sola de las dos ROMPE esa simetría:
+ * el input mostraría una hora de pared y la escritura la interpretaría en otra zona, y un
+ * turno abierto y guardado SIN EDITAR se movería solo. Si se toca una, se tocan las dos.
+ *
+ * Reemplazó a `reformatDateForInput` (`lib/utils/fecha-input.ts`, eliminado), que hacía lo
+ * mismo con `getTimezoneOffset()` — o sea, en la zona del NAVEGADOR. Andaba bien en
+ * Argentina y mentía en cualquier otra zona.
+ *
+ * ⚠ **La rama sin `"T"` NO convierte zona, y es a propósito.** Un valor `"YYYY-MM-DD"` es
+ * un DÍA, no un instante: se le pega `T00:00` y listo. Pasarlo por el formateo sería un
+ * bug — `new Date("2026-08-20")` es medianoche **UTC**, que en AR (−3) cae a las 21:00 del
+ * **día anterior**, así que el input abriría en el día equivocado. Hoy esa rama no la
+ * alcanza ningún llamador (`calendar-view.tsx` ya resuelve la selección de la vista mes a
+ * `${dia}T09:00` antes de pasarla), pero se conserva como red.
+ *
+ * @param fecha - Instante: string ISO (timestamptz, con offset) o `Date`. También acepta
+ *                `"YYYY-MM-DD"`, que devuelve tal cual con `T00:00`.
+ */
+export function formatParaInputAR(fecha: string | Date): string {
+  if (typeof fecha === 'string' && !fecha.includes('T')) {
+    return `${fecha}T00:00`
+  }
+  return formatFechaAR(fecha, "yyyy-MM-dd'T'HH:mm")
+}

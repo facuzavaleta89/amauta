@@ -8,7 +8,7 @@ import { Loader2, CalendarPlus, Trash2, FileText, Stethoscope, GraduationCap, Us
 import type { LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
-import { reformatDateForInput } from '@/lib/utils/fecha-input'
+import { formatParaInputAR, parseFechaHoraAR } from '@/lib/utils/format-date'
 import { usePermisos } from '@/contexts/permisos-context'
 import type { PacienteBusqueda, TurnoConPaciente } from '@/types'
 
@@ -79,10 +79,6 @@ interface TurnoFormModalProps {
   onSwitchToBlock: () => void
 }
 
-function formatDateToIsoOutput(localString: string) {
-    return new Date(localString).toISOString()
-}
-
 export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, onSaved, onSwitchToBlock }: TurnoFormModalProps) {
   const [isLoading, setIsLoading] = useState(false)
 
@@ -96,8 +92,8 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
     defaultValues: {
       paciente_id: undefined,
       paciente_nombre_libre: '',
-      fecha_inicio: initialDates ? reformatDateForInput(initialDates.start) : '',
-      fecha_fin: initialDates ? reformatDateForInput(initialDates.end) : '',
+      fecha_inicio: initialDates ? formatParaInputAR(initialDates.start) : '',
+      fecha_fin: initialDates ? formatParaInputAR(initialDates.end) : '',
       motivo: '',
       notas: '',
       estado: 'pendiente',
@@ -129,18 +125,41 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
   }, [])
 
   useEffect(() => {
+    // `cancelled` cubre lo que `clearTimeout` NO puede: ese solo cancela el timeout
+    // pendiente, pero si el usuario sigue tecleando mientras un fetch YA salió, esa
+    // respuesta (o su error) llegaría igual y pisaría el resultado de una búsqueda más
+    // nueva — o dispararía un toast por un tecleo que el usuario ya abandonó. Mismo
+    // patrón que el efecto de `changeView` en `calendar-view.tsx`.
+    let cancelled = false
+
     const delayDebounceFn = setTimeout(async () => {
       if (searchTerm.trim().length >= 3) {
         setSearching(true)
         try {
           const res = await fetch(`/api/pacientes?q=${encodeURIComponent(searchTerm)}`)
+          if (!res.ok) {
+            const errorData = await res.json()
+            throw new Error(errorData.error || 'No se pudo buscar pacientes')
+          }
           const data = await res.json()
+          if (cancelled) return
           setPacientes(data.data || [])
           setShowDropdown(true)
         } catch (e) {
-           console.error(e)
+          if (cancelled) return
+          // ⚠ Una búsqueda que FALLA no es una búsqueda SIN RESULTADOS. Antes las dos
+          // terminaban igual —lista vacía y dropdown abierto—, así que un 403 por
+          // permisos o un 429 por rate limit se leían como "no existe ese paciente".
+          // Cerrar el dropdown evita esa lectura falsa; el aviso dice qué pasó de verdad.
+          setPacientes([])
+          setShowDropdown(false)
+          const description = e instanceof Error ? e.message : 'Error inesperado'
+          // ⚠ `id` fijo para NO apilar avisos: el efecto corre con debounce en cada
+          // tecleo, así que con la API caída habría un toast por letra. Con un id
+          // repetido, Sonner REEMPLAZA el que ya está abierto en vez de sumar otro.
+          toast.error('Error al buscar pacientes', { description, id: 'busqueda-pacientes' })
         } finally {
-          setSearching(false)
+          if (!cancelled) setSearching(false)
         }
       } else {
         setPacientes([])
@@ -148,7 +167,10 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
       }
     }, 400)
 
-    return () => clearTimeout(delayDebounceFn)
+    return () => {
+      cancelled = true
+      clearTimeout(delayDebounceFn)
+    }
   }, [searchTerm])
 
   // On open/close: reset form and clear search state
@@ -158,8 +180,8 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
         form.reset({
           paciente_id: initialData.paciente_id,
           paciente_nombre_libre: initialData.paciente_nombre_libre || '',
-          fecha_inicio: reformatDateForInput(initialData.fecha_inicio),
-          fecha_fin: reformatDateForInput(initialData.fecha_fin),
+          fecha_inicio: formatParaInputAR(initialData.fecha_inicio),
+          fecha_fin: formatParaInputAR(initialData.fecha_fin),
           motivo: initialData.motivo || '',
           notas: initialData.notas || '',
           estado: initialData.estado || 'pendiente',
@@ -178,8 +200,8 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
         form.reset({
           paciente_id: undefined,
           paciente_nombre_libre: '',
-          fecha_inicio: reformatDateForInput(initialDates.start),
-          fecha_fin: reformatDateForInput(initialDates.end),
+          fecha_inicio: formatParaInputAR(initialDates.start),
+          fecha_fin: formatParaInputAR(initialDates.end),
           motivo: '',
           notas: '',
           estado: 'pendiente',
@@ -209,32 +231,32 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
   }, [esTurnoMedico, form])
 
   async function onDelete() {
-      if (!initialData) return
-      setIsLoading(true)
-      try {
-          const response = await fetch(`/api/turnero/${initialData.id}`, { method: 'DELETE' })
-          if (!response.ok) {
-              const err = await response.json()
-              throw new Error(err.error || 'Error al eliminar')
-          }
-          toast.success('Turno eliminado')
-          onSaved()
-          onOpenChange(false)
-      } catch (e) {
-          const description = e instanceof Error ? e.message : 'Error inesperado'
-          toast.error('Error al eliminar', { description })
-      } finally {
-          setIsLoading(false)
+    if (!initialData) return
+    setIsLoading(true)
+    try {
+      const response = await fetch(`/api/turnero/${initialData.id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || 'Error al eliminar')
       }
+      toast.success('Turno eliminado')
+      onSaved()
+      onOpenChange(false)
+    } catch (e) {
+      const description = e instanceof Error ? e.message : 'Error inesperado'
+      toast.error('Error al eliminar', { description })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   async function onSubmit(data: TurnoFormData) {
     setIsLoading(true)
     try {
       const payload = {
-          ...data,
-          fecha_inicio: formatDateToIsoOutput(data.fecha_inicio),
-          fecha_fin: formatDateToIsoOutput(data.fecha_fin)
+        ...data,
+        fecha_inicio: parseFechaHoraAR(data.fecha_inicio).toISOString(),
+        fecha_fin: parseFechaHoraAR(data.fecha_fin).toISOString()
       }
 
       const method = initialData ? 'PATCH' : 'POST'
@@ -247,7 +269,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
 
       if (!response.ok) {
         const errorData = await response.json()
-        throw new Error(errorData.error)
+        throw new Error(errorData.error || 'Error al guardar')
       }
 
       toast.success(initialData ? 'Turno actualizado' : 'Turno agendado correctamente')
@@ -283,9 +305,9 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
 
         {!initialData && (
           <div className="flex justify-start -mt-1">
-             <Button type="button" variant="link" className="px-0 h-auto text-xs text-muted-foreground" onClick={onSwitchToBlock}>
-               ¿Necesitás bloquear este horario?
-             </Button>
+            <Button type="button" variant="link" className="px-0 h-auto text-xs text-muted-foreground" onClick={onSwitchToBlock}>
+              ¿Necesitás bloquear este horario?
+            </Button>
           </div>
         )}
 
@@ -374,33 +396,33 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                     </FormControl>
                     {showDropdown && (
                       <div className="absolute top-[4.2rem] left-0 w-full bg-popover text-popover-foreground border rounded-lg shadow-lg z-50 max-h-56 overflow-y-auto">
-                         {searching ? (
-                            <div className="p-3 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Buscando...</div>
-                         ) : pacientes.length > 0 ? (
-                            <ul className="py-1">
-                               {pacientes.map(p => (
-                                 <li
-                                   key={p.id}
-                                   className="px-3 py-2 text-sm hover:bg-muted cursor-pointer flex justify-between items-center"
-                                   onClick={() => {
-                                      form.setValue('paciente_id', p.id)
-                                      form.setValue('paciente_nombre_libre', p.nombre_completo)
-                                      form.clearErrors('paciente_id')
-                                      form.clearErrors('paciente_nombre_libre')
-                                      setSearchTerm('')
-                                      setShowDropdown(false)
-                                   }}
-                                 >
-                                    <span className="font-medium">{p.nombre_completo}</span>
-                                    <span className="text-xs text-muted-foreground">DNI: {p.dni || 'S/N'}</span>
-                                 </li>
-                               ))}
-                            </ul>
-                         ) : (
-                            <div className="p-3 text-sm text-muted-foreground">
-                              No se encontraron pacientes.
-                            </div>
-                         )}
+                        {searching ? (
+                          <div className="p-3 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Buscando...</div>
+                        ) : pacientes.length > 0 ? (
+                          <ul className="py-1">
+                            {pacientes.map(p => (
+                              <li
+                                key={p.id}
+                                className="px-3 py-2 text-sm hover:bg-muted cursor-pointer flex justify-between items-center"
+                                onClick={() => {
+                                  form.setValue('paciente_id', p.id)
+                                  form.setValue('paciente_nombre_libre', p.nombre_completo)
+                                  form.clearErrors('paciente_id')
+                                  form.clearErrors('paciente_nombre_libre')
+                                  setSearchTerm('')
+                                  setShowDropdown(false)
+                                }}
+                              >
+                                <span className="font-medium">{p.nombre_completo}</span>
+                                <span className="text-xs text-muted-foreground">DNI: {p.dni || 'S/N'}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="p-3 text-sm text-muted-foreground">
+                            No se encontraron pacientes.
+                          </div>
+                        )}
                       </div>
                     )}
                     <FormMessage />
@@ -411,32 +433,32 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
 
             {/* ── Fechas ─────────────────────────────────────────── */}
             <div className="grid grid-cols-2 gap-4">
-               <FormField
-                  control={form.control}
-                  name="fecha_inicio"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Inicio</FormLabel>
-                      <FormControl>
-                        <Input type="datetime-local" step={600} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="fecha_fin"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Fin</FormLabel>
-                      <FormControl>
-                        <Input type="datetime-local" step={600} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              <FormField
+                control={form.control}
+                name="fecha_inicio"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Inicio</FormLabel>
+                    <FormControl>
+                      <Input type="datetime-local" step={600} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="fecha_fin"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Fin</FormLabel>
+                    <FormControl>
+                      <Input type="datetime-local" step={600} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
 
             {/* ── Motivo / Título ──────────────────────────────────── */}
@@ -452,14 +474,14 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                     }
                   </FormLabel>
                   <FormControl>
-                     <Input
-                       placeholder={esTurnoMedico
-                         ? 'Control general, guardia, seguimiento...'
-                         : 'Ej: Congreso de cardiología, Reunión administrativa...'
-                       }
-                       {...field}
-                       value={field.value || ''}
-                     />
+                    <Input
+                      placeholder={esTurnoMedico
+                        ? 'Control general, guardia, seguimiento...'
+                        : 'Ej: Congreso de cardiología, Reunión administrativa...'
+                      }
+                      {...field}
+                      value={field.value || ''}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -496,14 +518,14 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
               />
             )}
 
-             <FormField
+            <FormField
               control={form.control}
               name="notas"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Notas internas <span className="text-muted-foreground font-normal">(opcional)</span></FormLabel>
                   <FormControl>
-                     <Textarea placeholder="Observaciones para el médico..." className="resize-none" rows={2} {...field} value={field.value || ''} />
+                    <Textarea placeholder="Observaciones para el médico..." className="resize-none" rows={2} {...field} value={field.value || ''} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
