@@ -55,8 +55,11 @@ export function Bandeja({ threads: initialThreads, currentUserId, hayMasInicial,
    * un array nuevo en cada render del servidor, así que disparaba en CADA revalidación
    * de la ruta — incluida la que produce `marcarMensajeLeido` al ABRIR CUALQUIER HILO.
    * O sea: el solo hecho de leer un mensaje descartaba todas las páginas cargadas de
-   * más, y si el hilo abierto estaba entre las descartadas, `hiloAbierto` pasaba a
-   * `null` y EL MODAL SE CERRABA SOLO MIENTRAS EL USUARIO LO LEÍA.
+   * más, y si el hilo abierto estaba entre las descartadas, la búsqueda que hoy alimenta
+   * a `raizEnLista` pasaba a `null` y EL MODAL SE CERRABA SOLO MIENTRAS EL USUARIO LO
+   * LEÍA. (Desde que el modal se abre por ID esa consecuencia ya no podría darse —el
+   * modal no depende de la lista—, pero el merge sigue siendo lo correcto: sin él la
+   * BANDEJA perdería igual las páginas cargadas de más.)
    *
    * Ahora indexa por id: lo que llega del servidor pisa su versión vieja (trae el
    * estado de lectura fresco) y lo acumulado que el servidor no menciona SE CONSERVA.
@@ -135,13 +138,24 @@ export function Bandeja({ threads: initialThreads, currentUserId, hayMasInicial,
   // tiene el param en el render del servidor y el primer render del cliente
   // coincide — no hay mismatch ni hace falta un <Suspense> alrededor.
   const hiloId = searchParams.get('hilo')
-  // ⚠ Si el id no está entre los threads cargados, el modal simplemente no abre
-  // (no rompe). Desde la paginación (migración 047) la lista ya no es "las 100 más
-  // recientes" sino LAS CARGADAS HASTA AHORA: la primera página trae `BANDEJA_PAGINA`
-  // hilos y cada "cargar más" suma otra tanda. Un hilo que todavía no se cargó queda
-  // fuera — y el orden por actividad hace que ese caso sea más raro, porque los hilos
-  // con mensajes recientes suben. Traer un hilo por id es otro frente, no éste.
-  const hiloAbierto = hiloId ? threads.find((t) => t.id === hiloId) ?? null : null
+  // La raíz, SI está entre los hilos ya cargados. Desde la paginación (migración 047)
+  // la lista no es "las 100 más recientes" sino LAS CARGADAS HASTA AHORA: la primera
+  // página trae `BANDEJA_PAGINA` hilos y cada "cargar más" suma otra tanda, así que un
+  // hilo viejo puede no estar acá.
+  //
+  // ⚠ Que no esté YA NO IMPIDE ABRIR EL MODAL: antes esto era `hiloAbierto` y el modal
+  // se renderizaba solo si daba un objeto, así que un deep-link a un hilo fuera de las
+  // páginas cargadas no producía NADA —ni error, ni spinner, ni aviso—. Hoy alcanza con
+  // el id: el modal resuelve el hilo por su cuenta (`obtenerHilo`) y modela los estados
+  // de "cargando" y "no disponible". Esta búsqueda quedó como ATAJO DE PINTADO, para que
+  // el caso común —clic en un hilo de la lista— siga mostrando contenido de inmediato en
+  // vez de esperar al fetch.
+  //
+  // ⚠ El hilo traído por id NO se agrega a `threads`: la lista ordena por actividad
+  // reciente y meter ahí un hilo viejo lo dejaría mezclado entre los nuevos (o al fondo,
+  // o sea invisible igual). Se abre el modal y nada más; al cerrarlo la bandeja queda
+  // como estaba.
+  const raizEnLista = hiloId ? threads.find((t) => t.id === hiloId) ?? null : null
 
   /**
    * Escribe el param `hilo` en la URL. Usa la History API nativa —que Next
@@ -424,9 +438,15 @@ export function Bandeja({ threads: initialThreads, currentUserId, hayMasInicial,
       {/* Modal de hilo. Cerrar = sacar el `hilo` de la URL, con `replace` para no
           dejar en el historial un estado de "modal cerrado" y para que el param
           viejo no quede pisando un clic posterior en OTRO mensaje. */}
-      {hiloAbierto && (
+      {hiloId && (
         <HiloModal
-          mensajeRaiz={hiloAbierto}
+          // ⚠ `key` para que abrir OTRO hilo REMONTE el modal: su carga corre al montar
+          // y su estado (hilo cargado, respuesta a medio escribir, fallo de apertura) es
+          // por conversación. Sin la key, cambiar el `?hilo=` con el modal abierto
+          // dejaría en pantalla el hilo anterior.
+          key={hiloId}
+          hiloId={hiloId}
+          mensajeRaiz={raizEnLista}
           currentUserId={currentUserId}
           onClose={() => sincronizarUrl(null, 'replace')}
           onMensajeEnviado={handleRespuestaEnviada}
