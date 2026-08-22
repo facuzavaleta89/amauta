@@ -2,7 +2,7 @@
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→044).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→047).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -102,6 +102,27 @@
 -- migración que lo registrara: la 045 es un no-op contra esa base y existe para que un
 -- entorno nuevo no reviva la ambigüedad. Ver PENDIENTES.md → "Esquema sin migración
 -- fuente", donde el episodio quedó como caso testigo del ítem de consolidación de baseline),
+-- 046 (RLS de mensajería: las 4 políticas de `mensajes_internos` pasan a exigir
+-- `check_permiso(auth.uid(), 'acceso_mensajeria')` —NINGUNA lo hacía: el permiso nació en la
+-- 015, dos migraciones antes que la mensajería, y nadie lo cableó— y a aplicar el TENANT
+-- donde faltaba: `mensajes_ver` solo lo pedía en la rama grupal, así que un mensaje
+-- INDIVIDUAL sobrevivía a un cambio de médico. Hecha con ALTER POLICY (cambia solo las
+-- expresiones; el rol ya era `authenticated` desde la 042). ⚠ La asimetría entre LEER y
+-- BORRAR —el titular borra un individual entre asistentes pero NO lo lee— se revisó y se
+-- DECIDIÓ CONSERVAR: es deliberada a partir de acá, no un descuido (CLAUDE.md → nota 29).
+-- ⚠ `mensajes_lecturas` queda AFUERA a propósito: no tiene columna de tenant y sus dos
+-- políticas ya acotan a `user_id = auth.uid()`. Incluye además `SET search_path = public`
+-- en `get_medico_id()`, la única SECURITY DEFINER del esquema que no lo fijaba —y la más
+-- usada—; el cuerpo no cambia ni un carácter),
+-- 047 (`mensajes_internos.ultima_actividad_at` TIMESTAMPTZ NOT NULL DEFAULT now(), con
+-- backfill por GREATEST(raíz, max(hijos)): la bandeja ordenaba por `created_at` de la RAÍZ,
+-- así que un hilo viejo con una respuesta de hoy NO subía. La mantiene el trigger
+-- `mensajes_actividad_trigger` (AFTER INSERT, WHEN parent_id IS NOT NULL) sobre
+-- `bump_actividad_hilo()`, SECURITY DEFINER ⚠ porque `mensajes_marcar_leido` bloquearía su
+-- UPDATE en 2 de los 3 casos —y en SILENCIO—; SIN rama de DELETE a propósito. Dos índices
+-- PARCIALES nuevos: `mensajes_bandeja_idx` (orden + keyset de la paginación) y
+-- `mensajes_parent_idx`, que cierra una carencia preexistente [3 consultas calientes
+-- filtran por `parent_id` y ningún índice lo cubría]. Ver CLAUDE.md → nota 30),
 --
 -- ⚠ NO reemplaza al sistema de migraciones. Las migraciones reales — la fuente
 --   de verdad para aplicar cambios — siguen viviendo en supabase/migrations/.
@@ -703,12 +724,29 @@ CREATE TABLE public.mensajes_internos (
   leido_at        TIMESTAMPTZ,
   parent_id       UUID        REFERENCES public.mensajes_internos(id) ON DELETE SET NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- migración 047. Fecha del último mensaje del HILO. Solo es significativa en los
+  -- mensajes RAÍZ (parent_id IS NULL), que son los que lista la bandeja: en una respuesta
+  -- vale su propio created_at y NO SE LEE NUNCA. La mantiene el trigger
+  -- `mensajes_actividad_trigger` (ver TRIGGERS). ⚠ NO se recalcula al borrar, a propósito.
+  -- ⚠ No se llama `updated_at` a propósito: acá significa "pasó algo en el HILO", no "se
+  -- modificó esta fila" — el nombre convencional invitaría a colgarle set_updated_at().
+  ultima_actividad_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT mensajes_destinatario_check
     CHECK (es_grupal = true OR destinatario_id IS NOT NULL)
 );
 CREATE INDEX mensajes_destinatario_idx  ON public.mensajes_internos(destinatario_id, created_at DESC);
 CREATE INDEX mensajes_remitente_idx     ON public.mensajes_internos(remitente_id, created_at DESC);
 CREATE INDEX mensajes_medico_grupal_idx ON public.mensajes_internos(medico_id, es_grupal, created_at DESC);
+-- migración 047 — los dos PARCIALES:
+--   · bandeja: tenant primero (igualdad) y columna de orden después, así sirve al WHERE y al
+--     ORDER BY de una sola pasada, y la paginación por keyset lo recorre directo.
+--   · parent : cierra una carencia PREEXISTENTE — filtran por `parent_id` el paso 3 de
+--     `obtenerBandeja`, `obtenerHilo` y el borrado de respuestas de `eliminarMensaje`, y
+--     ninguno de los 3 índices de arriba lo cubría.
+CREATE INDEX mensajes_bandeja_idx ON public.mensajes_internos(medico_id, ultima_actividad_at DESC)
+  WHERE parent_id IS NULL;
+CREATE INDEX mensajes_parent_idx  ON public.mensajes_internos(parent_id, created_at)
+  WHERE parent_id IS NOT NULL;
 
 -- ── mensajes_lecturas ───────────────────────────────────────────────────────
 -- Registro de lecturas de mensajes grupales (uno por usuario que leyó).
@@ -796,6 +834,10 @@ $$;
 
 -- Resuelve el tenant key del usuario actual: su id si es médico, su medico_id si
 -- es asistente. Base de casi todas las políticas RLS multi-tenant.
+-- ⚠ `SET search_path = public` desde la migración 046: era la ÚNICA SECURITY DEFINER del
+--   esquema sin fijarlo —y la más usada—. Riesgo de comportamiento nulo: el cuerpo no
+--   cambió y ya calificaba `public.profiles`. Mismo criterio que la 025 aplicó a
+--   verificar_documento() y log_turno_cambio().
 CREATE OR REPLACE FUNCTION public.get_medico_id()
 RETURNS uuid AS $$
   SELECT CASE
@@ -804,7 +846,7 @@ RETURNS uuid AS $$
     ELSE NULL
   END
   FROM public.profiles WHERE id = auth.uid()
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
+$$ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public;
 
 -- Helpers SECURITY DEFINER para evitar recursión RLS en profiles.
 CREATE OR REPLACE FUNCTION public.get_user_role(user_id uuid)
@@ -908,6 +950,49 @@ BEGIN
 END;
 $$;
 
+-- Trigger: sube `mensajes_internos.ultima_actividad_at` de la RAÍZ cuando entra una
+-- respuesta. Migración 047.
+--
+-- ⚠⚠ POR QUÉ ES SECURITY DEFINER, Y DE QUÉ DEPENDE ESO
+--   Hace un UPDATE sobre `mensajes_internos`, así que tiene que atravesar
+--   `mensajes_marcar_leido`, la ÚNICA política de UPDATE de la tabla
+--   (NOT es_grupal AND destinatario_id = auth.uid()). Evaluada contra la RAÍZ, esa política
+--   BLOQUEA 2 de los 3 casos: raíz grupal (NOT es_grupal = FALSE) y raíz individual
+--   respondida por su REMITENTE original (el destinatario de la raíz es el otro). Solo pasa
+--   el caso "me escribieron y contesto".
+--   ⚠ Y bloquearía EN SILENCIO: un UPDATE cuyas filas no pasan el USING no da error, afecta
+--   0 filas (la lección de la 033 aplicada a un trigger). SECURITY DEFINER lo hace correr
+--   como el owner, que bypassa RLS — igual que log_turno_cambio() (040).
+--   ⚠⚠ ESO EXIGE QUE LA TABLA NO TENGA `FORCE ROW LEVEL SECURITY`. Hoy NINGUNA tabla del
+--   esquema la declara. Si alguna vez se activara sobre `mensajes_internos`, ESTE TRIGGER
+--   DEJARÍA DE ACTUALIZAR LA RAÍZ, EN SILENCIO, y el orden de la bandeja se congelaría sin
+--   que nadie lo note. No hay forma de que la base avise.
+--
+-- ⚠ RECURSIÓN: no la hay porque es AFTER INSERT y ejecuta un UPDATE (un UPDATE no dispara
+--   un trigger de INSERT). Agregarle `OR UPDATE` al trigger SÍ la introduciría.
+CREATE OR REPLACE FUNCTION public.bump_actividad_hilo()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  -- Las tres condiciones importan:
+  --   1. id = NEW.parent_id                  → la raíz del hilo.
+  --   2. medico_id = NEW.medico_id           → GUARDA DE TENANT. La FK garantiza que el
+  --      padre exista, no que sea del mismo consultorio: sin esto, una respuesta con
+  --      `parent_id` de otro tenant subiría el hilo ajeno al tope de su bandeja.
+  --   3. ultima_actividad_at < NEW.created_at → MONOTONÍA. Un insert con fecha vieja
+  --      (importación, backdating) no puede BAJAR la actividad; y es la red anti-recursión.
+  -- ⚠ Si ninguna fila coincide NO PASA NADA y el INSERT sigue: el trigger no debe abortar
+  -- el envío de un mensaje válido por una anomalía de parentesco. Falla silenciosa POR
+  -- DISEÑO, al revés que el NOT NULL de la columna.
+  UPDATE public.mensajes_internos
+  SET    ultima_actividad_at = NEW.created_at
+  WHERE  id                  = NEW.parent_id
+    AND  medico_id           = NEW.medico_id
+    AND  ultima_actividad_at < NEW.created_at;
+
+  RETURN NEW;   -- en un trigger AFTER el retorno se ignora
+END;
+$$;
+
 -- Verificación pública de documentos (QR). SECURITY DEFINER: la usa el
 -- admin client (service_role) en /verificar/[codigo] sin login.
 -- Endurecida en la migración 025 (Ley 25.326, minimización de datos sensibles):
@@ -990,6 +1075,17 @@ CREATE TRIGGER set_notas_updated_at       BEFORE UPDATE ON public.notas         
 CREATE TRIGGER turno_audit_trigger
   AFTER INSERT OR UPDATE OR DELETE ON public.turnos
   FOR EACH ROW EXECUTE FUNCTION public.log_turno_cambio();
+
+-- migración 047. ⚠ La condición va EN EL TRIGGER y no dentro de la función: con un IF
+-- adentro, Postgres invocaría plpgsql para CADA raíz nueva y recién ahí saldría sin hacer
+-- nada. ⚠ SOLO INSERT: `OR UPDATE` introduciría recursión infinita, y la ausencia de
+-- `OR DELETE` es una decisión de producto (borrar la última respuesta NO recalcula, para
+-- que la lista no se reordene bajo el cursor del usuario). Ver `bump_actividad_hilo()`.
+CREATE TRIGGER mensajes_actividad_trigger
+  AFTER INSERT ON public.mensajes_internos
+  FOR EACH ROW
+  WHEN (NEW.parent_id IS NOT NULL)
+  EXECUTE FUNCTION public.bump_actividad_hilo();
 
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
@@ -1311,20 +1407,58 @@ CREATE POLICY "notas_update_own" ON public.notas FOR UPDATE TO authenticated USI
 CREATE POLICY "notas_delete_own" ON public.notas FOR DELETE TO authenticated USING (user_id = auth.uid());
 
 -- ── mensajes_internos ───────────────────────────────────────────────────────
+-- Las CUATRO reescritas por la migración 046 (con ALTER POLICY: cambió solo la expresión,
+-- el rol ya era `authenticated` desde la 042). Dos cambios transversales:
+--   · TODAS exigen ahora `check_permiso(auth.uid(), 'acceso_mensajeria')` — ninguna lo hacía.
+--     ⚠ NO deja afuera al titular: check_permiso() corta con TRUE si el rol es 'medico',
+--     antes de leer una sola columna de permiso.
+--   · El TENANT se aplica al mensaje entero y no solo a la rama grupal.
 CREATE POLICY "mensajes_ver" ON public.mensajes_internos
   FOR SELECT TO authenticated USING (
-    remitente_id = auth.uid()
-    OR (NOT es_grupal AND destinatario_id = auth.uid())
-    OR (es_grupal AND medico_id = get_medico_id()));
+    public.check_permiso(auth.uid(), 'acceso_mensajeria')
+    AND medico_id = get_medico_id()
+    AND (
+      remitente_id = auth.uid()
+      OR (NOT es_grupal AND destinatario_id = auth.uid())
+      OR es_grupal));
 CREATE POLICY "mensajes_insertar" ON public.mensajes_internos
-  FOR INSERT TO authenticated WITH CHECK (remitente_id = auth.uid() AND medico_id = get_medico_id());
+  FOR INSERT TO authenticated WITH CHECK (
+    public.check_permiso(auth.uid(), 'acceso_mensajeria')
+    AND remitente_id = auth.uid()
+    AND medico_id = get_medico_id());
+-- ⚠ El `NOT es_grupal` se CONSERVA y no hay que "arreglarlo": los grupales no admiten UPDATE
+-- por diseño (su lectura se registra en `mensajes_lecturas`, una fila por usuario).
 CREATE POLICY "mensajes_marcar_leido" ON public.mensajes_internos
-  FOR UPDATE TO authenticated USING (NOT es_grupal AND destinatario_id = auth.uid())
-  WITH CHECK (NOT es_grupal AND destinatario_id = auth.uid());
+  FOR UPDATE TO authenticated
+  USING (
+    public.check_permiso(auth.uid(), 'acceso_mensajeria')
+    AND medico_id = get_medico_id()
+    AND NOT es_grupal
+    AND destinatario_id = auth.uid())
+  WITH CHECK (
+    public.check_permiso(auth.uid(), 'acceso_mensajeria')
+    AND medico_id = get_medico_id()
+    AND NOT es_grupal
+    AND destinatario_id = auth.uid());
+-- ⚠ `medico_id = auth.uid()` se conserva TAL CUAL y NO se cambia por get_medico_id(): con
+-- auth.uid() entra SOLO el médico titular; con get_medico_id() entrarían sus asistentes, que
+-- resuelven al mismo tenant. Es lo que restringe el borrado al titular (regla de la 020).
+-- ⚠⚠ ASIMETRÍA DELIBERADA (desde la 046): el titular PUEDE BORRAR un individual entre dos de
+-- sus asistentes pero NO PUEDE LEERLO (`mensajes_ver` solo deja ver los individuales a
+-- remitente y destinatario). Hasta la 046 era accidental; ahora es una decisión de producto
+-- sobre privacidad. NO "corregirlo" sin tomarla explícitamente. Ver CLAUDE.md → nota 29,
+-- que documenta también su consecuencia sobre un `DELETE … RETURNING`.
 CREATE POLICY "mensajes_borrar" ON public.mensajes_internos
-  FOR DELETE TO authenticated USING (remitente_id = auth.uid() OR medico_id = auth.uid());
+  FOR DELETE TO authenticated USING (
+    public.check_permiso(auth.uid(), 'acceso_mensajeria')
+    AND (remitente_id = auth.uid() OR medico_id = auth.uid()));
 
 -- ── mensajes_lecturas ───────────────────────────────────────────────────────
+-- ⚠ Estas DOS quedaron FUERA de la migración 046, a propósito: la tabla no tiene columna de
+-- tenant (mensaje_id, user_id, leido_at) y ya acotan a `user_id = auth.uid()`, o sea que un
+-- usuario solo ve SUS PROPIAS lecturas — no hay fuga. Aplicarles el criterio pediría un
+-- EXISTS contra `mensajes_internos` (patrón `estudios`), y se decide aparte.
+-- ⚠ Sigue sin política de UPDATE: los upserts van con `ignoreDuplicates`.
 CREATE POLICY "lecturas_select_own" ON public.mensajes_lecturas
   FOR SELECT TO authenticated USING (user_id = auth.uid());
 CREATE POLICY "lecturas_insert_own" ON public.mensajes_lecturas
