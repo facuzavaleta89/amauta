@@ -101,7 +101,7 @@ del usuario actual.
 | `difusion_posts` / `difusion_envios` | Comunicación y su historial de envíos. `difusion_envios` es el **log de envíos**: una fila por destinatario, la escribe `POST /api/difusion/enviar` | `medico_id` |
 | `solicitudes_asistente` | Workflow de vinculación (onboarding). Unicidad **parcial** (`WHERE estado='pendiente'`, mig. 034): el historial ya no bloquea una solicitud nueva | — |
 | `notas` | Notas personales por usuario | `user_id` |
-| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). En la publicación `supabase_realtime` (mig. 023) y con `REPLICA IDENTITY FULL` (mig. 032), pero ⚠ la entrega en vivo **NO funciona y quedó DIFERIDA** — causa acotada a infraestructura de Supabase (ver `PENDIENTES.md` → Bloque A y `schema.sql` → REALTIME). ⚠ `mensajes_lecturas` **no tiene política de UPDATE**: los upserts van con `ignoreDuplicates` | `medico_id` / `user_id` |
+| `mensajes_internos` / `mensajes_lecturas` | Mensajería interna (individual/grupal). `ultima_actividad_at` (mig. **047**) es la columna por la que ORDENA y PAGINA la bandeja; la mantiene el trigger `mensajes_actividad_trigger` (ver nota 30). Sus 4 políticas exigen `acceso_mensajeria` + tenant desde la mig. **046** (ver nota 29). En la publicación `supabase_realtime` (mig. 023) y con `REPLICA IDENTITY FULL` (mig. 032), pero ⚠ la entrega en vivo **NO funciona y quedó DIFERIDA** — causa acotada a infraestructura de Supabase (ver `PENDIENTES.md` → Bloque A y `schema.sql` → REALTIME). ⚠ `mensajes_lecturas` **quedó FUERA de la 046 a propósito** (nota 29) y **no tiene política de UPDATE**: los upserts van con `ignoreDuplicates` | `medico_id` / `user_id` |
 | `notificaciones` | Avisos del sistema para el médico (turno agendado, recordatorio enviado). Estructura verificada y reconstruida en `schema.sql`; ⚠ **sigue sin migración fuente** | `medico_id` |
 
 Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()`,
@@ -158,6 +158,18 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 > y no reescribir una sola expresión. Hoy las **65** políticas del esquema `public` están en
 > `{authenticated}` y **ninguna** en `{public}`. Las dos tablas de la agenda son idénticas en criterio
 > de lectura y en rol.
+
+> ⚠ **Mensajería — `acceso_mensajeria` se EXIGE EN LA BASE desde la migración `046`.** Hasta ahí
+> **ninguna** de las 4 políticas de `mensajes_internos` lo miraba: el permiso nació en la `015`, dos
+> migraciones ANTES que la mensajería (`017`), y cuando llegó ese "uso futuro" nadie lo cableó a la
+> RLS — un asistente con el permiso en FALSE que le pegara a PostgREST directo leía, escribía y
+> borraba igual. Era el **tercer y último** caso del mismo hueco en el esquema (`consultas` → `025`,
+> `estudios` → `026`); con la 046 no queda ninguna tabla en esa situación.
+> La 046 aplicó además el **tenant donde faltaba**: `mensajes_ver` lo pedía **solo** en la rama
+> grupal, así que un mensaje **individual sobrevivía a un cambio de médico**. Desde acá el tenant
+> manda también sobre los individuales, y un usuario que cambia de médico **pierde** acceso a los
+> mensajes del anterior. ⚠ **La asimetría entre LEER y BORRAR es DELIBERADA** —el titular puede
+> borrar un individual entre dos asistentes pero no leerlo—: ver **nota técnica 29**.
 
 ---
 
@@ -583,8 +595,10 @@ Tanda del **modal del hilo desde la campanita** (2026-08-03, sin migración; ver
   `?hilo`**. Se eliminó `hiloInicial` de `(app)/mensajes/page.tsx` (mantenerlo como fallback
   **reabría el modal solo** al cerrarlo) y el clic **dentro de la bandeja** se unificó al mismo
   mecanismo: **un solo camino** para abrir el modal.
-- **Limitación conocida:** si el hilo no está entre las **100** conversaciones que trae
-  `obtenerBandeja()` (`.limit(100)`), el modal **no abre** (no crashea). Anotada en `PENDIENTES.md`.
+- ✅ **La limitación que dejó esta tanda YA NO EXISTE.** Decía que si el hilo no estaba entre las
+  **100** conversaciones que traía `obtenerBandeja()` (`.limit(100)`), el modal **no abría**. Las dos
+  mitades caducaron: el tope de 100 lo reemplazó la **paginación** (nota 30) y el modal **abre por
+  id** desde la tanda de mensajería (ver más abajo y nota 20).
 
 **GRUPO 1 — cinco tandas, migraciones 034–038** (2026-08-07/08). Bugs de datos, de agenda y el
 hueco de los borradores. ⚠ **Trae el único cambio de COMPORTAMIENTO visible del grupo** (el
@@ -638,7 +652,7 @@ que dejó el Grupo 1 y da de baja el último eslabón del modelo viejo de HC:
    `origen='desde_hc'` **se conservó**: lo usa el flujo vivo de consultas.
 
 **GRUPO 3 — obra social "particular" y limpieza del turnero, migración 045** (2026-08-20).
-**045 es la última migración aplicada.** Dos frentes independientes:
+Dos frentes independientes:
 1. **"Particular / Sin obra social" pasa a modelarse como AUSENCIA (migración 045).** Se eliminó
    del catálogo la fila homónima que sembraba la 001 —convivía con la opción hardcodeada del
    formulario y hacía que dos pacientes igualmente particulares quedaran modelados distinto—, con
@@ -654,6 +668,48 @@ que dejó el Grupo 1 y da de baja el último eslabón del modelo viejo de HC:
    `export` de `CATEGORIA_STYLES`, el tipo `ConsultaConRelaciones`, el stub
    `src/constants/obra-sociales.ts` y una prop muerta de la página de historia clínica, que además
    sumó filtro de tenant a la query del paciente.
+
+**MENSAJERÍA — cuatro tandas, migraciones 046–047** (2026-08-21/22). **047 es la última migración
+aplicada.** Cierra el último hueco de RLS del esquema, cambia el orden de la bandeja y termina con
+el deep-link mudo:
+1. **Seguridad de las server actions (sin migración).** Todas las actions del dominio
+   —`obtenerBandeja`, `obtenerHilo`, `eliminarMensaje` (`(app)/mensajes/actions.ts`) y
+   `enviarMensaje`, `marcarMensajeLeido`, `obtenerUsuariosTenant`, `contarMensajesNoLeidos`,
+   `obtenerMensajesNoLeidos` (`(app)/notificaciones/actions.ts`)— aplican hoy las **tres** cosas que
+   la app implica: **validación del id** que reciben (`uuidSchema`), **`acceso_mensajeria`** y
+   **filtro de tenant**. El canon es `resolverAcceso` (nota 24); ⚠ **`obtenerBandeja` es la
+   excepción deliberada** —hace el chequeo a mano con `tenantDeProfile` porque ya leyó el `profile`
+   para otra cosa, y una query interna sería una **segunda lectura de la misma fila**—.
+   Puntualmente: `eliminarMensaje` no tenía **ninguna** guarda y
+   devolvía éxito aunque la RLS rechazara el borrado (ahora exige rol médico y trae **guarda de
+   "0 filas"**, la lección de la 033 — pero ver el ⚠ de la nota 29); `obtenerBandeja` calculaba el
+   tenant, lo validaba y **nunca lo usaba** para filtrar; los **dos contadores** de la campanita
+   filtraban por tenant los grupales y **no** los individuales, así que el badge contaba mensajes
+   de un consultorio anterior que la bandeja ya no listaba —un número que no se podía bajar—; y
+   `enviarMensaje` no exigía el permiso al **remitente** ni validaba el `parent_id` (ahora el padre
+   tiene que **existir, ser del tenant y ser RAÍZ**, lo que cierra la vía para crear un hilo de
+   tres niveles). Se corrigió además la revalidación de `revalidatePath('/', 'layout')` al eliminar.
+   ⚠ **Regla de producto que queda establecida: el tenant manda TAMBIÉN sobre los mensajes
+   individuales.** Un usuario que cambia de médico **pierde** acceso a los mensajes del anterior.
+2. **Migración 046 — la RLS deja de pedir menos que la app.** Las **cuatro** políticas de
+   `mensajes_internos` pasaron a exigir `acceso_mensajeria` (vía `check_permiso`, que exime al
+   titular) y a aplicar el tenant donde faltaba, con `ALTER POLICY` (preserva el rol, ya normalizado
+   por la 042). De paso se le fijó `SET search_path = public` a **`get_medico_id()`**, la única
+   función `SECURITY DEFINER` del esquema que no lo tenía — y la más usada. Ver **nota técnica 29**,
+   que documenta la **asimetría deliberada** entre leer y borrar.
+3. **Migración 047 — orden por actividad y paginación.** Columna `ultima_actividad_at` + trigger
+   `AFTER INSERT` `SECURITY DEFINER`, backfill y `NOT NULL`; **dos índices parciales** nuevos; y la
+   bandeja pasó del tope fijo de 100 conversaciones a **"cargar más" acumulativo con cursor**
+   (`BANDEJA_PAGINA` / `BANDEJA_PAGINA_MAX` en `constants/mensajes.ts`). En el componente se
+   corrigió un efecto que **reemplazaba la lista entera** en cada revalidación: como abrir un hilo
+   dispara una, descartaba las páginas acumuladas y **podía cerrar el modal mientras el usuario
+   leía**; ahora **mergea por id**. Ver **nota técnica 30**.
+4. **Deep-link a cualquier hilo (sin migración).** `HiloModal` se abre **teniendo solo el id**
+   (`hiloId` requerido + `mensajeRaiz` opcional como atajo de pintado) y resuelve el hilo con
+   `obtenerHilo`; se agregaron los estados de **carga**, **conversación no disponible** y **error de
+   red**. ⚠ Las causas de "no se pudo abrir" —no existe / se borró / sin permiso— se muestran con
+   **el mismo texto**, a propósito, para que nadie deduzca qué ids existen probando. El hilo traído
+   por id **no se agrega a la lista** de la bandeja. Ver **nota técnica 20**.
 
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
@@ -931,9 +987,9 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       es solo la PK `(mensaje_id, user_id)`.
 20. **El modal del hilo se DERIVA de la URL — no volver a sembrarlo en `useState`.** En
     `src/components/mensajes/bandeja.tsx` el hilo abierto sale de
-    `useSearchParams().get('hilo')` **durante el render**, y el modal se muestra buscando ese id
-    entre los threads. **No hay estado ni setter para el modal**, y `(app)/mensajes/page.tsx` **no**
-    pasa el param como prop.
+    `useSearchParams().get('hilo')` **durante el render**, y **con ese id alcanza para abrir el
+    modal**. **No hay estado ni setter para el modal**, y `(app)/mensajes/page.tsx` **no** pasa el
+    param como prop.
     - **Por qué (bug real, no precaución):** antes el hilo abierto se calculaba en un
       **inicializador perezoso de `useState`**, que corre **una sola vez al montar**. Al clickear un
       mensaje en la campanita se navega a `/mensajes?hilo=X`, pero si `Bandeja` **ya está montada**
@@ -955,8 +1011,28 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       así que el hook ya tiene el param en el render del servidor, el primer render del cliente
       coincide y **no hace falta un `<Suspense>`**. Si alguna vez esa ruta se volviera estática, esto
       hay que revisarlo.
-    - ⚠ **Limitación:** el hilo se busca entre los threads cargados y `obtenerBandeja()` tiene
-      `.limit(100)`; un hilo más viejo **no abre** (no rompe). Ver `PENDIENTES.md` → Bloque A.
+    - ✅ **El modal abre por ID, no por objeto (tanda de mensajería, 2026-08-22).** `HiloModal`
+      recibe **`hiloId` (requerido)** y **`mensajeRaiz` (opcional)**, y resuelve el hilo por su
+      cuenta con `obtenerHilo`. La búsqueda en la lista cargada **sobrevive como ATAJO DE PINTADO**
+      —siembra la primera burbuja y el encabezado para que el caso común no pierda el contenido
+      inmediato—, pero **ya no es la condición de apertura**.
+      ⚠ **La limitación que esta nota describía antes era doblemente falsa** y quedó cerrada: decía
+      que el hilo se buscaba entre los threads cargados y que `obtenerBandeja()` tenía `.limit(100)`,
+      así que un hilo más viejo **no abría**. El tope de 100 lo reemplazó la **paginación** (nota 30)
+      y hoy abre **cualquier hilo del tenant**.
+    - **Tres estados nuevos, y un texto ÚNICO para los fallos.** El modal modela **cargando**,
+      **conversación no disponible** y **error de red**. ⚠ *"No existe"*, *"se borró"* y *"no tenés
+      permiso"* se muestran **con el mismo texto**, deliberadamente: `obtenerHilo` ya responde el
+      mismo `NO_ENCONTRADO` para los tres (id inválido incluido) para que nadie **enumere ids**
+      probándolos desde la URL, y distinguirlos en el cliente tiraría abajo esa propiedad. Solo el
+      **error de red** se distingue —no depende del id pedido— y es el único **reintentable**.
+      El `?hilo=` con basura **no se valida en el cliente**: se manda tal cual y cae en "no
+      disponible" (un segundo validador podría divergir del de la action); el param se limpia al
+      **cerrar**, que es el camino que ya existía.
+    - **El hilo traído por id NO se agrega a la lista.** La bandeja ordena por actividad reciente:
+      insertarlo lo dejaría mezclado entre los nuevos, o al fondo y por lo tanto invisible igual.
+      Se abre el modal y nada más. *(Si el usuario **responde** ahí, el hilo sube por el trigger de
+      la nota 30 y entra a la lista por la puerta normal: ya no es un hilo viejo.)*
 21. **La API imperativa de FullCalendar NO se llama en forma síncrona desde un `useEffect` — se
     difiere a `queueMicrotask`.** `api.changeView()` (y en general cualquier método de FullCalendar que
     haga un flush interno) usa **`flushSync`** por dentro. Llamarlo derecho desde el cuerpo de un
@@ -1259,3 +1335,105 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       como texto libre. Y el "en blanco" se resuelve con el operador `match` de PostgREST contra
       `^\s*$`, porque `resolverObraSocial` trimea: un `'   '` es "sin obra social" para la app, y un
       `IS NULL` a secas lo dejaría afuera.
+29. **Mensajería y RLS (migración 046): la base ya exige `acceso_mensajeria` + tenant, y la
+    ASIMETRÍA entre LEER y BORRAR es DELIBERADA.** Las cuatro políticas de `mensajes_internos`
+    piden hoy `check_permiso(auth.uid(), 'acceso_mensajeria')`, y el tenant se aplica al mensaje
+    entero y no solo a la rama grupal (ver **Auth y roles** para el hueco que cerró).
+    - ⚠⚠ **EL MÉDICO TITULAR PUEDE BORRAR UN MENSAJE INDIVIDUAL ENTRE DOS DE SUS ASISTENTES, PERO
+      NO PUEDE LEERLO. NO ES UN DESCUIDO Y NO HAY QUE "CORREGIRLO".** `mensajes_borrar` incluye
+      `medico_id = auth.uid()`; `mensajes_ver` solo deja ver los individuales a **remitente y
+      destinatario**.
+      **Hasta la 046 sí era accidental:** la `017` enumeró los tres casos del SELECT sin contemplar
+      al titular, y la `020` —tres migraciones después, escrita para otra cosa— sí lo enunció como
+      **regla de negocio** ("el médico vinculado puede borrar cualquier mensaje de su tenant"). El
+      DELETE tuvo su momento de diseño y el SELECT no.
+      **A partir de la 046 es DELIBERADA:** se revisó y se eligió la variante conservadora. El
+      titular no gana visibilidad sobre las conversaciones privadas entre sus asistentes; puede
+      borrarlas —es el dueño del tenant y el responsable de sus datos— pero no leerlas. Cambiarlo
+      es una **decisión de producto sobre privacidad**, no una corrección técnica: hay que tomarla
+      explícitamente.
+    - ⚠ **Consecuencia asumida de esa asimetría — un `DELETE … RETURNING` exige TAMBIÉN la política
+      de SELECT.** En Postgres, un `UPDATE`/`DELETE` con `RETURNING` aplica además las políticas de
+      lectura sobre las filas devueltas. `eliminarMensaje` cierra con
+      `.delete()…​.select('id')` (su **guarda de "0 filas"**, la lección de la 033), así que en el
+      único caso en que el titular borra sin poder leer —un individual entre dos asistentes— la
+      fila **se borra pero no vuelve**, y la guarda reportaría `'Mensaje no encontrado'` sobre un
+      borrado que **sí ocurrió**.
+      **Es PREEXISTENTE y hoy inalcanzable:** la UI solo ofrece borrar desde la bandeja o el modal,
+      o sea sobre hilos que el usuario **está viendo**; y con **un asistente por consultorio** ni
+      siquiera existen mensajes individuales entre asistentes. Se documenta porque la 046 convirtió
+      la asimetría en deliberada: el día que haya dos asistentes, este es el borde que aparece.
+      ⚠ **No se arregla ablandando `mensajes_ver`** —eso sería justamente el cambio de producto de
+      arriba—; si molesta, se arregla del lado de la action.
+    - **`mensajes_lecturas` quedó AFUERA de la 046, a propósito.** No tiene columna de tenant (sus
+      columnas son `mensaje_id`, `user_id`, `leido_at`) y sus dos políticas ya acotan a
+      `user_id = auth.uid()`: un usuario solo ve **sus propias lecturas**, así que **no hay fuga**.
+      Aplicarle el criterio exigiría un `EXISTS` contra `mensajes_internos` (patrón `estudios`), y
+      se decide aparte. ⚠ Sigue **sin política de UPDATE** (ver nota 19).
+    - **`get_medico_id()` ya fija `SET search_path = public`** (mismo endurecimiento que la `025` le
+      hizo a `verificar_documento()` y `log_turno_cambio()`). Era la única `SECURITY DEFINER` del
+      esquema sin fijarlo, y la **más usada**: cuelgan de ella casi todas las políticas multi-tenant.
+      Riesgo de comportamiento nulo — el cuerpo no cambió y ya calificaba `public.profiles`.
+30. **La bandeja ordena y pagina por `ultima_actividad_at` (migración 047) — y el trigger que la
+    mantiene tiene una dependencia oculta.** La columna es **denormalizada** y solo significativa en
+    los mensajes **RAÍZ**: en una respuesta vale su propio `created_at` y **no se lee nunca**.
+    - **Por qué una columna y no un `ORDER BY` agregado:** ordenar por
+      `GREATEST(raiz.created_at, MAX(hijos.created_at))` es una agregación correlacionada, y
+      PostgREST no ordena por un agregado de un recurso embebido. La columna convierte el orden en
+      un `ORDER BY` simple e **indexable**. Mismo patrón que la `040` con
+      `turnos_audit_log.medico_id`: columna + backfill + `NOT NULL` + índice + trigger.
+      ⚠ **No se llama `updated_at` a propósito:** en las otras 13 tablas eso significa "cuándo se
+      modificó ESTA fila" y lo mantiene `set_updated_at()`. Acá significa "cuándo pasó algo en el
+      HILO" — la raíz no se modificó, se le agregó un hijo. El nombre convencional invitaría a
+      colgarle el trigger genérico, que haría lo incorrecto.
+    - ⚠⚠ **EL TRIGGER ES `SECURITY DEFINER` Y ESO DEPENDE DE QUE LA TABLA NO TENGA `FORCE ROW LEVEL
+      SECURITY`.** `bump_actividad_hilo()` hace un `UPDATE` sobre la RAÍZ, y la única política de
+      UPDATE de la tabla (`mensajes_marcar_leido`) lo **bloquearía en dos de los tres casos**: raíz
+      grupal (`NOT es_grupal` da FALSE) y raíz individual respondida por su **remitente original**
+      (el `destinatario_id` de la raíz es el otro). Solo pasaría el tercero. `SECURITY DEFINER` hace
+      que corra como el owner, que **bypassa RLS** — pero **solo si la tabla no la tiene forzada**.
+      Verificado: **ninguna** tabla del esquema declara `FORCE ROW LEVEL SECURITY`.
+      **Si alguna vez se activara sobre `mensajes_internos` —cosa que un endurecimiento futuro podría
+      querer—, el trigger DEJARÍA DE ACTUALIZAR LA RAÍZ EN SILENCIO y el orden de la bandeja se
+      congelaría sin que nadie lo note.** Un `UPDATE` cuyas filas no pasan el `USING` **no da error**:
+      afecta 0 filas (la lección de la `033`, aplicada a un trigger). **No hay forma de que la base
+      avise.** Si se activa, hay que revisar este trigger.
+    - ⚠ **`AFTER INSERT` y SOLO INSERT.** No hay recursión —un `UPDATE` no dispara un trigger de
+      `INSERT`—, y por eso **agregarle `OR UPDATE` la introduciría**. Tampoco hay **rama de DELETE**,
+      y es una **decisión de producto**: borrar la última respuesta **no** recalcula, así que el hilo
+      conserva su lugar. El costo de no recalcular es que un hilo quede "más arriba de lo que le
+      toca"; el de recalcular sería que **la lista se reordene bajo el cursor del usuario**. Se
+      eligió el primero. Si la fila no coincide, el trigger **no hace nada y el INSERT sigue**: no
+      debe abortar el envío de un mensaje válido por una anomalía de parentesco.
+    - **Dos índices PARCIALES nuevos.** `mensajes_bandeja_idx (medico_id, ultima_actividad_at DESC)
+      WHERE parent_id IS NULL` sirve al WHERE y al ORDER BY de una sola pasada (tenant primero, orden
+      después — patrón de `mensajes_medico_grupal_idx` e `idx_turnos_medico`), y la paginación por
+      keyset lo recorre directo. `mensajes_parent_idx (parent_id, created_at) WHERE parent_id IS NOT
+      NULL` cierra una **carencia preexistente**: `parent_id` es la columna por la que filtran **tres**
+      consultas calientes —el paso 3 de `obtenerBandeja`, `obtenerHilo` y el borrado de respuestas de
+      `eliminarMensaje`— y ninguno de los 3 índices previos la cubría.
+    - **El patrón de paginación de la bandeja — reusarlo, no reinventarlo.** Es el **primero real de
+      la app en una pantalla** (el molde previo, `GET /api/consultas`, usa **offset** y **no tiene
+      consumidores**). Sus cinco piezas:
+      1. **Keyset, no offset.** El cursor es el `ultima_actividad_at` del último hilo cargado y la
+         query pide `.lt(cursor)`. ⚠ Con una lista **acumulativa** en el cliente, el offset
+         **duplicaría** filas: cualquier mensaje nuevo corre la ventana y la página 2 devolvería lo
+         que la 1 ya trajo. El cursor es **simple** (solo la fecha) porque la auditoría previa no
+         encontró **ni un empate**.
+      2. **`limite + 1` en vez de `count: 'exact'`.** La fila extra no se devuelve: solo dice si
+         quedan más. Un count obliga a Postgres a contar todo lo que matchea en **cada** página, y
+         "cargar más" no muestra "página 3 de 17".
+      3. **Tamaño de página en una constante compartida**, `BANDEJA_PAGINA` (módulo neutro
+         `constants/mensajes.ts`), más un **techo duro** `BANDEJA_PAGINA_MAX`: la action es invocable
+         por cualquier cliente autenticado, y sin `Math.min` un `limite: 100000` traería la tabla
+         entera. Mismo criterio que `DIFUSION_LIMITE_DIARIO`.
+      4. **Los parámetros se validan DESPUÉS de auth/permiso/tenant** (orden del canon de la nota
+         24), y un **cursor inválido degrada a la primera página** en vez de devolver error — mismo
+         criterio que `formatFecha`: un parámetro corrupto no debe vaciar la pantalla.
+      5. ⚠ **El cliente MERGEA por id, NUNCA reemplaza.** El efecto que sincroniza la prop del
+         servidor con la lista acumulada indexa por id y **conserva lo que el servidor no menciona**.
+         Reemplazar era un bug real: la prop es un array nuevo en **cada revalidación** —incluida la
+         que dispara `marcarMensajeLeido` al **abrir cualquier hilo**—, así que leer un mensaje
+         descartaba todas las páginas cargadas de más. ⚠ Lo que el merge **no puede** inferir es un
+         **borrado** ("no vino del servidor" es indistinguible de "está en otra página"): por eso el
+         borrado saca la fila del estado **explícitamente**, en su propio handler.

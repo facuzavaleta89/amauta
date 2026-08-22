@@ -726,20 +726,58 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - ⚠ **En uso normal NO aparece ningún aviso nuevo:** re-marcar un mensaje ya leído **afecta 1
     fila** (el UPDATE no filtra por `leido = false`), así que el 0-filas es prácticamente inalcanzable
     salvo deriva de RLS o dato inconsistente.
-- **⚠ LIMITACIÓN CONOCIDA (2026-08-03) — el deep-link no abre hilos fuera de las 100 conversaciones
-  más recientes. Severidad MUY BAJA.** `obtenerBandeja()` trae los mensajes raíz con **`.limit(100)`**
-  (`src/app/(app)/mensajes/actions.ts:46`), y `bandeja.tsx` resuelve el `?hilo=X` buscando **dentro
-  de esa lista**. Si el hilo no está, el modal **simplemente no abre** — no crashea ni rompe la
-  página. **Se decidió no implementar un fetch puntual:** pedía una server action nueva, estado
-  async, spinner y manejo de "no existe / sin permiso", demasiada superficie para un caso hoy casi
-  inalcanzable desde la campanita, que solo lista mensajes **no leídos** (recientes por definición).
-  Si algún día se agrega búsqueda de mensajes o el volumen crece, revisarlo junto con paginar la
-  bandeja.
-  - **Re-confirmada como FUERA DE ALCANCE en el Grupo 5 (2026-08-17).** La tanda del indicador de
-    no-leído cruzó las dos caras de esta limitación y **no tocó ninguna**: ni el `.limit(100)` ni el
-    **orden por `created_at` de la RAÍZ** (un hilo con una respuesta nueva **no sube** en la lista).
-    La señal `tiene_respuestas_no_leidas` se calcula **sobre las raíces que la bandeja ya trajo**, así
-    que **hereda esta cota** en vez de ensancharla. Sigue abierta.
+- **✅ RESUELTO (tanda de mensajería, migración 047 + deep-link, 2026-08-21/22) — el deep-link ya
+  abre CUALQUIER hilo del consultorio.** El ítem estaba abierto desde el 2026-08-03 y decía que
+  `obtenerBandeja()` traía las raíces con **`.limit(100)`** y que `bandeja.tsx` resolvía el `?hilo=X`
+  buscando **dentro de esa lista**, así que un hilo más viejo **no abría** — sin error, sin spinner,
+  sin nada. **Las dos mitades de esa afirmación son falsas ahora:**
+  - **El `.limit(100)` ya no existe.** La migración **047** cambió el orden a `ultima_actividad_at` y
+    la bandeja pasó a **"cargar más" acumulativo con cursor** (`BANDEJA_PAGINA` /
+    `BANDEJA_PAGINA_MAX`, `src/constants/mensajes.ts`). La lista ya no es "las 100 más recientes"
+    sino **las cargadas hasta ahora**. Ver `CLAUDE.md` → **nota técnica 30**.
+  - **El modal abre por ID.** `HiloModal` recibe **`hiloId` (requerido)** + **`mensajeRaiz`
+    (opcional, atajo de pintado)** y resuelve el hilo con `obtenerHilo`. Se sumaron los estados de
+    **cargando**, **conversación no disponible** y **error de red**; los tres motivos de "no se pudo
+    abrir" comparten **un solo texto**, a propósito. El hilo traído por id **no se agrega a la
+    lista**. Ver `CLAUDE.md` → **nota técnica 20**.
+  - ⚠ **NO se revirtió un criterio: se venció el motivo del descarte.** El ítem decía que no se
+    implementaba el fetch puntual porque *"pedía una server action nueva, estado async, spinner y
+    manejo de 'no existe / sin permiso'"*. Esa action **se escribió después, para otro frente** —
+    `obtenerHilo` ya existía, y desde la tanda 1 de mensajería **ya validaba el formato del id,
+    exigía `acceso_mensajeria`, filtraba por tenant y normalizaba el id de una respuesta a su
+    raíz**. De la lista original quedaba **solo el estado async y los carteles**. El costo cambió;
+    la evaluación de entonces era correcta con la información de entonces.
+  - *(La "re-confirmación como FUERA DE ALCANCE" del Grupo 5, 2026-08-17, también quedó superada:
+    señalaba que esa tanda no había tocado ni el `.limit(100)` ni el **orden por `created_at` de la
+    RAÍZ**. La 047 tocó los dos.)*
+- **⬜ ABIERTO (anotado en la tanda de mensajería, 2026-08-22) — el CONTADOR global de la campanita
+  y el INDICADOR por hilo de la bandeja miden universos distintos.** El badge se calcula en el
+  servidor sobre **todo el consultorio** (`contarMensajesNoLeidos`, sin `.limit()` ni filtro de
+  `parent_id`: es el total real), mientras que el indicador de "no leído" de la bandeja sale de
+  `tiene_respuestas_no_leidas`, que `obtenerBandeja()` calcula **solo sobre las raíces de las páginas
+  ya cargadas**. Consecuencia: el usuario puede ver *"3 sin leer"* en la campanita y **ninguna
+  conversación marcada** en la lista, porque el hilo con el mensaje sin leer todavía no se cargó.
+  - **La paginación lo pasó de raro a frecuente**, porque la primera página trae `BANDEJA_PAGINA`
+    hilos y no las 100 de antes. **Dos cosas lo mitigan**, y por eso queda abierto y no urgente: el
+    **orden por actividad** (mig. 047) sube los hilos con mensajes recientes, que son justamente los
+    que tienen algo sin leer; y desde el **deep-link por id** el hilo está **a un clic** —la
+    campanita lista los mensajes no leídos y su enlace ahora abre el hilo esté o no en la lista—.
+  - **No se cerró acá a propósito:** cerrarlo de verdad significa decidir **qué universo manda**
+    (¿el badge se acota a lo cargado, o la bandeja aprende a señalar lo que no cargó?), y eso es una
+    decisión de producto, no un fix.
+- **⬜ ABIERTO (anotado en la tanda de mensajería, 2026-08-22) — la BASE no impide un hilo de más de
+  dos niveles; solo lo valida la aplicación.** `mensajes_internos.parent_id` es una FK
+  autorreferencial sin ninguna constraint que prohíba apuntar a un mensaje **que ya tiene padre**,
+  así que un "nieto" es insertable por PostgREST directo. La UI muestra **dos** niveles
+  (`obtenerHilo` trae la raíz y UN nivel de hijos), de modo que un nieto quedaría **invisible en
+  pantalla** y sin embargo `contarMensajesNoLeidos` **lo contaría**: un badge que no se puede bajar.
+  - **La app YA lo cierra** (tanda 1 de mensajería): `enviarMensaje` exige que el padre **exista,
+    sea del tenant y sea RAÍZ** antes de insertar. Lo que falta es la **defensa en profundidad** en
+    la base.
+  - ⚠ **No es un `CHECK`**: la condición mira **otra fila** de la misma tabla, así que pediría un
+    trigger `BEFORE INSERT` (o una constraint con función), más una **auditoría previa** que
+    confirme que no hay nietos ya guardados — la de la 047 encontró **cero**. Migración chica pero
+    con su propio diseño; no entra como línea suelta en otra tanda.
 - **✅ NO REPRODUCIBLE / YA ESTABA RESUELTO (Grupo 5 — Frente 2, verificado en navegador 2026-08-17)
   — el LOGO del emisor SÍ se renderiza en los previews de pedido y de certificado.** El ítem se
   abrió el 2026-08-03 y quedó vivo **por inercia**: se había resuelto en una tanda anterior y nadie
@@ -1382,6 +1420,13 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   > `keyof` de eso. **Comprobado empíricamente:** al pasar `'acceso_mensajeria'` a propósito, `tsc`
   > lo rechaza enumerando las 11 claves válidas. **Si algún día hace falta ese permiso acá, se agrega
   > al `select` (cambio de runtime); no se ensancha el tipo.**
+  >
+  > ⚠ **SUPERADO (tanda 1 de mensajería, 2026-08-21) — esto ya NO describe el código.** Hizo falta
+  > exactamente ese permiso: las siete server actions de mensajería autorizan con
+  > `resolverAcceso(supabase, user.id, 'acceso_mensajeria')`. Se hizo **como el propio párrafo
+  > preveía** —se agregó `acceso_mensajeria` al `select`, sin ensanchar nada por el lado del tipo—,
+  > así que hoy el helper proyecta los **12** permisos y el parámetro es `PermisoKey` a secas.
+  > Se deja el texto como registro de la decisión; la afirmación de las "11 de 12" **ya no vale**.
 
   **De paso, cerró dos cosas que venían anotadas:** el `initialData?: any` de `turno-form.tsx`
   (pendiente que T4 no pudo tocar por alcance, cerrado en T5) y el tipo local **incompleto**
@@ -1867,8 +1912,42 @@ Información Pública**). Hallazgos:
     tenant, sin chequeo de rol, así que cualquier asistente vinculado puede **enviar un
     comunicado a todos los pacientes**. Si alguna vez se restringe difusión con un permiso
     granular, este endpoint es uno de los lugares a atar.
-  - Confirmar que `mensajes_internos` grupales no filtren datos entre asistentes de
-    tenants distintos (RLS usa `medico_id = get_medico_id()`, correcto; validar en prueba).
+  - ✅ **RESUELTO y AMPLIADO (migración 046 + tanda 1 de mensajería, 2026-08-21).** El ítem pedía
+    *"confirmar que los grupales no filtren entre tenants"*. Los **grupales** ya estaban bien
+    (`mensajes_ver` los acotaba con `medico_id = get_medico_id()`), pero la auditoría encontró
+    **dos huecos peores que el que se sospechaba**:
+    - **Ninguna** de las 4 políticas exigía **`acceso_mensajeria`**. El permiso nació en la `015`,
+      **dos migraciones antes** que la mensajería (`017`), y cuando llegó su "uso futuro" nadie lo
+      cableó a la RLS: quedó colgado ~30 migraciones. Un asistente con el permiso en FALSE que le
+      pegara a **PostgREST directo** leía, escribía y borraba igual — la app lo frenaba, la base no.
+      Era el **tercer y último** caso del mismo hueco en el esquema (`consultas` → `025`,
+      `estudios` → `026`); con la 046 **no queda ninguna tabla en esa situación**.
+    - El **tenant se aplicaba SOLO a la rama grupal**. Las dos ramas de mensajes **individuales**
+      (`remitente_id = auth.uid()` y `destinatario_id = auth.uid()`) comparaban contra el usuario y
+      **no miraban `medico_id`**, así que un individual **sobrevivía a un cambio de médico**: el
+      asistente desvinculado seguía viendo los mensajes del consultorio anterior.
+    **La 046** reescribió las 4 con `ALTER POLICY` (modifica **solo las expresiones**; el rol ya
+    estaba en `authenticated` desde la 042) y le fijó `SET search_path = public` a
+    **`get_medico_id()`**, la única `SECURITY DEFINER` del esquema que no lo tenía — y la más usada.
+    **La tanda 1** hizo lo propio del lado de la app: las **siete** server actions de mensajería
+    pasaron a validar el id, exigir el permiso y filtrar por tenant (`resolverAcceso`).
+    ⚠ **Auditoría previa sobre la base viva:** 42 mensajes / 2 tenants, **cero** individuales con
+    `medico_id` desalineado y **cero** huérfanos → el filtro nuevo **no ocultó nada** a nadie.
+    ⚠ **Regla de producto establecida:** el tenant manda **también** sobre los individuales.
+    ⚠ **Asimetría DELIBERADA leer/borrar** (el titular borra un individual entre asistentes pero no
+    lo lee) y su consecuencia en el `DELETE … RETURNING`: `CLAUDE.md` → **nota técnica 29**.
+    - ⬜ **PENDIENTE de UNA LÍNEA, para la próxima migración que toque el dominio:** el
+      `COMMENT ON COLUMN public.profiles.acceso_mensajeria` sigue diciendo
+      *"(preparado para uso futuro)"*, texto que puso la `015`. Con la 046 **dejó de ser futuro**:
+      la columna la exigen las 4 políticas de `mensajes_internos`. Es solo el comentario —ningún
+      comportamiento depende de él—, así que no justifica una migración propia; sí conviene
+      corregirlo cuando haya una.
+  - **`mensajes_lecturas` quedó FUERA de la 046, a propósito — no es un olvido.** No tiene columna
+    de tenant (sus columnas son `mensaje_id`, `user_id`, `leido_at`) y sus dos políticas ya acotan a
+    `user_id = auth.uid()`: un usuario solo ve **sus propias lecturas**, así que **no hay fuga de
+    datos ajenos**. Aplicarle el mismo criterio exigiría un `EXISTS` contra `mensajes_internos`
+    (patrón `estudios`), que es un cambio con su propio diseño y se decide aparte. ⚠ Sigue **sin
+    política de UPDATE**: los upserts van con `ignoreDuplicates` (ver Bloque A).
 
 ### Autorización a nivel de APLICACIÓN (defensa en profundidad sobre la RLS)
 
