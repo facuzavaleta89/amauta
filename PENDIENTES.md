@@ -506,6 +506,14 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   `supabase/migrations/` + suelta `MIGRACION-NN-…` en la raíz, **ejecución manual** en el SQL Editor y
   **verificación contra la base real**, no contra `schema.sql`—; y `schema.sql` + `src/types/roles.ts`
   actualizados al cierre. Ninguna de las dos necesitó limpieza de datos.
+  - ⚠ **ESE FLUJO YA NO RIGE (2026-08-23).** La parte de *"suelta `MIGRACION-NN-…` en la raíz"*
+    quedó sin efecto: las 26 copias se movieron a
+    `supabase/migrations/_historico/_copias-ejecutables/` y no se generan más. Hoy una migración
+    nueva se escribe **solo** versionada, en `supabase/migrations/`, numerando desde la **048**.
+    Lo que **sí sigue rigiendo** de este párrafo, y con más fuerza, es la **verificación contra la
+    base real, no contra `schema.sql`** — que ahora además se hace sin intermediarios (ver
+    `CLAUDE.md` → *Acceso directo a la base*). El texto de arriba se conserva porque describe cómo
+    se aplicaron las migraciones 043 y 044 en su momento.
 
 ### Bugs menores detectados
 - **✅ RESUELTO (migración 034, 2026-08-07) — un asistente DESVINCULADO no podía volver a solicitar
@@ -1056,13 +1064,81 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   `profiles.titulo/matriculas/logo_url` ya tienen su `CREATE` versionado en
   `supabase/migrations/`. La migración es idempotente (no cambió nada contra la base actual) y
   crea los objetos en un entorno nuevo.
-- **⚠ PENDIENTE NUEVO — Consolidación de baseline de migraciones.** La 030 logra que el
-  **estado final** sea reproducible, pero la **secuencia** NO es ejecutable desde una base
-  vacía: las migraciones **013, 014, 015, 022 y 025** referencian `public.consultas` (RLS y
-  `ALTER`) y la tabla recién se crea en la **030**, así que correr el set desde cero falla en
-  la 013. Es una limitación **preexistente** a esta tanda. Resolverlo implica una
-  consolidación de baseline: mover los `CREATE` al principio del historial, o generar un
-  `000_baseline.sql` aplicable y reordenar. Trabajo aparte, no hecho.
+- **✅ RESUELTO (2026-08-22) — Consolidación de baseline de migraciones.** La secuencia NO era
+  ejecutable desde una base vacía: **SEIS** migraciones —**013, 014, 015, 022, 025 y 029**—
+  referencian **DOS** tablas que recién se crean en la **030** (`public.consultas` en las seis,
+  `public.notificaciones` en la 029), así que correr el set desde cero fallaba en la **013**, en
+  `ALTER TABLE public.consultas ENABLE ROW LEVEL SECURITY`.
+  ⚠ **Este ítem decía CINCO migraciones y UNA tabla. Era falso** — el mismo error estaba en
+  `CLAUDE.md` → nota 6 y en `schema.sql`. Los tres se corrigieron el 2026-08-23.
+  **Qué se hizo:** se generó **`supabase/migrations/000_baseline.sql`**, un archivo único que
+  recrea el esquema completo (21 tablas, 4 ENUM, 12 funciones, 15 triggers, 72 políticas, 78
+  índices, 2 buckets y el catálogo), **leyendo la base de producción** — no transcribiendo las
+  migraciones, que es lo que venía produciendo drift. Las 49 migraciones se archivaron **sin
+  editar** en `supabase/migrations/_historico/`, con un README que explica el corte, y los 26
+  `MIGRACION-*.sql` de la raíz se movieron a `_historico/_copias-ejecutables/`.
+  ⚠ **Queda pendiente VERIFICARLO — ver el ítem de abajo. No está cerrado hasta eso.**
+
+- **⚠⚠ PENDIENTE — Verificar el baseline. NUNCA SE EJECUTÓ CONTRA NINGUNA BASE.**
+  Está comparado objeto por objeto contra producción con **cero diferencias**, pero **comparar
+  no es verificar**: ese diff prueba que los objetos están y se llaman igual, **no** que el
+  archivo corra ni que haga lo mismo.
+
+  **Tarea, en este orden y sin saltear:**
+
+  1. **Crear un proyecto Supabase nuevo y vacío** (plan free alcanza) y correr
+     `supabase/migrations/000_baseline.sql` entero **como `postgres`** (SQL Editor del
+     dashboard). Anotar cualquier error y en qué statement cae.
+     ⚠ El candidato más probable a fallar por permisos es el trigger sobre **`auth.users`**
+     (`on_auth_user_created`, §10): necesita privilegios de `postgres`. Si falla ése, el
+     registro de usuarios queda roto de una forma poco obvia — el alta funciona pero no se
+     crea la fila en `profiles`.
+  2. **Correrlo una SEGUNDA VEZ seguida**, sin tocar nada. Tiene que terminar sin errores: es
+     la prueba de la idempotencia (`IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP … IF EXISTS` +
+     `CREATE`, `ON CONFLICT DO NOTHING`, bloques `DO`).
+  3. **Comparar AUTOMÁTICAMENTE el catálogo de las dos bases** —la nueva y producción—:
+     correr en las dos la misma batería de consultas y mandar las dos salidas a `diff`.
+     Tiene que incluir, sí o sí:
+     - las **expresiones CRUDAS** de las políticas: `pg_policies.qual` y `.with_check`;
+     - las **definiciones CRUDAS** de las funciones: `pg_get_functiondef(oid)`;
+     - columnas con tipo, nulabilidad y default (`pg_attribute` + `pg_attrdef`), constraints
+       (`pg_get_constraintdef`), índices (`pg_get_indexdef`), triggers (`pg_get_triggerdef`),
+       buckets, publicación de Realtime y `relreplident`.
+     Postgres normaliza las dos bases igual, así que **si las expresiones son semánticamente
+     equivalentes el texto reconstruido sale idéntico y el diff da vacío**.
+     ⚠ **SIN LEER NADA A OJO.** Leer es exactamente lo que no detecta el riesgo de abajo.
+     ⚠ **Diferencia esperada y única:** `recetas.fecha_vencimiento`. Producción tiene un
+     default que **no se puede reproducir por DDL** (ver el ítem de drift más abajo); el
+     baseline deja la columna sin default. Cualquier **otra** diferencia es un bug del
+     baseline.
+  4. **Smoke test funcional** sobre la base nueva: registrar un médico (prueba el trigger de
+     `auth.users`), crear un asistente y vincularlo, darle `ver_turnos` **sin**
+     `gestionar_turnos` y confirmar que **lee la agenda pero no escribe**, y emitir un pedido
+     de punta a punta. Esto es lo único que prueba **comportamiento** de RLS: el MCP de solo
+     lectura **bypassa las políticas** y no sirve para esto (ver `CLAUDE.md` → *Acceso directo
+     a la base*).
+
+  **⚠ RIESGO MIENTRAS TANTO — por qué esto no es un trámite.**
+  El peligro real está en el **§8, las políticas**. Postgres **normaliza y reescribe** las
+  expresiones de RLS al guardarlas: `pg_policies.qual` no devuelve lo que escribió el autor,
+  devuelve lo que el parser reconstruyó. El baseline copió ese texto reconstruido y **lo
+  reformateó** (saltos de línea, indentación, algún paréntesis redundante quitado para que se
+  lea). **Si en alguna de las 72 políticas ese reformateo corrió la precedencia de un `AND`
+  frente a un `OR`, NADA LO DELATA: la política existe, se llama igual, pasa cualquier diff de
+  nombres… y AUTORIZA DISTINTO.** Un cambio de precedencia **no se detecta leyendo**.
+  En este esquema eso significa un asistente llegando a datos clínicos que no le corresponden
+  —o el caso opuesto, una app que "no anda" por permisos y se depura durante horas contra el
+  lugar equivocado—. Las de mayor riesgo son las que mezclan `AND` con `OR`: `turnos_select`,
+  `bloqueos_select`, `consultas_delete`, `consultas_update`, `mensajes_ver`, `mensajes_borrar`,
+  `profiles_select` y las dos de `documentos_objects_*`. **El paso 3 lo detecta en un `diff`;
+  ningún otro método lo detecta.**
+  Riesgos menores: que el archivo directamente no corra (se descubre en el paso 1 y se arregla
+  en minutos — el problema es descubrirlo durante una restauración de urgencia), y la **falsa
+  sensación de reproducibilidad**: el proyecto pasó de *"sabemos que la secuencia no corre"* a
+  *"creemos que el baseline corre"*, que es peor, porque el problema deja de estar a la vista.
+
+  **Hasta que los cuatro pasos estén hechos, un entorno levantado con este baseline NO debe
+  considerarse equivalente a producción.**
   - **⚠ CASO TESTIGO (2026-08-20) — el costo de esta deuda ya se pagó una vez, en horas de
     diagnóstico sobre un problema que no existía.**
     La migración **001** siembra 13 obras sociales, la última `'Particular / Sin obra social'`. En la
@@ -1081,9 +1157,29 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     dice lo que *rige*.
     Es **exactamente** el tipo de divergencia que la consolidación del baseline viene a eliminar: con
     un baseline aplicable desde cero, "lo que dicen las migraciones" y "lo que hay en la base" dejan
-    de poder separarse en silencio. Mientras tanto, la divergencia es posible y **ya ocurrió al menos
-    dos veces** — ésta y el **drift de RLS** que corrigió la migración 029, donde las políticas de la
-    base habían sido editadas a mano hacia versiones **más permisivas** que las migraciones fuente.
+    de poder separarse en silencio.
+
+  - **⚠ LA CUENTA DE CASOS DE DRIFT: son CUATRO, no dos.** Este ítem decía "ya ocurrió al menos dos
+    veces". Al generar el baseline leyendo la base aparecieron dos más. Los cuatro, en orden de
+    descubrimiento:
+    1. **La fila `'Particular / Sin obra social'` borrada del catálogo** — el caso testigo de acá
+       arriba. Versionado a posteriori por la migración **045**.
+    2. **El drift de RLS que corrigió la migración 029** — las políticas de la base habían sido
+       editadas a mano hacia versiones **más permisivas** que las migraciones fuente. El más grave:
+       un asistente podía **borrar historias clínicas** que la Ley 26.529 obliga a conservar.
+    3. **Cuatro políticas movidas a `authenticated` a mano** — `evoluciones_insert`,
+       `difusion_insert`, `difusion_update` y `difusion_delete`. Nacieron sin cláusula `TO` en las
+       migraciones **004** y **008**, o sea en `{public}`; hoy están en `authenticated` en la base.
+       La **042**, que fue la que barrió el proyecto normalizando roles, **las salteó
+       explícitamente** porque al escribirla ya estaban normalizadas — su encabezado las llama
+       *"4 que se normalizaron A MANO, fuera de toda migración, y que solo se descubren mirando la
+       base"*. **Un entorno construido con las migraciones las habría dejado alcanzables por
+       `anon`.** ✅ **Cerrado:** el baseline las fija en `authenticated`, con el comentario que
+       explica por qué ninguna migración las puso ahí. *(Alcance real: no habría sido explotable de
+       inmediato — las cuatro cuelgan de `get_medico_id()`, que para un usuario sin sesión devuelve
+       NULL y hace fallar la comparación. Era defensa en profundidad rota, no una puerta abierta.)*
+    4. **⚠ `recetas.fecha_vencimiento` tiene un DEFAULT que NO SE PUEDE REPRODUCIR.** El único de
+       los cuatro que **no tiene arreglo**. Ver el ítem propio más abajo.
 - **✅ RESUELTO (2026-07-24) — desalineación 030 ↔ base en ÍNDICES.** El archivo de la
   migración 030 había quedado con los índices de una versión previa (nombres
   `idx_consultas_paciente`/`idx_consultas_medico`, sin el de `fecha_hora`, y sin ninguno de
@@ -1092,16 +1188,48 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   definiciones reales (`consultas_{paciente_id,medico_id,fecha_hora}_idx` y
   `idx_notificaciones_{medico,leida,created}`), verificados contra `pg_indexes`. Confirmado
   contra la base: **no hay índices duplicados**; son exactamente 8 contando los dos `*_pkey`.
+- **⚠ PENDIENTE (descubierto 2026-08-22) — `recetas.fecha_vencimiento`: un DEFAULT que no se
+  puede reproducir en ningún entorno nuevo.** Cuarto caso de drift, y el único irreparable.
+  - **Qué hay en la base:** `DEFAULT (fecha_receta + '30 days'::interval)`, o sea un default que
+    **referencia otra columna de la misma fila**. Verificado en el árbol de expresión
+    (`pg_attrdef.adbin` trae un nodo `VAR :varattno 10`), no es una impresión engañosa de
+    `pg_get_expr`.
+  - **Por qué no tiene arreglo:** Postgres **no permite crear eso**. `ALTER TABLE … SET DEFAULT`
+    con una referencia a columna falla con *"cannot use column reference in DEFAULT expression"*.
+    **Ni el baseline, ni `schema.sql`, ni una migración futura pueden reproducirlo.** Cualquier
+    entorno nuevo va a diferir de producción en este punto, se use lo que se use.
+  - **Es drift:** la migración **009** crea la columna **sin default alguno**. No hay registro de
+    cómo llegó ahí.
+  - **Hoy es INOCUO:** la emisión de recetas está **bloqueada por ANMAT** (regla de negocio 7),
+    nadie inserta filas en esa tabla y el default nunca se evalúa. **No hay nada que hacer ahora.**
+  - **⚠ Qué hay que decidir cuando se habilite la emisión de recetas** — las tres cosas son la
+    misma tarea, y `recetas` es hoy la única de las tres tablas de documentos que las tiene todas
+    pendientes:
+    1. Qué pasa con este default: replicar la intención con un trigger `BEFORE INSERT`, dejarlo
+       sin default y calcularlo en la app, o alinear producción con el baseline (dropearlo).
+       ⚠ **No** poner `CURRENT_DATE + 30 days`: no es equivalente — difiere en cuanto se inserte
+       una receta con `fecha_receta` explícita distinta de hoy.
+    2. Agregar **`emisor_snapshot JSONB`** (regla de negocio 11). Verificado contra la base:
+       `pedidos` y `certificados` la tienen, `recetas` **no**.
+    3. Agregar **`codigo_verificacion`** con su UNIQUE y su default, o sea el QR de
+       `/verificar/[codigo]` (regla de negocio 5). Verificado: `recetas` **no lo tiene**, y
+       `verificar_documento()` **solo cubre certificados y pedidos**.
+  - Documentado en `CLAUDE.md` → nota técnica 31 y en el `⚠` de la tabla `recetas` de
+    `schema.sql`.
+
 - **✅ RESUELTO (tanda 1A, 2026-07-30) — Migración vacía eliminada.**
-  `supabase/migrations/20260326204733_fix_rls_recursion.sql` (**0 bytes**) se **borró del
+  `supabase/migrations/20260326204733_fix_rls_recursion.sql` (**0 bytes**, ya inexistente) se **borró del
   historial**. Era un no-op: se creó con `supabase migration new` (es la única con nombre en
   formato timestamp del CLI) y nunca se completó; su intención —recursión RLS en `profiles`— ya
   está cubierta por la `014` + `019`/`021`. Borrar un archivo vacío **no puede alterar el
   esquema**: no se ejecutó nada contra la base ni se tocó ninguna otra migración. El único efecto
   posible es cosmético —si en su momento se aplicó con el CLI, quedaría una fila huérfana en
   `supabase_migrations.schema_migrations` que `supabase migration repair` limpia—, irrelevante
-  mientras la secuencia siga sin ser ejecutable desde cero (ver el ítem de baseline arriba). El
-  directorio queda solo con las migraciones numeradas `001` → `031`.
+  mientras la secuencia siga sin ser ejecutable desde cero (ver el ítem de baseline arriba).
+  ⚠ **La frase final de este ítem quedó vieja y se corrigió (2026-08-23):** decía que *"el
+  directorio queda solo con las migraciones numeradas `001` → `031`"*. Hoy
+  `supabase/migrations/` contiene **`000_baseline.sql` y `_historico/`**, y las 49 migraciones
+  numeradas —que llegan hasta la **047**, no la 031— viven adentro de `_historico/`.
 
 ### Desajustes tipo TypeScript ↔ esquema DB
 - **✅ RESUELTOS (2026-07-23).** Los cinco desajustes vigentes se corrigieron:
@@ -2010,8 +2138,8 @@ Información Pública**). Hallazgos:
   registro ofrece elegir "médico" (`src/app/(auth)/actions.ts:93-96`). Cualquiera que llegue a
   `/registro` puede crearse como **médico** y abrir un tenant propio. **Solución prevista:** un
   **panel de administración con aprobación de altas de médicos**; hasta entonces se deja como
-  está. **Severidad ALTO.** Ubicación del backend: `supabase/migrations/014_security_fixes.sql`
-  (`handle_new_user`).
+  está. **Severidad ALTO.** Ubicación del backend: `supabase/migrations/_historico/014_security_fixes.sql`
+  (`handle_new_user`; hoy la función vive también en el `§5` del baseline).
 - **✅ RESUELTO (migración 031 + `src/lib/rate-limit.ts`, 2026-07-24) — rate limiter efectivo.**
   El rate limiter vivía en un `Map` en memoria del proceso: en Vercel serverless los contadores
   no se compartían entre instancias y **el login no tenía protección real de fuerza bruta**.

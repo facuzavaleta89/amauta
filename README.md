@@ -43,16 +43,25 @@ cp .env.example .env.local
 #   Editá .env.local con los valores de tu proyecto Supabase (ver abajo).
 
 # 3. Preparar la base de datos
-#   Aplicá las migraciones de supabase/migrations/ a tu proyecto Supabase
-#   (Supabase CLI o el SQL Editor del dashboard, en orden 001 → 038).
-#   ⚠ La secuencia NO es ejecutable sobre una base vacía: varias migraciones (013, 014,
-#   015, 022, 025) referencian la tabla "consultas", que recién se crea en la 030. Ver
-#   PENDIENTES.md → "Consolidación de baseline de migraciones".
-#   Para una vista consolidada del esquema, ver schema.sql (referencia, no reemplaza
-#   las migraciones).
-#   Los buckets de Storage "estudios" (privado, migración 026) y "documentos" (privado,
-#   migración 027) se crean por migración, junto con sus políticas RLS por tenant; no hace
-#   falta crearlos a mano. El bucket "difusion" TODAVÍA no existe ni se usa (ver PENDIENTES.md).
+#   Corré supabase/migrations/000_baseline.sql sobre tu proyecto Supabase NUEVO Y VACÍO
+#   (SQL Editor del dashboard, como postgres). Es un archivo único que recrea el esquema
+#   completo: tablas, tipos, funciones, triggers, políticas RLS, índices, los buckets de
+#   Storage y el catálogo de obras sociales. Después van las migraciones 048 en adelante,
+#   si las hubiera.
+#   ⚠ EL BASELINE NUNCA SE EJECUTÓ CONTRA NINGUNA BASE: está comparado objeto por objeto
+#   contra producción, pero comparar no es verificar. Mientras siga así, el entorno que
+#   levantes con él NO es equivalente a producción. El aviso completo —el riesgo concreto
+#   y qué falta para cerrarlo— está arriba de todo en supabase/migrations/_historico/README.md
+#   y en el encabezado del propio baseline. Si lo corrés, contalo: sos la primera persona.
+#   ⚠ NO uses las migraciones 001 → 047 como secuencia: NO son ejecutables desde una base
+#   vacía (seis de ellas referencian dos tablas que recién se crean en la 030). Están
+#   archivadas en supabase/migrations/_historico/ como registro de las decisiones del
+#   proyecto, no como script de instalación.
+#   Los buckets de Storage "estudios" y "documentos" (los dos privados) los crea el
+#   baseline junto con sus políticas RLS por tenant; no hace falta crearlos a mano. El
+#   bucket "difusion" TODAVÍA no existe ni se usa (ver PENDIENTES.md).
+#   Para leer el modelo de datos de corrido, ver schema.sql — pero es DERIVADO: ante
+#   cualquier diferencia manda el baseline, y ante una duda real manda la base viva.
 
 # 4. Levantar el servidor de desarrollo
 npm run dev
@@ -106,8 +115,11 @@ src/
   types/        Tipos por dominio + index.ts (barrel)
   proxy.ts      Middleware de Next.js (sesión + guard de rutas)
 supabase/
-  migrations/   Migraciones SQL (fuente de verdad del esquema)
-schema.sql      Snapshot consolidado del esquema (referencia)
+  migrations/
+    000_baseline.sql   Esquema completo en un archivo — AUTORIDAD. Punto de partida.
+    _historico/        Las 49 migraciones 001→047, archivadas (no ejecutables en secuencia)
+      _copias-ejecutables/   Las copias MIGRACION-*.sql que vivían en la raíz
+schema.sql      Snapshot del esquema — DERIVADO, se mantiene a mano (referencia de lectura)
 ```
 
 > Nota: en esta versión de Next.js el middleware vive en `src/proxy.ts`
@@ -119,7 +131,9 @@ schema.sql      Snapshot consolidado del esquema (referencia)
 
 - [`CLAUDE.md`](./CLAUDE.md) — instrucciones y contexto para asistentes de IA.
 - [`DESIGN.md`](./DESIGN.md) — sistema de diseño (paleta, tipografía, componentes).
-- [`schema.sql`](./schema.sql) — esquema consolidado de la base de datos.
+- [`supabase/migrations/000_baseline.sql`](./supabase/migrations/000_baseline.sql) — esquema completo en un archivo. **La autoridad.** ⚠ Nunca se ejecutó: ver el aviso de su encabezado.
+- [`supabase/migrations/_historico/README.md`](./supabase/migrations/_historico/README.md) — por qué las migraciones 001→047 no son ejecutables como secuencia, y qué falta para dar el baseline por verificado.
+- [`schema.sql`](./schema.sql) — esquema de la base para leer de corrido. **Derivado:** ante una diferencia manda el baseline; ante una duda real, la base viva.
 - [`PENDIENTES.md`](./PENDIENTES.md) — tareas pendientes de pulido (funcional, seguridad, estético).
 
 ---

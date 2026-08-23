@@ -52,9 +52,7 @@
 --   LEYENDO LA BASE VIVA (pg_catalog: pg_class, pg_attribute, pg_constraint, pg_index,
 --   pg_policies, pg_proc, pg_trigger, pg_publication, storage.buckets), NO transcribiendo
 --   las migraciones. Ese es el punto: la transcripción manual es lo que produjo el drift
---   que este archivo cierra (ver `schema.sql`, que describe como TEXT+CHECK cuatro
---   columnas que en la base son ENUM). Donde la base y las migraciones difieran, MANDA
---   LA BASE.
+--   que este archivo cierra. Donde la base y las migraciones difieran, MANDA LA BASE.
 --
 -- ORDEN INTERNO (importa: el archivo corre de arriba abajo sin errores de dependencia)
 --   §1  Extensiones
@@ -111,7 +109,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto   WITH SCHEMA extensions;
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- §2 · TIPOS ENUM
 -- ═══════════════════════════════════════════════════════════════════════════════
--- ⚠ Son ENUM de verdad en la base, no TEXT con CHECK. `schema.sql` los describe mal.
+-- ⚠ Son ENUM de verdad en la base, no TEXT con CHECK.
 --   El orden de los valores es el `enumsortorder` real: importa para `ORDER BY` sobre
 --   estas columnas y para agregar valores nuevos (`ALTER TYPE … ADD VALUE … BEFORE/AFTER`).
 -- No existe `CREATE TYPE IF NOT EXISTS`: van en bloques DO.
@@ -615,7 +613,7 @@ CREATE TABLE IF NOT EXISTS public.certificados (
   paciente_dob         DATE NOT NULL,
   obra_social_nombre   TEXT,
   numero_afiliado      TEXT,
-  -- ⚠ ENUM y NULLABLE. `schema.sql` lo describe como TEXT con CHECK: es incorrecto.
+  -- ⚠ ENUM y NULLABLE.
   tipo                 public.certificado_tipo,
   tipo_descripcion     TEXT,
   contenido            TEXT NOT NULL,
