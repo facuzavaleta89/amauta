@@ -1,8 +1,36 @@
+-- ############################################################################
+-- ⚠⚠  ESTE ARCHIVO ES DERIVADO. NO ES LA AUTORIDAD SOBRE EL ESQUEMA.
+-- ############################################################################
+--
+--   LA AUTORIDAD ES `supabase/migrations/000_baseline.sql`. Ese archivo se generó
+--   LEYENDO la base; éste se mantiene A MANO. Ante cualquier diferencia entre los
+--   dos, MANDA EL BASELINE.
+--
+--   Y ante cualquier duda REAL —algo de lo que dependa una decisión, un diagnóstico
+--   o un fix— MANDA LA BASE VIVA, no éste ni el baseline. Se consulta directo (hay
+--   un MCP de Supabase de solo lectura conectado a Claude Code; ver CLAUDE.md →
+--   "Acceso directo a la base").
+--
+--   ⚠ ESTE ARCHIVO SE MANTIENE A MANO Y POR ESO PUEDE TENER ERRORES. No es una
+--     precaución teórica, ya pasó: hasta el pase de documentación del 2026-08-23
+--     decía que el índice de `rate_limits` se llamaba `idx_rate_limits_window`
+--     cuando en la base se llama `idx_rate_limits_window_start`, y describía
+--     `recetas.fecha_vencimiento` sin default cuando la base tiene uno (ver el ⚠ de
+--     esa tabla). Los dos se encontraron consultando la base, no leyendo el archivo.
+--
+--   PARA QUÉ SIRVE IGUAL: para leer el modelo de datos completo de corrido, con los
+--   porqués al lado de cada objeto. Eso el baseline también lo tiene, pero acá está
+--   más compacto. Úsalo para ENTENDER; no lo cites como prueba de que algo ES así.
+--
+-- ############################################################################
+
+
 -- ============================================================================
 -- schema.sql — SNAPSHOT CONSOLIDADO DEL ESQUEMA (Amauta)
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
--- reconstruido a partir de las migraciones en supabase/migrations/ (001→047).
+-- reconstruido a partir de las migraciones en supabase/migrations/ (001→047, hoy
+-- archivadas en supabase/migrations/_historico/).
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -134,13 +162,16 @@
 -- ✅ Desde la migración 030 TODOS los objetos tienen su CREATE versionado en
 --    supabase/migrations/ (ya no quedan objetos "sin migración fuente").
 --
--- ⚠ LIMITACIÓN DE ORDEN (conocida y aceptada): el ESTADO FINAL está versionado, pero
---    la SECUENCIA de migraciones NO es ejecutable desde una base vacía. Las
---    migraciones 013, 014, 015, 022 y 025 referencian `public.consultas` (RLS y ALTER)
---    y la tabla recién se crea en la 030, así que correr el set desde cero falla en la
---    013. Es una limitación PREEXISTENTE; resolverla requiere una consolidación de
---    baseline (mover los CREATE al principio del historial), que es un trabajo aparte
---    y no está hecho. Ver PENDIENTES.md → Bloque A.
+-- ⚠ LIMITACIÓN DE ORDEN DEL HISTORIAL (ya no bloquea: la resolvió el baseline).
+--    La SECUENCIA 001→047 NO es ejecutable desde una base vacía. SEIS migraciones
+--    —013, 014, 015, 022, 025 y 029— referencian DOS tablas que recién se crean en la
+--    030: `public.consultas` (las seis) y `public.notificaciones` (la 029). Correr el
+--    set desde cero falla en la 013, en
+--    `ALTER TABLE public.consultas ENABLE ROW LEVEL SECURITY`.
+--    ✅ Resuelto por `supabase/migrations/000_baseline.sql`, que recrea el esquema
+--    completo en un solo archivo. Las 49 migraciones se archivaron en
+--    supabase/migrations/_historico/ y siguen siendo consultables (su README explica
+--    el corte). ⚠ El baseline está PENDIENTE DE VERIFICACIÓN — ver ese README.
 -- ============================================================================
 
 
@@ -611,6 +642,13 @@ CREATE TABLE public.recetas (
   diagnostico        TEXT NOT NULL,
   medicacion         TEXT NOT NULL,
   fecha_receta       DATE NOT NULL DEFAULT CURRENT_DATE,
+  -- ⚠ EN LA BASE ESTA COLUMNA TIENE UN DEFAULT QUE ACÁ NO SE PUEDE ESCRIBIR:
+  --   `(fecha_receta + '30 days'::interval)`, o sea una referencia a OTRA COLUMNA de
+  --   la misma fila. Postgres NO permite crear eso por DDL, así que ni este archivo ni
+  --   el baseline pueden reproducirlo. Es el CUARTO caso de cambio hecho a mano sobre
+  --   la base sin migración que lo registre (la 009 crea la columna sin default).
+  --   Inocuo hoy: la emisión de recetas está bloqueada por ANMAT y nadie inserta filas.
+  --   Ver CLAUDE.md → nota técnica 31 y PENDIENTES.md → Bloque A.
   fecha_vencimiento  DATE,
   numero_receta      TEXT UNIQUE,
   firma_digital_ref  TEXT,
@@ -1590,7 +1628,7 @@ CREATE TABLE public.rate_limits (
 );
 -- Índice para la limpieza barata de ventanas viejas (la hace el cron de recordatorios:
 -- DELETE FROM rate_limits WHERE window_start < now() - interval '1 hour').
-CREATE INDEX idx_rate_limits_window ON public.rate_limits(window_start);
+CREATE INDEX idx_rate_limits_window_start ON public.rate_limits(window_start);
 
 -- ⚠ RLS habilitado SIN políticas, A PROPÓSITO (mismo criterio que la ausencia de DELETE
 --   en el bucket `documentos`): sin políticas, RLS deniega por defecto todo acceso de

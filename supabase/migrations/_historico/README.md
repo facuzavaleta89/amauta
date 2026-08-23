@@ -134,14 +134,27 @@ respetar — otra razón por la que el corte limpio era posible.
 **`supabase/migrations/000_baseline.sql`.**
 
 Es un archivo único, **generado leyendo la base viva** (no transcribiendo estas
-migraciones), que sobre un proyecto Supabase nuevo y vacío produce el esquema que hoy
-tiene producción: 21 tablas, 4 tipos ENUM, 12 funciones, 15 triggers, 72 políticas RLS,
-78 índices, 2 buckets de Storage y el catálogo `obras_sociales`.
+migraciones), que sobre un proyecto Supabase nuevo y vacío está previsto que produzca el
+esquema que hoy tiene producción: 21 tablas, 4 tipos ENUM, 12 funciones, 15 triggers, 72
+políticas RLS, 78 índices, 2 buckets de Storage y el catálogo `obras_sociales`.
+⚠ *Previsto*, no comprobado — ver el aviso del encabezado.
 
 - Se llama `000` para que **ordene antes que todo este historial** y no colisione con la `001`.
 - **No se aplica a producción**: producción ya tiene ese esquema. Existe para entornos nuevos.
 - Fija en `authenticated` las cuatro políticas del punto 3, con el comentario que explica
   por qué ninguna migración las puso ahí.
+
+---
+
+## Qué más hay en esta carpeta
+
+**`_copias-ejecutables/`** — los 26 `MIGRACION-*.sql` que vivían en la raíz del repositorio
+(movidos el 2026-08-23). Eran copias de cada migración preparadas para pegar en el SQL Editor
+de Supabase: el flujo era *versionar en `supabase/migrations/` + copia suelta en la raíz +
+ejecución manual en el dashboard*. **Ese flujo terminó** con el baseline. Se conservan porque
+no son duplicados exactos —una difiere en el SQL y once traen comentarios operativos que la
+versionada no tiene—, o sea que son contexto de **cómo** se aplicó cada migración. Tienen su
+propio README.
 
 ---
 

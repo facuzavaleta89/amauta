@@ -78,10 +78,12 @@ Node LTS 20+. Tailwind v4 se configura en `src/app/globals.css` con `@theme`
 
 ## Modelo de datos
 
-Resumen; el esquema completo (columnas, constraints, funciones, triggers, RLS)
-está en **`schema.sql`** (snapshot consolidado). Tenant key: `pacientes.creado_por`
-= UUID del médico; el resto usa `medico_id`. `get_medico_id()` resuelve el tenant
-del usuario actual.
+Resumen; el esquema completo (columnas, constraints, funciones, triggers, RLS) está en
+**`supabase/migrations/000_baseline.sql`**, que es la **autoridad**. `schema.sql` sigue
+existiendo como lectura cómoda pero es **derivado**: ante una diferencia manda el baseline,
+y ante una duda real manda **la base viva** (ver *Acceso directo a la base*). Tenant key:
+`pacientes.creado_por` = UUID del médico; el resto usa `medico_id`. `get_medico_id()`
+resuelve el tenant del usuario actual.
 
 | Tabla | Qué es | Tenant |
 |---|---|---|
@@ -725,9 +727,43 @@ solo se envía por email).
 
 - **`README.md`** — puesta en marcha para desarrolladores (requisitos, instalación, scripts).
 - **`DESIGN.md`** — sistema de diseño (paleta OKLCH, tipografía, componentes, categorías del turnero).
-- **`schema.sql`** — snapshot consolidado del esquema (tablas, funciones, triggers, RLS). No reemplaza las migraciones de `supabase/migrations/`.
+- **`supabase/migrations/000_baseline.sql`** — ⭐ **la AUTORIDAD sobre el esquema.** Archivo único que recrea el esquema completo (21 tablas, 4 ENUM, 12 funciones, 15 triggers, 72 políticas, 78 índices, 2 buckets y el catálogo `obras_sociales`) sobre un proyecto Supabase nuevo y vacío. Se generó **leyendo la base de producción**, no transcribiendo las migraciones — que es lo que venía produciendo drift. ⚠ **No se aplica a producción:** producción ya tiene ese esquema.
+- **`supabase/migrations/_historico/`** — las **49 migraciones** `001`→`047`, archivadas **sin editar**. Siguen siendo consultables y se consultan: casi todas traen en su encabezado el *por qué* de un cambio, y `CLAUDE.md` y `PENDIENTES.md` las referencian por número. **No son ejecutables como secuencia** (ver nota técnica 6). Su `README.md` explica el corte.
+  - `_historico/_copias-ejecutables/` — los `MIGRACION-*.sql` que vivían en la raíz del repo: copias que se pegaban en el SQL Editor para aplicar cada migración a mano. **Ese flujo terminó**; se conservan como contexto de *cómo* se aplicó cada una.
+- ⚠ **El baseline está PENDIENTE DE VERIFICACIÓN: nunca se ejecutó contra ninguna base.** Está comparado objeto por objeto contra producción con cero diferencias, pero **comparar no es verificar**. Mientras eso siga así, **un entorno levantado con él NO es equivalente a producción**. El detalle —cuál es el riesgo concreto y qué hacen falta para cerrarlo— está en `supabase/migrations/_historico/README.md`, arriba de todo, y en `PENDIENTES.md` → Bloque A. **No repetir la advertencia completa acá.**
+- **`schema.sql`** — snapshot del esquema en un solo archivo, con los porqués al lado de cada objeto. ⚠ **DERIVADO, no autoridad:** se mantiene **a mano**, así que puede tener errores (ya los tuvo). Ante una diferencia manda el baseline; ante una duda real, la base viva. Sirve para **entender** el modelo, no para probar que algo *es* así.
 - **`PENDIENTES.md`** — tareas de pulido (Funcional / Seguridad / Estético) con ubicaciones en el código.
 - **`src/types/`** — tipos por dominio + `index.ts` (barrel). Deriva del esquema; **no** hay tipos autogenerados por Supabase.
+
+---
+
+## Acceso directo a la base
+
+Claude Code tiene conectado un **servidor MCP de Supabase en modo solo lectura**, así que
+puede **consultar la base viva directamente** (`pg_catalog`, `information_schema`,
+`storage.buckets`, y las tablas de datos). No hace falta que un humano corra consultas y
+pegue resultados.
+
+**Qué habilita, y por qué importa acá:** un diagnóstico puede **contrastar el repo contra la
+base** antes de concluir. Ésa es exactamente la brecha que produjo los **cuatro casos de
+drift** conocidos (ver `PENDIENTES.md` → Bloque A): las migraciones dicen lo que se
+*pretendió* aplicar, y solo la base dice lo que *rige*. Antes, comprobarlo costaba una ida y
+vuelta con el usuario y por eso se salteaba; ahora no.
+
+**Regla que reemplaza a la anterior:** todo diagnóstico sobre **estado de esquema o de
+datos** —qué columnas hay, qué constraints rigen, qué políticas están activas, qué filas
+existen— se **verifica contra la base**, no contra `schema.sql` ni contra las migraciones.
+
+⚠ **Dos limitaciones, y las dos importan:**
+
+1. **Es SOLO LECTURA.** La sesión abre con `default_transaction_read_only = on`: cualquier
+   escritura falla. Las migraciones se siguen aplicando por fuera (SQL Editor o CLI).
+2. ⚠ **Las credenciales BYPASSAN LA RLS.** El rol es `supabase_read_only_user`, con
+   `rolbypassrls = true` y miembro de `pg_read_all_data`. O sea que **lee todo, sin
+   políticas**. Sirve para inspeccionar **estructura** y para ver qué hay realmente en una
+   tabla, pero **NO refleja lo que vería un usuario común**: una consulta que devuelve filas
+   por acá no prueba que un asistente pueda verlas. Para comprobar comportamiento de RLS hay
+   que probar con una sesión real, con su `auth.uid()` y sus permisos.
 
 ---
 
@@ -803,13 +839,22 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
    **No crear `middleware.ts`.** Para rutas públicas, editar `publicRoutes` en `proxy.ts`.
 5. **Admin client para permisos:** el médico actualiza permisos del asistente vía
    `admin.ts` (bypass RLS), porque `profiles_update_own` solo permite el perfil propio.
-6. **✅ Esquema sin migración fuente — RESUELTO (migración 030).** `consultas`,
-   `notificaciones`, las columnas de Bloque 4 de `turnos` y `profiles.titulo/matriculas/
-   logo_url` ya tienen su `CREATE` versionado. **Limitación conocida:** el ESTADO FINAL es
-   reproducible, pero la SECUENCIA de migraciones **no** corre desde una base vacía (013,
-   014, 015, 022 y 025 referencian `consultas` y la tabla recién se crea en la 030 → falla
-   en la 013). Requiere una consolidación de baseline, no hecha; ver `PENDIENTES.md` → Bloque A.
-7. **Migración vacía:** `20260326204733_fix_rls_recursion.sql` tiene 0 bytes.
+6. **✅ Esquema sin migración fuente — RESUELTO (migración 030) y consolidado en el
+   baseline (2026-08-22).** `consultas`, `notificaciones`, las columnas de Bloque 4 de
+   `turnos` y `profiles.titulo/matriculas/logo_url` ya tenían su `CREATE` versionado desde
+   la 030, pero la **SECUENCIA** seguía sin correr desde una base vacía: **SEIS** migraciones
+   —**013, 014, 015, 022, 025 y 029**— referencian **DOS** tablas que recién se crean en la
+   **030** (`consultas` en las seis, `notificaciones` en la 029), así que el set desde cero
+   fallaba en la **013**, en `ALTER TABLE public.consultas ENABLE ROW LEVEL SECURITY`.
+   ⚠ El texto anterior de esta nota decía **cinco** migraciones y **una** tabla: era falso, y
+   el mismo error estaba copiado en `schema.sql`. Los dos se corrigieron.
+   **Hoy el punto de partida es `supabase/migrations/000_baseline.sql`** — ver la sección
+   *Documentación del proyecto*.
+7. **Migraciones nuevas: numerar desde 048.** El historial llega hasta la `047` y su
+   numeración **no se reinicia ni se renumera**. Una migración nueva va en
+   `supabase/migrations/` (al lado del baseline, **no** dentro de `_historico/`) y sigue la
+   cuenta: `048`, `049`… El orden efectivo para un entorno nuevo es `000_baseline.sql` y
+   después las que se hayan agregado.
 8. **Migración 025 (seguridad):** `verificar_documento` ya **no expone** DNI completo ni
    contenido clínico (devuelve DNI enmascarado, fija `search_path`, y solo `service_role`
    puede ejecutarla); se dropearon dos RLS huérfanas en `consultas` que salteaban los
@@ -1437,3 +1482,31 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
          descartaba todas las páginas cargadas de más. ⚠ Lo que el merge **no puede** inferir es un
          **borrado** ("no vino del servidor" es indistinguible de "está en otra página"): por eso el
          borrado saca la fila del estado **explícitamente**, en su propio handler.
+31. **`recetas.fecha_vencimiento` tiene un DEFAULT QUE NO SE PUEDE REPRODUCIR — cuarto caso de
+    drift, y el único irreparable.** En la base viva esa columna tiene
+    `DEFAULT (fecha_receta + '30 days'::interval)`: un default que **referencia otra columna de
+    la misma fila**. Verificado en el árbol de expresión (`pg_attrdef.adbin` trae un nodo
+    `VAR :varattno 10`), no es una impresión engañosa de `pg_get_expr`.
+    - ⚠ **Postgres NO permite crear eso.** `ALTER TABLE … SET DEFAULT` con una referencia a
+      columna falla con *"cannot use column reference in DEFAULT expression"*. O sea que **no
+      hay forma de reproducirlo por DDL: ni el baseline ni `schema.sql` ni una migración
+      futura pueden hacerlo**. Cualquier entorno nuevo va a diferir de producción en este
+      punto, se use el baseline o lo que sea.
+    - **Es drift:** la migración **009** crea la columna **sin default alguno**. Nadie sabe cómo
+      llegó ahí. Es el **cuarto** caso confirmado de cambio hecho a mano sobre la base sin
+      migración que lo registre — los otros tres: la fila `'Particular / Sin obra social'`
+      borrada del catálogo, el episodio de RLS editada hacia versiones más permisivas que
+      corrigió la **029**, y las cuatro políticas movidas a `authenticated` a mano
+      (`evoluciones_insert`, `difusion_insert`, `difusion_update`, `difusion_delete`) que la
+      **042** documentó y salteó.
+    - **Hoy es INOCUO:** la emisión de recetas está **bloqueada por ANMAT** (regla de negocio 7),
+      nadie inserta filas en esa tabla y el default no se evalúa nunca.
+    - ⚠ **Hay que decidirlo cuando se habilite la emisión**, y no solo: a `recetas` le faltan
+      además **`emisor_snapshot`** (regla de negocio 11 — hoy la tienen `pedidos` y
+      `certificados`, verificado) y **`codigo_verificacion`** con su UNIQUE, o sea el QR de
+      `/verificar/[codigo]` (regla 5). Las tres cosas son la misma tarea. Ver `PENDIENTES.md`
+      → Bloque A.
+    - **Lo que NO hay que hacer:** "arreglarlo" en el baseline con `CURRENT_DATE + 30 days`
+      —no es equivalente, difiere en cuanto se inserte una receta con `fecha_receta` explícita
+      distinta de hoy— ni con un trigger `BEFORE INSERT`, que sería crear en el entorno nuevo
+      un objeto que producción **no tiene**.
