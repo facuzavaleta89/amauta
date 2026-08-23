@@ -1,5 +1,47 @@
 # `_historico/` — las 49 migraciones originales del proyecto
 
+> ## ⚠⚠ ANTES DE USAR EL BASELINE: NO ESTÁ VERIFICADO
+>
+> **`../000_baseline.sql` NUNCA SE EJECUTÓ CONTRA NINGUNA BASE.** Ni contra producción
+> —no hacía falta, producción ya tiene ese esquema— ni contra una base de prueba, porque
+> no había ninguna donde correrlo.
+>
+> Se generó **leyendo la base de producción** y se comparó contra el inventario del
+> catálogo objeto por objeto: tablas, columnas, tipos, constraints, índices, políticas,
+> funciones, triggers, buckets y catálogo dieron **cero diferencias**. Pero **COMPARAR NO
+> ES VERIFICAR**: ese diff prueba que los objetos están y se llaman igual, no que el
+> archivo corra ni que haga lo mismo.
+>
+> **⚠ El riesgo concreto está en las políticas de seguridad.** Postgres **normaliza y
+> reescribe** las expresiones de RLS al guardarlas: `pg_policies.qual` no devuelve lo que
+> escribió el autor, devuelve lo que el parser reconstruyó. El baseline copió ese texto
+> reconstruido y **LO REFORMATEÓ** —saltos de línea, indentación, algún paréntesis
+> redundante quitado para que se lea—. **Si en alguna de las 72 políticas ese reformateo
+> corrió la precedencia de un `AND` frente a un `OR`, NADA LO DELATA: la política existe,
+> se llama igual, pasa el diff de nombres… y AUTORIZA DISTINTO.** Un cambio de precedencia
+> **no se detecta leyendo**. En este esquema eso significa un asistente llegando a datos
+> clínicos que no le corresponden —o el caso opuesto, una app que "no anda" por permisos y
+> se depura durante horas contra el lugar equivocado.
+>
+> **Qué hace falta para darlo por verificado.** Dos pasos, en orden y sin saltear:
+>
+> 1. **Correrlo entero sobre un proyecto Supabase nuevo y vacío**, sin errores — y
+>    **una segunda vez seguida**, para probar que es idempotente.
+> 2. **Comparar automáticamente el catálogo de las dos bases**, la nueva y producción:
+>    correr en las dos la misma batería de consultas y mandar las salidas a `diff`,
+>    incluyendo las **expresiones crudas** de las políticas (`pg_policies.qual` y
+>    `.with_check`) y las **definiciones crudas** de las funciones (`pg_get_functiondef`).
+>    Postgres normaliza las dos bases igual, así que si las expresiones son semánticamente
+>    equivalentes el texto reconstruido sale idéntico y el diff da vacío. ⚠ **Sin leer
+>    nada a ojo:** leer es exactamente lo que no detecta el problema de arriba.
+>
+> **Hasta que esos dos pasos estén hechos, un entorno levantado con este baseline NO DEBE
+> CONSIDERARSE EQUIVALENTE A PRODUCCIÓN.** No sirve como referencia para reproducir un
+> bug, ni como base de una restauración, ni para concluir nada sobre cómo se comporta
+> producción.
+
+---
+
 Estos 49 archivos son el **registro de las decisiones del proyecto**, desde la creación
 del esquema (`001_pacientes.sql`, mayo 2026) hasta el último cambio aplicado
 (`047_mensajes_ultima_actividad.sql`, 2026-08-21).

@@ -1,3 +1,40 @@
+-- ███████████████████████████████████████████████████████████████████████████████
+-- ⚠⚠  ESTE ARCHIVO NUNCA SE EJECUTÓ CONTRA NINGUNA BASE — NO ESTÁ VERIFICADO
+-- ███████████████████████████████████████████████████████████████████████████████
+--
+--   Se generó LEYENDO la base de producción y se comparó contra el catálogo objeto por
+--   objeto —tablas, columnas, tipos, constraints, índices, políticas, funciones,
+--   triggers, buckets y catálogo—, con CERO diferencias. Pero COMPARAR NO ES VERIFICAR:
+--   ese diff prueba que los objetos están y se llaman igual, NO que el archivo corra ni
+--   que haga lo mismo.
+--
+--   ⚠ EL RIESGO CONCRETO ESTÁ EN LAS POLÍTICAS DE SEGURIDAD (§8). Postgres NORMALIZA Y
+--     REESCRIBE las expresiones de RLS al guardarlas, así que lo que está escrito acá no
+--     es lo que escribió nadie: es texto RECONSTRUIDO por el parser, copiado de la base
+--     y además REFORMATEADO para que se lea (saltos de línea, indentación, algún
+--     paréntesis redundante quitado). Si en alguna de las 72 políticas ese reformateo
+--     corrió la precedencia de un AND frente a un OR, NADA LO DELATA: la política
+--     existe, se llama igual, pasa cualquier diff de nombres… y AUTORIZA DISTINTO.
+--     Un cambio de precedencia NO SE DETECTA LEYENDO.
+--
+--   PARA DARLO POR VERIFICADO hacen falta dos pasos, en orden y sin saltear:
+--     1. Correrlo entero sobre un proyecto Supabase NUEVO Y VACÍO, sin errores — y una
+--        SEGUNDA VEZ SEGUIDA, para probar que es idempotente.
+--     2. Comparar AUTOMÁTICAMENTE el catálogo de esa base contra el de producción,
+--        incluyendo las expresiones CRUDAS de las políticas (`pg_policies.qual` y
+--        `.with_check`) y las definiciones CRUDAS de las funciones
+--        (`pg_get_functiondef`). Postgres normaliza las dos bases igual, así que si las
+--        expresiones son equivalentes el texto sale idéntico y el diff da vacío.
+--        ⚠ SIN LEER NADA A OJO: leer es exactamente lo que no detecta el problema de
+--        arriba.
+--
+--   HASTA QUE ESOS DOS PASOS ESTÉN HECHOS, un entorno levantado con este baseline NO
+--   DEBE CONSIDERARSE EQUIVALENTE A PRODUCCIÓN.
+--
+--   ── Detalle completo: `_historico/README.md`, en el aviso de su encabezado.
+-- ███████████████████████████████████████████████████████████████████████████████
+--
+--
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 000_baseline.sql — BASELINE CONSOLIDADO DEL ESQUEMA DE AMAUTA
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2260,7 +2297,8 @@ SELECT setval('public.obras_sociales_id_seq', (SELECT MAX(id) FROM public.obras_
 -- QUÉ NUMERAR DESPUÉS: las migraciones nuevas siguen desde 048. Este archivo es 000
 -- para que ordene ANTES que todo el historial y no colisione con la 001.
 --
--- ⚠ ESTE ARCHIVO NO SE APLICÓ NUNCA. Se generó leyendo la base y se verificó por
---   COMPARACIÓN contra el inventario del catálogo, objeto por objeto — no ejecutándolo.
---   Lo que esa verificación NO cubre está enumerado en RESPUESTA.md → Parte 4.
+-- ⚠ ESTE ARCHIVO NO SE APLICÓ NUNCA y la verificación fue por COMPARACIÓN, no por
+--   ejecución. El aviso completo —cuál es el riesgo y qué falta para darlo por
+--   verificado— está ARRIBA DE TODO, en la cabecera de este mismo archivo. El detalle,
+--   en `_historico/README.md`.
 -- ═══════════════════════════════════════════════════════════════════════════════
