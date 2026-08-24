@@ -60,7 +60,7 @@ export async function QRVerificacion({ codigo, estado }: QRVerificacionProps) {
         <p className="text-sm text-foreground leading-snug">
           Escaneá el código QR para verificar que este documento es auténtico y{' '}
           {estado === 'revocado' ? (
-            <span className="text-red-600 font-semibold">consultar su estado actual (anulado)</span>
+            <span className="text-destructive-strong font-semibold">consultar su estado actual (anulado)</span>
           ) : (
             <span>conocer su estado actual</span>
           )}

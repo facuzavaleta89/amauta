@@ -110,7 +110,7 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
         backHref="/pacientes"
       >
         {archivado && (
-          <Badge variant="secondary" className="gap-1 text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/10">
+          <Badge variant="secondary" className="gap-1 text-warning-strong bg-warning/10 hover:bg-warning/10">
             <Archive className="h-3 w-3" />
             Archivado
           </Badge>
@@ -143,9 +143,9 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
 
       {/* Aviso de paciente archivado */}
       {archivado && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
-          <Archive className="h-4 w-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p className="text-amber-800 dark:text-amber-200">
+        <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm">
+          <Archive className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
+          <p className="text-warning-strong">
             Este paciente está <strong>archivado</strong>. Sus datos e historia clínica se conservan,
             pero no se le pueden emitir documentos ni editar mientras esté archivado.
             {esMedico && ' Usá "Desarchivar" para reactivarlo.'}

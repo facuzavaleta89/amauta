@@ -132,12 +132,12 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
         <div className="bg-card border border-border rounded-2xl shadow-xl p-8 text-center space-y-5">
           <div className="flex justify-center">
             <div className="relative">
-              <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center">
-                <Clock className="h-8 w-8 text-amber-500" />
+              <div className="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center">
+                <Clock className="h-8 w-8 text-warning" />
               </div>
               <span className="absolute -top-1 -right-1 flex h-4 w-4">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-4 w-4 bg-amber-500" />
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75" />
+                <span className="relative inline-flex rounded-full h-4 w-4 bg-warning" />
               </span>
             </div>
           </div>
@@ -246,7 +246,7 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
             )}
 
             {queryValida && !buscando && resultadosVisibles.length === 0 && (
-              <p className={`text-xs text-center py-2 ${busquedaError ? 'text-destructive' : 'text-muted-foreground'}`}>
+              <p className={`text-xs text-center py-2 ${busquedaError ? 'text-destructive-strong' : 'text-muted-foreground'}`}>
                 {busquedaError ?? 'No se encontraron médicos con ese nombre o email.'}
               </p>
             )}
@@ -297,7 +297,7 @@ export function OnboardingClient({ userName, solicitudActual }: Props) {
 
             {/* Error */}
             {errorMsg && (
-              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2.5">
+              <div className="flex items-center gap-2 text-sm text-destructive-strong bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2.5">
                 <AlertCircle className="h-4 w-4 shrink-0" />
                 {errorMsg}
               </div>

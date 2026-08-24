@@ -99,9 +99,9 @@ export default async function PerfilPage() {
         description="Gestioná tus datos personales, firma digitalizada y accesos de asistentes."
       />
       {errorAsistentes && (
-        <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p className="text-sm text-amber-900 dark:text-amber-200">
+        <div className="flex gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p className="text-sm text-warning-strong">
             No se pudieron cargar los asistentes. Recargá la página o intentá más tarde.
           </p>
         </div>

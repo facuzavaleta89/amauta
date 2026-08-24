@@ -231,7 +231,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
           )}
 
           {errors.paciente_id && (
-            <p className="text-xs text-destructive">{errors.paciente_id.message}</p>
+            <p className="text-xs text-destructive-strong">{errors.paciente_id.message}</p>
           )}
 
           {/* Campos ocultos del snapshot */}
@@ -265,7 +265,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
               className={errors.diagnostico ? 'border-destructive' : ''}
             />
             {errors.diagnostico && (
-              <p className="text-xs text-destructive">{errors.diagnostico.message}</p>
+              <p className="text-xs text-destructive-strong">{errors.diagnostico.message}</p>
             )}
           </div>
 
@@ -283,7 +283,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
               {...register('estudios_pedidos')}
             />
             {errors.estudios_pedidos && (
-              <p className="text-xs text-destructive">{errors.estudios_pedidos.message}</p>
+              <p className="text-xs text-destructive-strong">{errors.estudios_pedidos.message}</p>
             )}
           </div>
 

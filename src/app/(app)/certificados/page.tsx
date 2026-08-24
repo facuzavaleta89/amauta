@@ -141,13 +141,13 @@ export default async function CertificadosPage({ searchParams }: Props) {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {isAnulado && (
-                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-500/10 text-red-700 dark:text-red-400 ring-1 ring-inset ring-red-500/20">
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-destructive/10 text-destructive-strong ring-1 ring-inset ring-destructive/20">
                           <Ban className="h-2.5 w-2.5" />
                           Anulado
                         </span>
                       )}
                       {isExpirado && (
-                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-1 ring-inset ring-amber-500/20">
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-warning/10 text-warning-strong ring-1 ring-inset ring-warning/20">
                           <AlertTriangle className="h-2.5 w-2.5" />
                           Expirado
                         </span>

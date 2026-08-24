@@ -137,7 +137,7 @@ export function NotaForm({ nota, onSaved, onDeleted, onClose }: Props) {
               size="sm"
               onClick={handleDelete}
               disabled={deleting || saving}
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              className="text-destructive-strong hover:text-destructive-strong hover:bg-destructive/10"
             >
               {deleting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Trash2 className="h-4 w-4 mr-2" />}
               Eliminar

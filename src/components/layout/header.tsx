@@ -136,7 +136,7 @@ export function Header({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               id="logout-button"
-              className="gap-2 text-sm text-destructive focus:text-destructive cursor-pointer"
+              className="gap-2 text-sm text-destructive-strong focus:text-destructive-strong cursor-pointer"
               onSelect={async () => {
                 await logout()
               }}

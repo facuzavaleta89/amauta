@@ -102,7 +102,7 @@ export function DifusionForm({ initialData }: DifusionFormProps) {
                 className={errors.titulo ? 'border-destructive' : ''}
               />
               <p className="text-xs text-muted-foreground">Este título es solo para que vos identifiques el mensaje.</p>
-              {errors.titulo && <p className="text-xs text-destructive">{errors.titulo.message}</p>}
+              {errors.titulo && <p className="text-xs text-destructive-strong">{errors.titulo.message}</p>}
             </div>
 
             {/* Asunto Email */}
@@ -116,7 +116,7 @@ export function DifusionForm({ initialData }: DifusionFormProps) {
                   className={errors.asunto_email ? 'border-destructive' : ''}
                 />
                 <p className="text-xs text-muted-foreground">Este es el título que leerán los pacientes en su bandeja de entrada.</p>
-                {errors.asunto_email && <p className="text-xs text-destructive">{errors.asunto_email.message}</p>}
+                {errors.asunto_email && <p className="text-xs text-destructive-strong">{errors.asunto_email.message}</p>}
               </div>
             )}
 
@@ -135,7 +135,7 @@ export function DifusionForm({ initialData }: DifusionFormProps) {
                 className={`min-h-[300px] resize-y leading-relaxed font-serif text-sm ${errors.contenido ? 'border-destructive' : ''}`}
                 {...register('contenido')}
               />
-              {errors.contenido && <p className="text-xs text-destructive">{errors.contenido.message}</p>}
+              {errors.contenido && <p className="text-xs text-destructive-strong">{errors.contenido.message}</p>}
             </div>
           </CardContent>
         </Card>
@@ -154,7 +154,7 @@ export function DifusionForm({ initialData }: DifusionFormProps) {
             {/* Canal */}
             <div className="space-y-2">
               <Label htmlFor="canal" className="flex items-center gap-2">
-                {canalWatch === 'whatsapp' ? <MessageCircle className="h-4 w-4 text-green-600" /> : <Mail className="h-4 w-4 text-blue-600" />}
+                {canalWatch === 'whatsapp' ? <MessageCircle className="h-4 w-4 text-success" /> : <Mail className="h-4 w-4 text-info" />}
                 Canal de Envío
               </Label>
               <Controller

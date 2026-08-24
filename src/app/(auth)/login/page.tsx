@@ -55,7 +55,7 @@ export default function LoginPage() {
           </div>
 
           {state?.error && (
-            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/8 border border-destructive/20 rounded-md px-3 py-2">
+            <div className="flex items-center gap-2 text-sm text-destructive-strong bg-destructive/8 border border-destructive/20 rounded-md px-3 py-2">
               <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{state.error}</span>
             </div>

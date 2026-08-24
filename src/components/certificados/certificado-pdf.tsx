@@ -112,14 +112,14 @@ export function CertificadoDocView({
         backHref="/certificados"
       >
         {estado === 'revocado' && (
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-red-500/10 text-red-700 dark:text-red-400 ring-red-500/30">
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-destructive/10 text-destructive-strong ring-destructive/30">
             Anulado
           </span>
         )}
         {userRole === 'medico' && estado === 'emitido' && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20 gap-2">
+              <Button variant="outline" className="text-destructive-strong hover:bg-destructive/10 border-destructive/20 gap-2">
                 <Ban className="h-4 w-4" />
                 Anular Documento
               </Button>
@@ -190,14 +190,14 @@ export function CertificadoDocView({
       {/* ── DOCUMENTO PREVIEW ───────────────────────────────── */}
       <div className="bg-white border border-border/60 rounded-xl shadow-lg overflow-hidden">
         {estado === 'revocado' && (
-          <div className="bg-red-50 dark:bg-red-950/20 border-b border-red-200 dark:border-red-900/40 px-8 py-3 text-center text-sm font-semibold text-red-800 dark:text-red-200 flex items-center justify-center gap-2">
+          <div className="bg-destructive/10 border-b border-destructive/30 px-8 py-3 text-center text-sm font-semibold text-destructive-strong flex items-center justify-center gap-2">
             <Ban className="h-4.5 w-4.5" />
             Este documento ha sido anulado y no es válido para su uso.
           </div>
         )}
 
         {sinEmisor && (
-          <div className="bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-900/40 px-8 py-3 text-center text-sm font-semibold text-amber-800 dark:text-amber-200 flex items-center justify-center gap-2">
+          <div className="bg-warning/10 border-b border-warning/30 px-8 py-3 text-center text-sm font-semibold text-warning-strong flex items-center justify-center gap-2">
             <AlertCircle className="h-4.5 w-4.5" />
             Este documento no tiene datos del emisor registrados. No se generó correctamente: contactá al administrador.
           </div>
@@ -293,9 +293,9 @@ export function CertificadoDocView({
 
           {/* Validez */}
           {certificado.valido_hasta && (
-            <div className="flex items-center gap-2 text-sm bg-amber-50/50 border border-amber-200/50 rounded-lg px-4 py-2">
-              <Clock className="h-4 w-4 text-amber-700 dark:text-amber-300 shrink-0" />
-              <span className="text-amber-900 dark:text-amber-100 font-medium">
+            <div className="flex items-center gap-2 text-sm bg-warning/5 border border-warning/20 rounded-lg px-4 py-2">
+              <Clock className="h-4 w-4 text-warning shrink-0" />
+              <span className="text-warning-strong font-medium">
                 Válido hasta: {formatFechaLarga(certificado.valido_hasta!)}
               </span>
             </div>

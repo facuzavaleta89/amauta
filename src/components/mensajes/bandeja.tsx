@@ -332,7 +332,7 @@ export function Bandeja({ threads: initialThreads, currentUserId, hayMasInicial,
                               e.stopPropagation()
                               setConfirmDeleteThreadId(m.id)
                             }}
-                            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
                             title="Eliminar conversación"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -368,7 +368,7 @@ export function Bandeja({ threads: initialThreads, currentUserId, hayMasInicial,
           {(hayMas || errorCarga) && (
             <div className="pt-2 flex flex-col items-center gap-2">
               {errorCarga && (
-                <p className="text-xs text-destructive text-center">{errorCarga}</p>
+                <p className="text-xs text-destructive-strong text-center">{errorCarga}</p>
               )}
               {hayMas && (
                 <Button

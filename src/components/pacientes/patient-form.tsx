@@ -156,7 +156,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
                 className={errors.nombre_completo ? 'border-destructive' : ''}
               />
               {errors.nombre_completo && (
-                <p className="text-xs text-destructive">{errors.nombre_completo.message}</p>
+                <p className="text-xs text-destructive-strong">{errors.nombre_completo.message}</p>
               )}
             </div>
 
@@ -169,7 +169,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
                 className={errors.dni ? 'border-destructive' : ''}
               />
               {errors.dni && (
-                <p className="text-xs text-destructive">{errors.dni.message}</p>
+                <p className="text-xs text-destructive-strong">{errors.dni.message}</p>
               )}
             </div>
 
@@ -183,7 +183,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
                 className={errors.fecha_nacimiento ? 'border-destructive' : ''}
               />
               {errors.fecha_nacimiento && (
-                <p className="text-xs text-destructive">{errors.fecha_nacimiento.message}</p>
+                <p className="text-xs text-destructive-strong">{errors.fecha_nacimiento.message}</p>
               )}
             </div>
 
@@ -210,7 +210,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
                 )}
               />
               {errors.sexo && (
-                <p className="text-xs text-destructive">{errors.sexo.message}</p>
+                <p className="text-xs text-destructive-strong">{errors.sexo.message}</p>
               )}
             </div>
           </div>
@@ -231,7 +231,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
               <Label htmlFor="email">Email</Label>
               <Input id="email" type="email" {...register('email')} />
               {errors.email && (
-                <p className="text-xs text-destructive">{errors.email.message}</p>
+                <p className="text-xs text-destructive-strong">{errors.email.message}</p>
               )}
             </div>
             <div className="space-y-2">
@@ -302,7 +302,7 @@ export function PatientForm({ initialData, obrasSociales }: PatientFormProps) {
                   autoFocus
                 />
                 {errors.obra_social_otro && (
-                  <p className="text-xs text-destructive">{errors.obra_social_otro.message}</p>
+                  <p className="text-xs text-destructive-strong">{errors.obra_social_otro.message}</p>
                 )}
               </div>
             )}

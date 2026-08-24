@@ -106,7 +106,7 @@ export function PedidoDocView({
         backHref="/pedidos"
       >
         {estado === 'revocado' ? (
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-red-500/10 text-red-700 dark:text-red-400 ring-red-500/30">
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-destructive/10 text-destructive-strong ring-destructive/30">
             Anulado
           </span>
         ) : (
@@ -117,7 +117,7 @@ export function PedidoDocView({
         {userRole === 'medico' && estado === 'emitido' && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20 gap-2">
+              <Button variant="outline" className="text-destructive-strong hover:bg-destructive/10 border-destructive/20 gap-2">
                 <Ban className="h-4 w-4" />
                 Anular Documento
               </Button>
@@ -188,14 +188,14 @@ export function PedidoDocView({
       {/* ── DOCUMENTO PREVIEW ───────────────────────────────── */}
       <div className="bg-white border border-border/60 rounded-xl shadow-lg overflow-hidden print:shadow-none">
         {estado === 'revocado' && (
-          <div className="bg-red-50 dark:bg-red-950/20 border-b border-red-200 dark:border-red-900/40 px-8 py-3 text-center text-sm font-semibold text-red-800 dark:text-red-200 flex items-center justify-center gap-2">
+          <div className="bg-destructive/10 border-b border-destructive/30 px-8 py-3 text-center text-sm font-semibold text-destructive-strong flex items-center justify-center gap-2">
             <Ban className="h-4.5 w-4.5" />
             Este documento ha sido anulado y no es válido para su uso.
           </div>
         )}
 
         {sinEmisor && (
-          <div className="bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-900/40 px-8 py-3 text-center text-sm font-semibold text-amber-800 dark:text-amber-200 flex items-center justify-center gap-2">
+          <div className="bg-warning/10 border-b border-warning/30 px-8 py-3 text-center text-sm font-semibold text-warning-strong flex items-center justify-center gap-2">
             <AlertCircle className="h-4.5 w-4.5" />
             Este documento no tiene datos del emisor registrados. No se generó correctamente: contactá al administrador.
           </div>
@@ -304,13 +304,13 @@ export function PedidoDocView({
 
           {/* Indicaciones */}
           {pedido.indicaciones && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex gap-3">
-              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 flex gap-3">
+              <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
               <div>
-                <p className="text-xs font-bold text-amber-800 uppercase tracking-wide mb-1">
+                <p className="text-xs font-bold text-warning-strong uppercase tracking-wide mb-1">
                   Indicaciones para el Paciente
                 </p>
-                <p className="text-sm text-amber-900 leading-relaxed">{pedido.indicaciones}</p>
+                <p className="text-sm text-warning-strong leading-relaxed">{pedido.indicaciones}</p>
               </div>
             </div>
           )}

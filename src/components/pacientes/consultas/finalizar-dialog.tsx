@@ -35,7 +35,7 @@ export function FinalizarDialog({ open, onOpenChange, onConfirm, isLoading }: Fi
           <AlertDialogAction
             onClick={onConfirm}
             disabled={isLoading}
-            className="bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-600"
+            className="bg-success text-success-foreground hover:bg-success/90 focus:ring-success"
           >
             {isLoading ? 'Finalizando…' : 'Finalizar consulta'}
           </AlertDialogAction>

@@ -154,7 +154,7 @@ export default async function PedidosPage({ searchParams }: Props) {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {pedido.estado === 'revocado' && (
-                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-500/10 text-red-700 dark:text-red-400 ring-1 ring-inset ring-red-500/20">
+                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-destructive/10 text-destructive-strong ring-1 ring-inset ring-destructive/20">
                         <Ban className="h-2.5 w-2.5" />
                         Anulado
                       </span>

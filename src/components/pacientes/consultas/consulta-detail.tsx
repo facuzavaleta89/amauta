@@ -102,8 +102,8 @@ function ConsultaReadOnly({ consulta }: { consulta: Consulta }) {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Lock className="h-4 w-4 text-emerald-600" />
-            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Finalizada</Badge>
+            <Lock className="h-4 w-4 text-success" />
+            <Badge className="bg-success/10 text-success-strong border-success/20">Finalizada</Badge>
           </div>
           <time className="text-lg font-bold text-foreground block">
             {format(new Date(consulta.fecha_hora), "d 'de' MMMM 'de' yyyy — HH:mm 'hs'", { locale: es })}
@@ -496,7 +496,7 @@ function ConsultaForm({
               )} />
               <FormField control={form.control} name="motivo_consulta" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Motivo de consulta <span className="text-destructive">*</span></FormLabel>
+                  <FormLabel>Motivo de consulta <span className="text-destructive-strong">*</span></FormLabel>
                   <FormControl>
                     <Textarea placeholder="¿Por qué consulta hoy el paciente?" className="resize-y min-h-[80px]" {...field} value={field.value || ''} />
                   </FormControl>
@@ -731,7 +731,7 @@ function ConsultaForm({
               type="button"
               onClick={() => setShowFinalizar(true)}
               disabled={isSubmitting || isDeleting}
-              className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+              className="gap-2 bg-success text-success-foreground hover:bg-success/90"
             >
               <CheckCircle2 className="h-4 w-4" />
               Finalizar consulta
@@ -745,7 +745,7 @@ function ConsultaForm({
                 variant="ghost"
                 onClick={() => setShowDescartar(true)}
                 disabled={isSubmitting || isDeleting}
-                className="gap-2 ml-auto text-destructive hover:text-destructive hover:bg-destructive/10"
+                className="gap-2 ml-auto text-destructive-strong hover:text-destructive-strong hover:bg-destructive/10"
               >
                 {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                 Descartar
