@@ -553,6 +553,15 @@ export function CalendarView() {
             return `${String(h).padStart(2, '0')}:00 hs`
           }}
           allDaySlot={false}
+          // Dos eventos que se pisan se reparten el ancho en columnas limpias, cada
+          // uno completo. Con el default (`true`) FullCalendar le DUPLICA el ancho a
+          // cada columna, así que el segundo evento arranca a mitad de franja y queda
+          // encimado sobre el primero: es el "bloqueo dibujado a media franja".
+          // ⚠ El solapamiento es un estado LEGÍTIMO —el servidor lo permite cuando el
+          // turno de abajo está en un estado que libera la franja— así que hay que
+          // dibujarlo bien, no impedirlo. NO confundir con `eventOverlap`, que es de
+          // interacción (limita el arrastre) y no de dibujo.
+          slotEventOverlap={false}
           selectable={true}
           editable={!isMobile}
           selectMirror={true}
