@@ -67,5 +67,12 @@ export default async function DifusionDetailPage({ params }: { params: Promise<{
     }
   }
 
-  return <DifusionPreview post={post} envioResumen={envioResumen} />
+  // El contenedor de ancho vive acá (regla única de las páginas de detalle); el
+  // encabezado lo emite `DifusionPreview` con PageHeader, porque sus acciones
+  // (eliminar, editar, configurar envío) son estado de cliente.
+  return (
+    <div className="max-w-4xl space-y-6">
+      <DifusionPreview post={post} envioResumen={envioResumen} />
+    </div>
+  )
 }

@@ -120,8 +120,50 @@ export function LayoutShell({
               tieneAccesoMensajeria={userRole === 'medico' || (permisos?.acceso_mensajeria ?? false)}
               onMenuToggle={handleToggle}
             />
-            <main className="flex-1 overflow-y-auto scrollbar-thin">
-              <div className="p-3 sm:p-4 md:p-6 animate-fade-in">
+            {/*
+              ⚠ ACÁ VIVE LA ALTURA DE LAS PÁGINAS DE PANTALLA COMPLETA. Antes de tocar
+              una clase de estas dos líneas, leer esto entero: el turnero ya se rompió
+              una vez por cambiarlas.
+
+              El <main> NO scrollea: es un contenedor de alto DEFINIDO. El que scrollea
+              es el wrapper de adentro, que tiene `h-full` (100% del alto de <main>) y
+              se lleva el padding.
+
+              Cadena de alturas, toda definida y toda colgada del `h-dvh` del shell —
+              ni un `100vh`, ni un píxel de header hardcodeado:
+                div.h-dvh (definida)
+                  → columna `flex-1`  (item estirado de un contenedor de alto definido)
+                    → <main> `flex-1 min-h-0` (post-flex de un contenedor definido)
+                      → este wrapper `h-full` (porcentaje de un alto definido ⇒ definido)
+                        → la página de pantalla completa `h-full`
+
+              ⚠ POR QUÉ EL SCROLL ESTÁ ACÁ Y NO EN <main>, que es lo intuitivo:
+              son los dos únicos requisitos que compiten.
+                · Las páginas de pantalla completa (turnero, historia clínica) se
+                  dimensionan con PORCENTAJES —`h-full`, `h-[calc(100%-3rem)]`, el
+                  `height="100%"` de FullCalendar— y un porcentaje contra un contenedor
+                  de alto `auto` cae a `auto`. O sea: necesitan un alto DEFINIDO, y un
+                  `min-height` NO lo es (ese fue el bug: el calendario quedaba en 0).
+                · Las páginas normales tienen que CRECER con su contenido sin perder el
+                  padding inferior al scrollear.
+              Un bloque de alto fijo no puede crecer, y uno que crece no da un alto
+              definido. La salida es que el bloque de alto fijo sea además el contenedor
+              de SCROLL: su padding forma parte del área scrolleable, así que el padding
+              inferior se conserva aunque el contenido lo desborde (verificado: con 3000px
+              de contenido, `scrollHeight` = 3000 + 48 de padding).
+
+              ⚠ El wrapper es un BLOQUE, no un contenedor flex. Eso es deliberado:
+                · las páginas normales se apilan como bloques y ocupan el ancho
+                  disponible sin necesidad de `w-full`;
+                · las acotadas (`max-w-4xl`) quedan alineadas a la IZQUIERDA sin
+                  `mx-auto`, que es el criterio de ancho vigente: el título tiene que
+                  caer siempre en la misma coordenada al cambiar de sección.
+              Si alguna vez se le pone `flex` acá, las páginas con `max-w-*` dejan de
+              estirarse (un flex item no se estira si tiene márgenes `auto` en el eje
+              transversal) y las de pantalla completa dejan de andar con `h-full`.
+            */}
+            <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              <div className="h-full overflow-y-auto scrollbar-thin p-3 sm:p-4 md:p-6 animate-fade-in">
                 {children}
               </div>
             </main>

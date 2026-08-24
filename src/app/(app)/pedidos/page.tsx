@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { Button } from '@/components/ui/button'
 import { BotonCrearConPermiso } from '@/components/shared/boton-crear-con-permiso'
+import PageHeader from '@/components/shared/page-header'
 import { Input } from '@/components/ui/input'
 import { PlusCircle, ClipboardList, FileText, Calendar, Search, X, Ban } from 'lucide-react'
 import Link from 'next/link'
@@ -47,14 +48,10 @@ export default async function PedidosPage({ searchParams }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Pedidos de Estudios</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Solicitudes de estudios complementarios emitidas
-          </p>
-        </div>
+      <PageHeader
+        title="Pedidos de Estudios"
+        description="Solicitudes de estudios complementarios emitidas"
+      >
         <BotonCrearConPermiso
           permiso="crear_pedidos"
           href="/pedidos/nuevo"
@@ -64,7 +61,7 @@ export default async function PedidosPage({ searchParams }: Props) {
           <PlusCircle className="h-4 w-4" />
           Nuevo Pedido
         </BotonCrearConPermiso>
-      </div>
+      </PageHeader>
 
       {/* Búsqueda */}
       <form className="flex items-center gap-2 max-w-md">

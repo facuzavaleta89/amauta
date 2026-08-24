@@ -26,7 +26,7 @@ export default async function NotasPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Mis Notas"
         description="Apuntes y recordatorios laborales. Solo vos podés ver tus notas."

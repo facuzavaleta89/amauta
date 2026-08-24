@@ -1,13 +1,14 @@
 import { createClient } from '@/lib/supabase/server'
 import { resolverTenant } from '@/lib/auth/tenant'
 import { redirect } from 'next/navigation'
-import { Plus, Search, Megaphone } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import Link from 'next/link'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { PostList } from '@/components/difusion/post-list'
+import PageHeader from '@/components/shared/page-header'
 
 export const metadata = {
   title: 'Difusión — Amauta',
@@ -46,25 +47,18 @@ export default async function DifusionPage(props: {
   const { data: posts } = await query
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto">
-      {/* Encabezado */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground flex items-center gap-2">
-            <Megaphone className="h-8 w-8 text-primary" />
-            Difusión y Comunicados
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Mantené a tus pacientes informados. Creá campañas y enviá comunicados por Email o WhatsApp.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Difusión y Comunicados"
+        description="Mantené a tus pacientes informados. Creá campañas y enviá comunicados por Email o WhatsApp."
+      >
         <Link href="/difusion/nuevo">
           <Button className="gap-2 shrink-0 shadow-md">
             <Plus className="h-5 w-5" />
             Nuevo Comunicado
           </Button>
         </Link>
-      </div>
+      </PageHeader>
 
       {/* Filtros */}
       <div className="flex flex-col sm:flex-row items-center gap-3">

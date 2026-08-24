@@ -5,8 +5,9 @@ import { PacienteAcciones } from '@/components/pacientes/paciente-acciones'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ChevronLeft, Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award, Archive, FolderOpen } from 'lucide-react'
+import { Pencil, CalendarDays, Phone, Mail, MapPin, ShieldCheck, FileText, ClipboardList, Award, Archive, FolderOpen } from 'lucide-react'
 import Link from 'next/link'
+import PageHeader from '@/components/shared/page-header'
 import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL } from '@/lib/pacientes/obra-social'
 import { differenceInYears, format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -74,23 +75,21 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
 
   const obraSocialNombre = resolverObraSocial(paciente)
 
+  // El <p> de la descripción antes llevaba `capitalize` (el sexo se guarda en
+  // minúscula). PageHeader no expone className para la descripción, así que la
+  // mayúscula inicial se resuelve acá, sobre el dato.
+  const sexoLabel = paciente.sexo
+    ? paciente.sexo.charAt(0).toUpperCase() + paciente.sexo.slice(1)
+    : paciente.sexo
+
   if (isEditing) {
     return (
-      <div className="max-w-4xl mx-auto space-y-6">
-        <div className="flex items-center gap-4">
-          <Link
-            href={`/pacientes/${id}`}
-            className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </Link>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Editar Paciente</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Modificá los datos de {paciente.nombre_completo}
-            </p>
-          </div>
-        </div>
+      <div className="max-w-4xl space-y-6">
+        <PageHeader
+          title="Editar Paciente"
+          description={`Modificá los datos de ${paciente.nombre_completo}`}
+          backHref={`/pacientes/${id}`}
+        />
 
         <PatientForm
           initialData={paciente}
@@ -101,58 +100,46 @@ export default async function PacienteDetailPage({ params, searchParams }: Props
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <Link
-            href="/pacientes"
-            className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-foreground">{paciente.nombre_completo}</h1>
-              {archivado && (
-                <Badge variant="secondary" className="gap-1 text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/10">
-                  <Archive className="h-3 w-3" />
-                  Archivado
-                </Badge>
-              )}
-            </div>
-            <p className="text-sm text-muted-foreground mt-1 capitalize">
-              {paciente.sexo} · {edad !== null ? `${edad} años` : 'Edad desconocida'}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* ⚠ Acá `archivado` OCULTA el botón (comportamiento previo, se conserva);
-              la falta de permiso lo muestra deshabilitado, como el resto. */}
-          {!archivado && (
-            puedeEditar ? (
-              <Button asChild variant="outline" className="gap-2">
-                <Link href={`/pacientes/${id}?edit=true`}>
-                  <Pencil className="h-4 w-4" />
-                  <span className="hidden sm:inline">Editar</span>
-                </Link>
-              </Button>
-            ) : (
-              <Button variant="outline" className="gap-2" disabled title="Requiere permiso para editar pacientes">
+    <div className="max-w-4xl space-y-6">
+      {/* El badge "Archivado" viaja por el slot de acciones de PageHeader: el título
+          lo emite el componente compartido y no admite markup adyacente (decisión de
+          producto: nada de íconos ni adornos pegados al h1). */}
+      <PageHeader
+        title={paciente.nombre_completo}
+        description={`${sexoLabel} · ${edad !== null ? `${edad} años` : 'Edad desconocida'}`}
+        backHref="/pacientes"
+      >
+        {archivado && (
+          <Badge variant="secondary" className="gap-1 text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/10">
+            <Archive className="h-3 w-3" />
+            Archivado
+          </Badge>
+        )}
+        {/* ⚠ Acá `archivado` OCULTA el botón (comportamiento previo, se conserva);
+            la falta de permiso lo muestra deshabilitado, como el resto. */}
+        {!archivado && (
+          puedeEditar ? (
+            <Button asChild variant="outline" className="gap-2">
+              <Link href={`/pacientes/${id}?edit=true`}>
                 <Pencil className="h-4 w-4" />
                 <span className="hidden sm:inline">Editar</span>
-              </Button>
-            )
-          )}
-          {esMedico && (
-            <PacienteAcciones
-              patientId={paciente.id}
-              patientName={paciente.nombre_completo}
-              archivado={archivado}
-            />
-          )}
-        </div>
-      </div>
+              </Link>
+            </Button>
+          ) : (
+            <Button variant="outline" className="gap-2" disabled title="Requiere permiso para editar pacientes">
+              <Pencil className="h-4 w-4" />
+              <span className="hidden sm:inline">Editar</span>
+            </Button>
+          )
+        )}
+        {esMedico && (
+          <PacienteAcciones
+            patientId={paciente.id}
+            patientName={paciente.nombre_completo}
+            archivado={archivado}
+          />
+        )}
+      </PageHeader>
 
       {/* Aviso de paciente archivado */}
       {archivado && (

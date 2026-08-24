@@ -1,8 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { resolverAcceso } from '@/lib/auth/tenant'
 import { notFound, redirect } from 'next/navigation'
-import Link from 'next/link'
-import { ChevronLeft } from 'lucide-react'
 import type { Metadata } from 'next'
 import PageHeader from '@/components/shared/page-header'
 import { EstudiosList } from '@/components/pacientes/estudios-list'
@@ -57,19 +55,12 @@ export default async function EstudiosPage({ params }: Props) {
     .order('created_at', { ascending: false })
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          href={`/pacientes/${id}`}
-          className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Link>
-        <PageHeader
-          title="Estudios complementarios"
-          description={`Archivos adjuntos de ${paciente.nombre_completo}`}
-        />
-      </div>
+    <div className="max-w-4xl space-y-6">
+      <PageHeader
+        title="Estudios complementarios"
+        description={`Archivos adjuntos de ${paciente.nombre_completo}`}
+        backHref={`/pacientes/${id}`}
+      />
 
       <EstudiosUpload pacienteId={id} archivado={archivado} />
 

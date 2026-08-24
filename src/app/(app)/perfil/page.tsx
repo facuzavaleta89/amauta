@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { AlertCircle } from 'lucide-react'
 import { obtenerAsistentes } from './actions'
 import { PerfilForm } from '@/components/perfil/perfil-form'
+import PageHeader from '@/components/shared/page-header'
 import type { Asistente, Matricula, PermisosAsistente } from '@/types/roles'
 import { PERMISOS_DEFAULT } from '@/types/roles'
 
@@ -89,9 +90,16 @@ export default async function PerfilPage() {
   }
 
   return (
-    <div className="py-2">
+    <div className="max-w-4xl space-y-6">
+      {/* El encabezado vivía dentro de `PerfilForm` (Client Component). Se subió
+          acá: es texto estático, no depende de nada del cliente, y así la página
+          queda con la misma forma que el resto (contenedor + PageHeader). */}
+      <PageHeader
+        title="Mi Perfil"
+        description="Gestioná tus datos personales, firma digitalizada y accesos de asistentes."
+      />
       {errorAsistentes && (
-        <div className="mb-4 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+        <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <p className="text-sm text-amber-900 dark:text-amber-200">
             No se pudieron cargar los asistentes. Recargá la página o intentá más tarde.

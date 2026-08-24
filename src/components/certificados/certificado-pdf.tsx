@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { differenceInYears } from 'date-fns'
 import {
-  Download, Loader2, ArrowLeft,
+  Download, Loader2,
   User, Calendar, Award, Clock, Ban, AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -23,7 +23,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import Link from 'next/link'
+import PageHeader from '@/components/shared/page-header'
 import type { Certificado } from '@/types/pedido'
 
 interface CertificadoDocViewProps {
@@ -35,6 +35,14 @@ interface CertificadoDocViewProps {
   /** True si el documento no tiene emisor_snapshot (bug): se muestra un aviso. */
   sinEmisor?: boolean
   userRole: 'medico' | 'asistente'
+  /**
+   * Bloque de verificación por QR, renderizado DEBAJO del encabezado.
+   *
+   * ⚠ Llega como slot y no se construye acá: `QRVerificacion` es un Server
+   * Component `async` y este componente es `'use client'`. La página (Server)
+   * lo pasa ya renderizado.
+   */
+  qr?: React.ReactNode
 }
 
 
@@ -46,6 +54,7 @@ export function CertificadoDocView({
   medicoLogo,
   sinEmisor,
   userRole,
+  qr,
 }: CertificadoDocViewProps) {
   const router = useRouter()
   const [isDownloading, setIsDownloading] = useState(false)
@@ -93,102 +102,90 @@ export function CertificadoDocView({
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="space-y-6">
 
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/certificados"
-            className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-foreground">Certificado Médico</h1>
-              {estado === 'revocado' && (
-                <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-red-500/10 text-red-700 dark:text-red-400 ring-red-500/30">
-                  Anulado
-                </span>
-              )}
-            </div>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {certificado.paciente_nombre}
-            </p>
-          </div>
-        </div>
+      {/* Encabezado: el badge "Anulado" viaja por el slot de acciones — el título
+          lo emite PageHeader y no admite markup pegado al h1. */}
+      <PageHeader
+        title="Certificado Médico"
+        description={certificado.paciente_nombre}
+        backHref="/certificados"
+      >
+        {estado === 'revocado' && (
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium ring-1 ring-inset bg-red-500/10 text-red-700 dark:text-red-400 ring-red-500/30">
+            Anulado
+          </span>
+        )}
+        {userRole === 'medico' && estado === 'emitido' && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20 gap-2">
+                <Ban className="h-4 w-4" />
+                Anular Documento
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>¿Anular certificado médico?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Esta acción marcará el certificado como <strong>inválido</strong>. El QR público indicará que el documento está revocado, aunque el PDF siga impreso. Esta acción no se puede deshacer.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={anularCertificado}
+                  disabled={isAnulando}
+                  className="bg-destructive hover:bg-destructive/90"
+                >
+                  {isAnulando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                  Anular
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
 
-        <div className="flex items-center gap-2">
-          {userRole === 'medico' && estado === 'emitido' && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" className="text-destructive hover:bg-destructive/10 border-destructive/20 gap-2">
-                  <Ban className="h-4 w-4" />
-                  Anular Documento
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>¿Anular certificado médico?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Esta acción marcará el certificado como <strong>inválido</strong>. El QR público indicará que el documento está revocado, aunque el PDF siga impreso. Esta acción no se puede deshacer.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={anularCertificado}
-                    disabled={isAnulando}
-                    className="bg-destructive hover:bg-destructive/90"
-                  >
-                    {isAnulando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                    Anular
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
+        {estado === 'revocado' ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button disabled={isDownloading} className="gap-2">
+                {isDownloading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                {isDownloading ? 'Generando...' : 'Descargar PDF'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>¿Descargar documento anulado?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Este documento fue anulado. El PDF que vas a descargar es el original tal como se emitió y no lleva marca de anulación. Quien escanee el QR verá que está revocado.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={descargarPDF}>
+                  Descargar igual
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : (
+          <Button onClick={descargarPDF} disabled={isDownloading} className="gap-2">
+            {isDownloading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            {isDownloading ? 'Generando...' : 'Descargar PDF'}
+          </Button>
+        )}
+      </PageHeader>
 
-          {estado === 'revocado' ? (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button disabled={isDownloading} className="gap-2">
-                  {isDownloading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                  {isDownloading ? 'Generando...' : 'Descargar PDF'}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>¿Descargar documento anulado?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Este documento fue anulado. El PDF que vas a descargar es el original tal como se emitió y no lleva marca de anulación. Quien escanee el QR verá que está revocado.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction onClick={descargarPDF}>
-                    Descargar igual
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : (
-            <Button onClick={descargarPDF} disabled={isDownloading} className="gap-2">
-              {isDownloading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              {isDownloading ? 'Generando...' : 'Descargar PDF'}
-            </Button>
-          )}
-        </div>
-      </div>
+      {qr}
 
       {/* ── DOCUMENTO PREVIEW ───────────────────────────────── */}
       <div className="bg-white border border-border/60 rounded-xl shadow-lg overflow-hidden">

@@ -45,7 +45,7 @@ export default async function NotificacionesPage() {
   )
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Notificaciones"
         description="Solicitudes de vinculación de asistentes y avisos del sistema."

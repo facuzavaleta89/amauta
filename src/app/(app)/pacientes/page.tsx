@@ -6,6 +6,7 @@ import { PatientFilters } from '@/components/pacientes/patient-filters'
 import { FILTRO_SIN_OBRA_SOCIAL } from '@/lib/pacientes/obra-social'
 import { sanitizarTextoBusqueda } from '@/lib/validations/shared'
 import { BotonCrearConPermiso } from '@/components/shared/boton-crear-con-permiso'
+import PageHeader from '@/components/shared/page-header'
 import { PlusCircle } from 'lucide-react'
 
 export const metadata = {
@@ -119,13 +120,10 @@ export default async function PacientesPage({ searchParams }: PacientesPageProps
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Pacientes</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Gestión de pacientes e historia clínica
-          </p>
-        </div>
+      <PageHeader
+        title="Pacientes"
+        description="Gestión de pacientes e historia clínica"
+      >
         <BotonCrearConPermiso
           permiso="editar_pacientes"
           href="/pacientes/nuevo"
@@ -135,7 +133,7 @@ export default async function PacientesPage({ searchParams }: PacientesPageProps
           <PlusCircle className="h-4 w-4" />
           Nuevo Paciente
         </BotonCrearConPermiso>
-      </div>
+      </PageHeader>
 
       <PatientFilters obrasSociales={obrasSociales || []} />
 
