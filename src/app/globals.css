@@ -530,9 +530,6 @@
   background-color: oklch(0.52 0.128 155 / 18%) !important;
 }
 
-/* Texto blanco garantizado en botones sólidos destructivos */
-.bg-destructive { color: #ffffff !important; }
-
 /* ── Colores de categoría — TimeGrid ───────────────────────────────────────────
    ⚠ Ni un color literal acá: todo sale de las variables `--categoria-*` de :root,
    que son también las que lee el selector del formulario de turnos. El tinte de
