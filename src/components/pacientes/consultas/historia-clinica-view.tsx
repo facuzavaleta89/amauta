@@ -2,8 +2,8 @@
 
 import { useState, useCallback } from 'react'
 import { ArrowLeft } from 'lucide-react'
-import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import PageHeader from '@/components/shared/page-header'
 import { ConsultaTimeline } from './consulta-timeline'
 import { ConsultaDetail } from './consulta-detail'
 import { HCCompletaPDFButton } from './pdf-download-button'
@@ -144,23 +144,22 @@ export function HistoriaClinicaView({
 
   return (
     <div className="flex flex-col h-full gap-0">
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between gap-4 pb-4 shrink-0 flex-wrap">
-        <div className="flex items-center gap-3">
-          <Button asChild variant="ghost" size="icon" className="rounded-full shrink-0">
-            <Link href={`/pacientes/${pacienteId}`}>
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-          </Button>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Historia Clínica</h1>
-            <p className="text-sm text-muted-foreground">{paciente.nombre_completo}</p>
-          </div>
-        </div>
-        <HCCompletaPDFButton
-          pacienteId={pacienteId}
-          finalizadasCount={consultas.filter((c) => c.estado === 'finalizada').length}
-        />
+      {/* ── Encabezado ──
+          Vive ACÁ y no en `page.tsx` a propósito: el botón de PDF necesita el conteo
+          de consultas finalizadas del estado del cliente, que cambia cuando el médico
+          crea o finaliza una consulta sin recargar. Subirlo a la página lo dejaría
+          pegado al valor del primer render. */}
+      <div className="pb-4 shrink-0">
+        <PageHeader
+          title="Historia Clínica"
+          description={paciente.nombre_completo}
+          backHref={`/pacientes/${pacienteId}`}
+        >
+          <HCCompletaPDFButton
+            pacienteId={pacienteId}
+            finalizadasCount={consultas.filter((c) => c.estado === 'finalizada').length}
+          />
+        </PageHeader>
       </div>
 
       {/* ── Layout dos columnas (desktop) / una columna (mobile) ── */}

@@ -4,6 +4,7 @@ import { StatsCards } from '@/components/dashboard/stats-cards'
 import { NextAppointments } from '@/components/dashboard/next-appointments'
 import { RecentPatients } from '@/components/dashboard/recent-patients'
 import { Skeleton } from '@/components/ui/skeleton'
+import PageHeader from '@/components/shared/page-header'
 import { formatFechaAR } from '@/lib/utils/format-date'
 
 export const metadata: Metadata = {
@@ -25,15 +26,16 @@ function WidgetSkeleton() {
 }
 
 export default function DashboardPage() {
-  const today = formatFechaAR(new Date(), "EEEE, d 'de' MMMM 'de' yyyy")
+  const fechaHoy = formatFechaAR(new Date(), "EEEE, d 'de' MMMM 'de' yyyy")
+  // El bloque de título lo emite ahora PageHeader, que no expone className para la
+  // descripción: la mayúscula inicial (antes `capitalize` en el <p>) se resuelve acá.
+  // ⚠ Es sentence case, no title case: `capitalize` de CSS ponía en mayúscula TODAS
+  // las palabras ("Domingo, 23 De Agosto De 2026").
+  const today = fechaHoy.charAt(0).toUpperCase() + fechaHoy.slice(1)
 
   return (
     <div className="space-y-6">
-      {/* Encabezado */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground mt-1 capitalize">{today}</p>
-      </div>
+      <PageHeader title="Dashboard" description={today} />
 
       {/* Stats */}
       <Suspense fallback={<StatsSkeleton />}>

@@ -79,7 +79,7 @@ export function DifusionForm({ initialData }: DifusionFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+    <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
       
       {/* Columna Principal: Contenido */}
       <div className="md:col-span-2 space-y-6">

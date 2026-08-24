@@ -2,8 +2,7 @@ import { notFound, redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { resolverTenant } from '@/lib/auth/tenant'
 import { DifusionForm } from '@/components/difusion/difusion-form'
-import Link from 'next/link'
-import { ChevronLeft } from 'lucide-react'
+import PageHeader from '@/components/shared/page-header'
 import type { Metadata } from 'next'
 
 interface Props {
@@ -44,21 +43,12 @@ export default async function EditarDifusionPage({ params }: Props) {
   if (post.medico_id !== tenantMedicoId) notFound()
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="flex items-center gap-3">
-        <Link
-          href={`/difusion/${id}`}
-          className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Editar Comunicado</h1>
-          <p className="text-sm text-muted-foreground mt-0.5 truncate max-w-md">
-            {post.titulo}
-          </p>
-        </div>
-      </div>
+    <div className="max-w-4xl space-y-6">
+      <PageHeader
+        title="Editar Comunicado"
+        description={post.titulo}
+        backHref={`/difusion/${id}`}
+      />
 
       <DifusionForm initialData={post} />
     </div>

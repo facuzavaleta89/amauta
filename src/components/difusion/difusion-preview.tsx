@@ -5,12 +5,13 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import {
-  ArrowLeft, Edit, Trash2, Send, Mail, MessageCircle,
+  Edit, Trash2, Send, Mail, MessageCircle,
   Calendar, CheckCircle2, Clock, Archive, Loader2, AlertCircle, AlertTriangle, Megaphone,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import PageHeader from '@/components/shared/page-header'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -114,72 +115,60 @@ export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Encabezado de acciones */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            href="/difusion"
-            className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted shrink-0"
-          >
-            <ArrowLeft className="h-5 w-5" />
+    <div className="space-y-6">
+      <PageHeader
+        title={post.titulo}
+        description="Vista previa del comunicado"
+        backHref="/difusion"
+      >
+        {/* Eliminar */}
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Eliminar comunicado?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta acción no se puede deshacer. El comunicado <strong>&quot;{post.titulo}&quot;</strong> será eliminado permanentemente.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="bg-destructive hover:bg-destructive/90"
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                Eliminar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Editar — solo si no fue enviado */}
+        {post.estado !== 'enviado' && (
+          <Link href={`/difusion/${post.id}/editar`}>
+            <Button variant="outline" className="gap-2">
+              <Edit className="h-4 w-4" />
+              Editar
+            </Button>
           </Link>
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold text-foreground truncate">{post.titulo}</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Vista previa del comunicado</p>
-          </div>
-        </div>
+        )}
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Eliminar */}
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>¿Eliminar comunicado?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Esta acción no se puede deshacer. El comunicado <strong>&quot;{post.titulo}&quot;</strong> será eliminado permanentemente.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDelete}
-                  disabled={isDeleting}
-                  className="bg-destructive hover:bg-destructive/90"
-                >
-                  {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                  Eliminar
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-
-          {/* Editar — solo si no fue enviado */}
-          {post.estado !== 'enviado' && (
-            <Link href={`/difusion/${post.id}/editar`}>
-              <Button variant="outline" className="gap-2">
-                <Edit className="h-4 w-4" />
-                Editar
-              </Button>
-            </Link>
-          )}
-
-          {/* Configurar Envío */}
-          <Button
-            onClick={handleConfigurarEnvio}
-            disabled={post.estado === 'enviado'}
-            className="gap-2 shadow-md"
-          >
-            <Send className="h-4 w-4" />
-            {post.estado === 'enviado' ? 'Ya enviado' : 'Configurar Envío'}
-          </Button>
-        </div>
-      </div>
+        {/* Configurar Envío */}
+        <Button
+          onClick={handleConfigurarEnvio}
+          disabled={post.estado === 'enviado'}
+          className="gap-2 shadow-md"
+        >
+          <Send className="h-4 w-4" />
+          {post.estado === 'enviado' ? 'Ya enviado' : 'Configurar Envío'}
+        </Button>
+      </PageHeader>
 
       {/* Tarjeta de Resumen */}
       <div className="bg-card border border-border/60 rounded-xl shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row gap-6 justify-between items-start">

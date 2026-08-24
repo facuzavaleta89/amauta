@@ -63,7 +63,14 @@ export default async function HistoriaClinicaPage({ params }: Props) {
     .limit(50)
 
   return (
-    <div className="flex flex-col h-[calc(100vh-theme(spacing.16))]">
+    // Página de PANTALLA COMPLETA: mismo contenedor que el turnero, palabra por
+    // palabra (ver el comentario del <main> en `layout-shell.tsx`).
+    // ⚠ `HistoriaClinicaView` también se dimensiona con `h-full`, así que depende del
+    // mismo alto definido. El síntoma acá no era una página en blanco sino uno más
+    // sutil: la vista crecía con el largo del timeline y scrolleaba la PÁGINA entera en
+    // vez de scrollear la columna de consultas (medido: 2560px de alto para 2500px de
+    // timeline). Por eso "se veía bien" y estaba mal igual.
+    <div className="h-full flex flex-col">
       <HistoriaClinicaView
         pacienteId={id}
         paciente={{ nombre_completo: paciente.nombre_completo }}

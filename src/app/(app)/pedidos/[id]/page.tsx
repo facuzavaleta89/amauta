@@ -63,12 +63,18 @@ export default async function PedidoDetailPage({ params }: Props) {
     : '—'
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
-      <QRVerificacion
-        codigo={pedido.codigo_verificacion}
-        estado={pedido.estado}
-      />
+    <div className="max-w-4xl space-y-6">
+      {/* El QR baja DEBAJO del encabezado. Como `QRVerificacion` es un Server
+          Component async y el encabezado vive en `PedidoDocView` ('use client'),
+          el QR viaja como SLOT: un Server Component pasado por prop a un Client
+          Component. Renderizarlo adentro del client no es posible. */}
       <PedidoDocView
+        qr={
+          <QRVerificacion
+            codigo={pedido.codigo_verificacion}
+            estado={pedido.estado}
+          />
+        }
         pedido={pedido}
         medicoNombre={displayName}
         medicoMatricula={matriculaFormatted}

@@ -421,14 +421,9 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
   const displayName = titulo ? `${titulo} ${fullName}` : fullName
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Mi Perfil</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Gestioná tus datos personales, firma digitalizada y accesos de asistentes.
-        </p>
-      </div>
-
+    // Sin contenedor de ancho ni encabezado propios: los aporta `perfil/page.tsx`,
+    // igual que en el resto del área autenticada.
+    <div className="space-y-6">
       <Tabs defaultValue="datos" className="w-full">
         <TabsList className="grid w-full grid-cols-3 max-w-md bg-muted/60 mb-6">
           <TabsTrigger value="datos" className="gap-1.5 text-xs">

@@ -128,7 +128,7 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
     : null
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-w-3xl mx-auto">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
 
       {/* Paciente */}
       <Card className="border-border/60 shadow-sm overflow-visible">

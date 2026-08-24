@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { verificarPermiso } from '@/lib/utils/verificar-permiso'
 import { BotonCrearConPermiso } from '@/components/shared/boton-crear-con-permiso'
+import PageHeader from '@/components/shared/page-header'
 import { PlusCircle, Award, Calendar, Ban, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { formatFecha } from '@/lib/utils/format-date'
@@ -46,14 +47,10 @@ export default async function CertificadosPage({ searchParams }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Certificados Médicos</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Certificados emitidos para tus pacientes
-          </p>
-        </div>
+      <PageHeader
+        title="Certificados Médicos"
+        description="Certificados emitidos para tus pacientes"
+      >
         <BotonCrearConPermiso
           permiso="crear_certificados"
           href="/certificados/nuevo"
@@ -63,7 +60,7 @@ export default async function CertificadosPage({ searchParams }: Props) {
           <PlusCircle className="h-4 w-4" />
           Nuevo Certificado
         </BotonCrearConPermiso>
-      </div>
+      </PageHeader>
 
       {/* Filtros (client component) */}
       <Suspense>

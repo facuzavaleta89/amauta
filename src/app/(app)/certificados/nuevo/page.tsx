@@ -1,9 +1,8 @@
-import { ChevronLeft } from 'lucide-react'
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { resolverAcceso } from '@/lib/auth/tenant'
 import { CertificadoForm } from '@/components/certificados/certificado-form'
+import PageHeader from '@/components/shared/page-header'
 
 export const metadata = {
   title: 'Nuevo Certificado Médico',
@@ -31,21 +30,12 @@ export default async function NuevoCertificadoPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center gap-4">
-        <Link
-          href="/certificados"
-          className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-muted"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Nuevo Certificado Médico</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Emití un certificado para un paciente
-          </p>
-        </div>
-      </div>
+    <div className="max-w-4xl space-y-6">
+      <PageHeader
+        title="Nuevo Certificado Médico"
+        description="Emití un certificado para un paciente"
+        backHref="/certificados"
+      />
 
       <CertificadoForm preselectedPacienteId={paciente_id ?? null} />
     </div>

@@ -39,7 +39,7 @@ export default async function MensajesPage() {
   const { data: usuarios } = await obtenerUsuariosTenant()
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Mensajes"
         description="Comunicación interna del consultorio. Conversaciones con el médico y el equipo."
