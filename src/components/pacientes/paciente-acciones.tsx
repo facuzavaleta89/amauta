@@ -142,7 +142,7 @@ export function PacienteAcciones({ patientId, patientName, archivado }: Paciente
             <AlertDialogAction
               onClick={eliminarDefinitivo}
               disabled={isDeleting}
-              className="bg-destructive hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
               Eliminar definitivamente

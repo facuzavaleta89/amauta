@@ -438,7 +438,7 @@ export function CalendarView() {
             className={cn(
               "gap-1.5 h-8 text-xs font-semibold transition-all",
               creationMode === 'bloqueo'
-                ? "bg-destructive text-white hover:bg-destructive/90 border-transparent hover:text-white"
+                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90 border-transparent hover:text-destructive-foreground"
                 : "text-destructive-strong border-destructive/30 hover:bg-destructive/5 hover:text-destructive-strong"
             )}
           >

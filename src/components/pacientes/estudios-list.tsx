@@ -221,7 +221,7 @@ export function EstudiosList({ estudios, esMedico, archivado }: EstudiosListProp
                             <AlertDialogCancel>Cancelar</AlertDialogCancel>
                             <AlertDialogAction
                               onClick={() => eliminarEstudio(estudio.id)}
-                              className="bg-destructive hover:bg-destructive/90"
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                             >
                               Eliminar
                             </AlertDialogAction>

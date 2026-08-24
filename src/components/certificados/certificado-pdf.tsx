@@ -136,7 +136,7 @@ export function CertificadoDocView({
                 <AlertDialogAction
                   onClick={anularCertificado}
                   disabled={isAnulando}
-                  className="bg-destructive hover:bg-destructive/90"
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 >
                   {isAnulando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                   Anular
