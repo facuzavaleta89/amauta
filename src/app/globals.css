@@ -3,7 +3,29 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* ── LA VARIANTE `dark:` ESTÁ NEUTRALIZADA A PROPÓSITO ──────────────────────
+   ⚠ NO BORRES LA LÍNEA DE ABAJO. Parece inútil y no lo es.
+
+   El tema oscuro se DESCARTÓ como decisión de producto: en este proyecto no
+   existe, y no está pendiente de implementar. Se eliminaron el bloque `.dark`
+   con sus tokens y todas las clases `dark:` de los componentes.
+
+   Esta declaración existe para que la variante `dark:` quede INERTE: la
+   redefine con `@media not all`, una consulta que por especificación **nunca
+   es verdadera**, así que ninguna utilidad `dark:` puede aplicarse a ningún
+   elemento — ni por clase, ni por atributo, ni por la preferencia del sistema
+   operativo.
+
+   ⚠ BORRARLA NO DESACTIVA LA VARIANTE: la devuelve al comportamiento POR
+   DEFECTO de Tailwind, que es `@media (prefers-color-scheme: dark)`. O sea que
+   quitarla hace lo contrario de lo que parece: cualquier clase `dark:` que
+   alguien escriba pasaría a aplicarse sola en las máquinas configuradas en
+   modo oscuro. Ya pasó una vez, justamente al eliminar la declaración
+   anterior.
+
+   Si algún día se decide implementar el tema oscuro, el cambio empieza acá —
+   pero es una decisión de producto, no una limpieza de CSS.                  */
+@custom-variant dark (@media not all);
 
 @theme inline {
   --color-background: var(--background);
@@ -160,11 +182,7 @@
      Reemplaza al par que traía la paleta cruda de Tailwind, que usaba el 600
      para rellenos y el 700/800/900 para texto. Al colapsar los dos en un solo
      token, el cuerpo de los banners cayó de ~7:1 a 3.75:1. Oscurecer el token
-     base NO era la salida: apagaba los rellenos, los bordes y los íconos.
-
-     ⚠ En `.dark` la relación se INVIERTE: sobre superficie oscura, "más
-     contraste" es más CLARO, así que ahí los `-strong` son más claros que su
-     base, no más oscuros. */
+     base NO era la salida: apagaba los rellenos, los bordes y los íconos. */
   --success-strong:     oklch(0.46 0.11 155);
   --warning-strong:     oklch(0.46 0.095 70);
   --info-strong:        oklch(0.46 0.10 240);
@@ -212,59 +230,6 @@
   --chart-3: oklch(0.72 0.10 220);   /* Azul médico claro */
   --chart-4: oklch(0.78 0.12 80);    /* Amarillo-verde (glucosa) */
   --chart-5: oklch(0.60 0.18 25);    /* Naranja (alerta) */
-}
-
-/* ── DARK MODE (mínimo, por si se necesita en el futuro) ────── */
-.dark {
-  --background:         oklch(0.13 0.015 155);
-  --foreground:         oklch(0.96 0.008 155);
-  --card:               oklch(0.18 0.015 155);
-  --card-foreground:    oklch(0.96 0.008 155);
-  --popover:            oklch(0.18 0.015 155);
-  --popover-foreground: oklch(0.96 0.008 155);
-  --primary:            oklch(0.65 0.13 155);
-  --primary-foreground: oklch(0.13 0.015 155);
-  --secondary:          oklch(0.25 0.025 155);
-  --secondary-foreground: oklch(0.96 0.008 155);
-  --muted:              oklch(0.22 0.018 155);
-  --muted-foreground:   oklch(0.62 0.04 155);
-  --accent:             oklch(0.25 0.025 155);
-  --accent-foreground:  oklch(0.96 0.008 155);
-  --destructive:        oklch(0.70 0.19 22.2);
-  --destructive-foreground: oklch(0.99 0.008 155);
-  /* Mismo criterio que el resto del bloque: más claros y menos saturados que en
-     :root, para no vibrar sobre el fondo oscuro. */
-  --success:            var(--primary);
-  --success-foreground: var(--primary-foreground);
-  --warning:            oklch(0.78 0.13 70);
-  --warning-foreground: oklch(0.16 0.02 70);
-  --info:               oklch(0.70 0.13 240);
-  --info-foreground:    oklch(0.13 0.015 155);
-  /* Acá los `-strong` van MÁS CLAROS que su base, no más oscuros: sobre fondo
-     oscuro el contraste se gana subiendo luminosidad. Los bases ya pasaban AA
-     como texto (5.8–7.8:1 sobre su tinte), así que esto no es un arreglo sino
-     margen: deja los cuatro por encima de 7:1 y mantiene la misma regla de
-     lectura que en `:root` — el `-strong` siempre contrasta más que el base. */
-  --success-strong:     oklch(0.78 0.12 155);
-  --warning-strong:     oklch(0.84 0.11 70);
-  --info-strong:        oklch(0.76 0.12 240);
-  --destructive-strong: oklch(0.76 0.135 22.2);
-  --border:             oklch(1 0 0 / 10%);
-  --input:              oklch(1 0 0 / 12%);
-  --ring:               oklch(0.65 0.13 155);
-  --sidebar:            oklch(0.18 0.015 155);
-  --sidebar-foreground: oklch(0.96 0.008 155);
-  --sidebar-primary:    oklch(0.65 0.13 155);
-  --sidebar-primary-foreground: oklch(0.13 0.015 155);
-  --sidebar-accent:     oklch(0.25 0.025 155);
-  --sidebar-accent-foreground: oklch(0.96 0.008 155);
-  --sidebar-border:     oklch(1 0 0 / 10%);
-  --sidebar-ring:       oklch(0.65 0.13 155);
-  --chart-1: oklch(0.65 0.13 155);
-  --chart-2: oklch(0.70 0.12 190);
-  --chart-3: oklch(0.72 0.10 220);
-  --chart-4: oklch(0.78 0.12 80);
-  --chart-5: oklch(0.68 0.18 25);
 }
 
 @layer base {
