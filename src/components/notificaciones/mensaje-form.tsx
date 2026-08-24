@@ -142,7 +142,7 @@ export function MensajeForm({ usuarios, replyTo, onSent, onClose }: Props) {
                             ({u.role === 'medico' ? 'Médico' : 'Asistente'})
                           </span>
                           {sinAcceso && (
-                            <span className="text-[10px] text-destructive bg-destructive/10 px-1.5 py-0.5 rounded font-normal normal-case ml-auto shrink-0">
+                            <span className="text-[10px] text-destructive-strong bg-destructive/10 px-1.5 py-0.5 rounded-sm font-normal normal-case ml-auto shrink-0">
                               Sin acceso a mensajería
                             </span>
                           )}

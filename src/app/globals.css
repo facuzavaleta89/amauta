@@ -9,7 +9,13 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-inter), "Inter", system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono);
+  /* ⚠ Antes: `var(--font-geist-mono)`, una variable que NO EXISTE en el proyecto
+     (nunca se cargó esa fuente). Una `var()` sin definir invalida la declaración en
+     silencio: `font-mono` heredaba la sans y los ~19 usos —DNI, N° de afiliado,
+     matrícula, códigos de verificación— salían en Inter. Pila del SISTEMA a propósito:
+     no vale un request de red para el uso puntual que tiene. */
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", "Courier New", monospace;
   --font-heading: var(--font-inter), "Inter", system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -29,6 +35,16 @@
   --color-border: var(--border);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-success-strong: var(--success-strong);
+  --color-warning-strong: var(--warning-strong);
+  --color-info-strong: var(--info-strong);
+  --color-destructive-strong: var(--destructive-strong);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -61,12 +77,12 @@
   --popover-foreground: oklch(0.18 0.025 155);
 
   /* Verde primario — salvia médico */
-  --primary:            oklch(0.52 0.13 155);    /* Verde salvia medio */
+  --primary:            oklch(0.52 0.128 155);    /* Verde salvia medio */
   --primary-foreground: oklch(0.99 0.004 155);   /* Blanco sobre verde */
 
   /* Secundario — verde muy pálido */
   --secondary:          oklch(0.94 0.05 155);    /* Verde pálido */
-  --secondary-foreground: oklch(0.35 0.10 155);  /* Verde oscuro sobre pálido */
+  --secondary-foreground: oklch(0.35 0.086 155);  /* Verde oscuro sobre pálido */
 
   /* Muted — grises verdosos */
   --muted:              oklch(0.96 0.015 155);   /* Fondo suave */
@@ -74,16 +90,90 @@
 
   /* Accent */
   --accent:             oklch(0.94 0.05 155);
-  --accent-foreground:  oklch(0.35 0.10 155);
+  --accent-foreground:  oklch(0.35 0.086 155);
 
   /* Destructivo */
   --destructive:        oklch(0.58 0.22 27.3);
   --destructive-foreground: oklch(0.99 0.004 155);
 
+  /* ── Estados semánticos ───────────────────────────────────────────────
+     Mismo patrón que --destructive: UN token por familia + su -foreground.
+     ⚠ NO hay tokens de "fondo tenue": el tinte se hace con opacidad sobre el
+     token (`bg-success/10` + `text-success`), que es la convención ya vigente
+     en el repo (`bg-destructive/10`). No agregar --success-bg y compañía. */
+
+  /* Éxito — ES el verde salvia de marca, no un verde propio.
+     ⚠ DECISIÓN DE PRODUCTO (revierte la anterior): el sistema tiene UN SOLO
+     verde. Antes `--success` era un verde vivo elegido a propósito para no
+     confundirse con `--primary`, y desentonaba con la paleta. Consecuencia
+     aceptada y conocida: un badge de "Enviado" y un botón primario comparten
+     color.
+     ⚠ Es un ALIAS y no una copia del valor: si el salvia se retoca, el success
+     lo sigue solo. Una copia podría quedar en un verde CASI igual, que es
+     justamente el "segundo verde" que esta decisión viene a eliminar — y esa
+     divergencia no la ve nadie hasta que alguien la fotografía al lado.
+     ⚠ Lo que el alias NO cubre: si `--primary` alguna vez deja de ser verde,
+     `--success` deja de ser verde con él. Ese día hay que RE-DECIDIR acá, no
+     dejarlo correr. Es un fallo ruidoso (un "Enviado" azul se ve en la primera
+     pantalla), a diferencia del silencioso de la copia. */
+  --success:            var(--primary);
+  --success-foreground: var(--primary-foreground);   /* claro: 5.04:1 sobre el salvia */
+
+  /* Advertencia — ámbar. Luminosidad contenida (0.62) porque el uso dominante
+     es TEXTO sobre tinte (chips de "expirado", "pendiente", banners), no fondo
+     sólido: un ámbar más claro sería ilegible como texto. */
+  --warning:            oklch(0.62 0.134 70);
+  --warning-foreground: oklch(0.20 0.04 70);   /* oscuro: blanco sobre ámbar no llega */
+
+  /* Informativo — azul. Hue 240 para separarlo del teal de --chart-2 (190) y
+     del azul claro de --chart-3 (220), con los que convive en los gráficos. */
+  --info:               oklch(0.54 0.123 240);
+  --info-foreground:    oklch(0.99 0.004 155);
+
+  /* ── Variantes de TEXTO ────────────────────────────────────────────────
+     ⚠ CONVENCIÓN — cada familia semántica tiene DOS valores, y NO son un
+     descuido ni algo que haya que "emparejar":
+
+       token base (`--success`)      → RELLENOS, BORDES, ANILLOS e ÍCONOS.
+                                       Es vivo a propósito; sobre su tinte al
+                                       10% da 3.2–4.2:1, suficiente para un
+                                       objeto gráfico (mínimo 3:1) pero NO
+                                       para texto.
+       token `-strong`               → TEXTO que el usuario lee: cuerpo de
+                                       banners, chips, badges, mensajes de
+                                       error, títulos de aviso. Mismo hue,
+                                       oscurecido hasta ≥4.5:1 (quedan en
+                                       6.0–6.7:1 sobre el tinte de su familia).
+       token `-foreground`           → texto SOBRE EL RELLENO SÓLIDO.
+
+     ⚠ `--warning-foreground` es la ÚNICA excepción del sistema: es OSCURO,
+     mientras el resto de los `-foreground` son casi blancos. NO es una
+     inconsistencia y no hay que "emparejarlo": el ámbar es un color CLARO y el
+     blanco encima da 2.6:1; con el foreground oscuro llega a 4.9:1.
+     (`--success-foreground` también lo fue mientras el success era un verde
+     vivo y claro; volvió a ser claro al pasar al salvia de marca, que es
+     oscuro y admite blanco encima con 5.04:1.)
+     El criterio es el CONTRASTE, no la simetría de la tabla: si algún día se
+     aclara un relleno, hay que RE-MEDIR ese par, no copiar el `-foreground`
+     del vecino.
+
+     Reemplaza al par que traía la paleta cruda de Tailwind, que usaba el 600
+     para rellenos y el 700/800/900 para texto. Al colapsar los dos en un solo
+     token, el cuerpo de los banners cayó de ~7:1 a 3.75:1. Oscurecer el token
+     base NO era la salida: apagaba los rellenos, los bordes y los íconos.
+
+     ⚠ En `.dark` la relación se INVIERTE: sobre superficie oscura, "más
+     contraste" es más CLARO, así que ahí los `-strong` son más claros que su
+     base, no más oscuros. */
+  --success-strong:     oklch(0.46 0.11 155);
+  --warning-strong:     oklch(0.46 0.095 70);
+  --info-strong:        oklch(0.46 0.10 240);
+  --destructive-strong: oklch(0.46 0.175 27.3);
+
   /* Bordes e inputs */
   --border:             oklch(0.86 0.025 155);   /* Bordes más gruesos/notorios */
   --input:              oklch(0.88 0.020 155);
-  --ring:               oklch(0.52 0.13 155);    /* Igual al primary */
+  --ring:               oklch(0.52 0.128 155);    /* Igual al primary */
 
   /* Radios */
   --radius: 0.5rem;
@@ -91,16 +181,34 @@
   /* Sidebar */
   --sidebar:                    oklch(0.97 0.012 155);   /* Off-white verdoso */
   --sidebar-foreground:         oklch(0.18 0.025 155);
-  --sidebar-primary:            oklch(0.52 0.13 155);
+  --sidebar-primary:            oklch(0.52 0.128 155);
   --sidebar-primary-foreground: oklch(0.99 0.004 155);
   --sidebar-accent:             oklch(0.92 0.05 155);
-  --sidebar-accent-foreground:  oklch(0.35 0.10 155);
+  --sidebar-accent-foreground:  oklch(0.35 0.086 155);
   --sidebar-border:             oklch(0.90 0.025 155);
-  --sidebar-ring:               oklch(0.52 0.13 155);
+  --sidebar-ring:               oklch(0.52 0.128 155);
+
+  /* ── Categorías de turno — FUENTE ÚNICA del color ─────────────────────
+     Las consumen las clases `.categoria-*` de más abajo (que pinta el
+     calendario) Y el selector de `turno-form.tsx`, que lee estas mismas
+     variables por nombre a través de `constants/turno-categorias.ts`.
+     ⚠ Antes el color de cada categoría estaba escrito literal en cada regla
+     `.categoria-*`, o sea entre 4 y 6 veces por categoría. Si se agrega una
+     categoría, va acá primero. */
+  --categoria-turno-medico:         oklch(0.52 0.128 155);
+  --categoria-turno-medico-texto:   oklch(0.32 0.079 155);
+  --categoria-curso:                oklch(0.56 0.101 220);
+  --categoria-curso-texto:          oklch(0.34 0.061 220);
+  --categoria-personal:             oklch(0.54 0.20 285);
+  --categoria-personal-texto:       oklch(0.34 0.16 285);
+  --categoria-administrativo:       oklch(0.55 0.12 55);
+  --categoria-administrativo-texto: oklch(0.38 0.09 55);
+  --categoria-recordatorio:         oklch(0.72 0.149 80);
+  --categoria-recordatorio-texto:   oklch(0.44 0.091 80);
 
   /* Charts — verdes y complementarios para gráficos médicos */
-  --chart-1: oklch(0.52 0.13 155);   /* Verde primario */
-  --chart-2: oklch(0.65 0.12 190);   /* Teal */
+  --chart-1: oklch(0.52 0.128 155);   /* Verde primario */
+  --chart-2: oklch(0.65 0.112 190);   /* Teal */
   --chart-3: oklch(0.72 0.10 220);   /* Azul médico claro */
   --chart-4: oklch(0.78 0.12 80);    /* Amarillo-verde (glucosa) */
   --chart-5: oklch(0.60 0.18 25);    /* Naranja (alerta) */
@@ -124,6 +232,23 @@
   --accent-foreground:  oklch(0.96 0.008 155);
   --destructive:        oklch(0.70 0.19 22.2);
   --destructive-foreground: oklch(0.99 0.008 155);
+  /* Mismo criterio que el resto del bloque: más claros y menos saturados que en
+     :root, para no vibrar sobre el fondo oscuro. */
+  --success:            var(--primary);
+  --success-foreground: var(--primary-foreground);
+  --warning:            oklch(0.78 0.13 70);
+  --warning-foreground: oklch(0.16 0.02 70);
+  --info:               oklch(0.70 0.13 240);
+  --info-foreground:    oklch(0.13 0.015 155);
+  /* Acá los `-strong` van MÁS CLAROS que su base, no más oscuros: sobre fondo
+     oscuro el contraste se gana subiendo luminosidad. Los bases ya pasaban AA
+     como texto (5.8–7.8:1 sobre su tinte), así que esto no es un arreglo sino
+     margen: deja los cuatro por encima de 7:1 y mantiene la misma regla de
+     lectura que en `:root` — el `-strong` siempre contrasta más que el base. */
+  --success-strong:     oklch(0.78 0.12 155);
+  --warning-strong:     oklch(0.84 0.11 70);
+  --info-strong:        oklch(0.76 0.12 240);
+  --destructive-strong: oklch(0.76 0.135 22.2);
   --border:             oklch(1 0 0 / 10%);
   --input:              oklch(1 0 0 / 12%);
   --ring:               oklch(0.65 0.13 155);
@@ -184,7 +309,11 @@
 @layer components {
   .fc {
     --fc-page-bg-color: transparent;
-    --fc-neutral-bg-color: var(--base);
+    /* ⚠ Antes: `var(--base)`, inexistente ⇒ declaración descartada y FullCalendar
+       caía a su gris propio. `--muted` es el token de superficie neutra del
+       proyecto, que es exactamente para lo que FullCalendar usa este color
+       (celdas deshabilitadas, fondo del popover de "+N más"). */
+    --fc-neutral-bg-color: var(--muted);
     --fc-neutral-text-color: var(--foreground);
     --fc-border-color: var(--border);
 
@@ -205,8 +334,8 @@
     --fc-more-link-bg-color: var(--secondary);
     --fc-more-link-text-color: var(--secondary-foreground);
 
-    --fc-highlight-color: oklch(0.52 0.13 155 / 12%);
-    --fc-today-bg-color: oklch(0.52 0.13 155 / 5%);
+    --fc-highlight-color: oklch(0.52 0.128 155 / 12%);
+    --fc-today-bg-color: oklch(0.52 0.128 155 / 5%);
     font-family: inherit;
   }
 
@@ -328,14 +457,14 @@
 
   /* ── TURNO — verde salvia ─────────────────────────────────── */
   .fc-event-turno {
-    background-color: oklch(0.52 0.13 155 / 10%);
+    background-color: oklch(0.52 0.128 155 / 10%);
   }
   .fc-event-turno .fc-event-accent {
-    background-color: oklch(0.52 0.13 155);
+    background-color: oklch(0.52 0.128 155);
   }
   .fc-event-turno .fc-event-time-label,
   .fc-event-turno .fc-event-title-label {
-    color: oklch(0.32 0.10 155);
+    color: oklch(0.32 0.079 155);
   }
 
   /* ── BLOQUEO — rojo coral ──────────────────────────────── */
@@ -354,7 +483,7 @@
   }
   .fc-event-bloqueo .fc-event-time-label,
   .fc-event-bloqueo .fc-event-title-label {
-    color: oklch(0.38 0.16 25);
+    color: oklch(0.38 0.154 25);
   }
 
   /* ── Vista de Mes — pill compacto ─────────────────────────── */
@@ -385,7 +514,7 @@
   }
 
   .fc-daygrid-turno {
-    background-color: oklch(0.52 0.16 155 / 12%);
+    background-color: oklch(0.52 0.128 155 / 12%);
   }
   .fc-daygrid-bloqueo {
     background-color: oklch(0.60 0.18 25 / 10%);
@@ -398,7 +527,7 @@
     flex-shrink: 0;
   }
   .fc-daygrid-turno .fc-daygrid-dot-custom {
-    background-color: oklch(0.52 0.16 155);
+    background-color: oklch(0.52 0.128 155);
   }
   .fc-daygrid-bloqueo .fc-daygrid-dot-custom {
     background-color: oklch(0.58 0.20 25);
@@ -418,11 +547,11 @@
   }
   .fc-daygrid-turno .fc-daygrid-time-custom,
   .fc-daygrid-turno .fc-daygrid-title-custom {
-    color: oklch(0.32 0.10 155);
+    color: oklch(0.32 0.079 155);
   }
   .fc-daygrid-bloqueo .fc-daygrid-time-custom,
   .fc-daygrid-bloqueo .fc-daygrid-title-custom {
-    color: oklch(0.38 0.16 25);
+    color: oklch(0.38 0.154 25);
   }
 }
 
@@ -434,71 +563,74 @@
   border: 1px dashed oklch(0.58 0.20 25 / 55%) !important;
 }
 .calendar-container.mode-turno .fc .fc-highlight {
-  background-color: oklch(0.52 0.13 155 / 18%) !important;
+  background-color: oklch(0.52 0.128 155 / 18%) !important;
 }
 
 /* Texto blanco garantizado en botones sólidos destructivos */
 .bg-destructive { color: #ffffff !important; }
 
 /* ── Colores de categoría — TimeGrid ───────────────────────────────────────────
-   Paleta OKLCH: alta consistencia perceptual entre hue, chroma y lightness.
-   Cada categoría tiene: accent bar color, bg tint, text color.              */
+   ⚠ Ni un color literal acá: todo sale de las variables `--categoria-*` de :root,
+   que son también las que lee el selector del formulario de turnos. El tinte de
+   fondo se deriva del MISMO color con `color-mix` en vez de repetir el oklch con
+   otro alfa, así que cambiar la variable cambia la barra, el punto y el tinte a
+   la vez.                                                                      */
 
 /* turno_medico — verde */
-.categoria-turno-medico { background-color: oklch(0.52 0.16 155 / 10%); }
-.categoria-turno-medico .fc-event-accent { background-color: oklch(0.52 0.16 155); }
+.categoria-turno-medico { background-color: color-mix(in oklab, var(--categoria-turno-medico) 10%, transparent); }
+.categoria-turno-medico .fc-event-accent { background-color: var(--categoria-turno-medico); }
 .categoria-turno-medico .fc-event-time-label,
-.categoria-turno-medico .fc-event-title-label { color: oklch(0.32 0.12 155); }
+.categoria-turno-medico .fc-event-title-label { color: var(--categoria-turno-medico-texto); }
 
 /* curso — azul */
-.categoria-curso { background-color: oklch(0.56 0.18 220 / 10%); }
-.categoria-curso .fc-event-accent { background-color: oklch(0.56 0.18 220); }
+.categoria-curso { background-color: color-mix(in oklab, var(--categoria-curso) 10%, transparent); }
+.categoria-curso .fc-event-accent { background-color: var(--categoria-curso); }
 .categoria-curso .fc-event-time-label,
-.categoria-curso .fc-event-title-label { color: oklch(0.34 0.14 220); }
+.categoria-curso .fc-event-title-label { color: var(--categoria-curso-texto); }
 
 /* personal — morado */
-.categoria-personal { background-color: oklch(0.54 0.20 285 / 10%); }
-.categoria-personal .fc-event-accent { background-color: oklch(0.54 0.20 285); }
+.categoria-personal { background-color: color-mix(in oklab, var(--categoria-personal) 10%, transparent); }
+.categoria-personal .fc-event-accent { background-color: var(--categoria-personal); }
 .categoria-personal .fc-event-time-label,
-.categoria-personal .fc-event-title-label { color: oklch(0.34 0.16 285); }
+.categoria-personal .fc-event-title-label { color: var(--categoria-personal-texto); }
 
 /* administrativo — marrón (ex-bloqueo) */
-.categoria-administrativo { background-color: oklch(0.55 0.12 55 / 10%); }
-.categoria-administrativo .fc-event-accent { background-color: oklch(0.55 0.12 55); }
+.categoria-administrativo { background-color: color-mix(in oklab, var(--categoria-administrativo) 10%, transparent); }
+.categoria-administrativo .fc-event-accent { background-color: var(--categoria-administrativo); }
 .categoria-administrativo .fc-event-time-label,
-.categoria-administrativo .fc-event-title-label { color: oklch(0.38 0.09 55); }
+.categoria-administrativo .fc-event-title-label { color: var(--categoria-administrativo-texto); }
 
 /* recordatorio — amarillo */
-.categoria-recordatorio { background-color: oklch(0.78 0.16 80 / 12%); }
-.categoria-recordatorio .fc-event-accent { background-color: oklch(0.72 0.18 80); }
+.categoria-recordatorio { background-color: color-mix(in oklab, var(--categoria-recordatorio) 12%, transparent); }
+.categoria-recordatorio .fc-event-accent { background-color: var(--categoria-recordatorio); }
 .categoria-recordatorio .fc-event-time-label,
-.categoria-recordatorio .fc-event-title-label { color: oklch(0.44 0.16 80); }
+.categoria-recordatorio .fc-event-title-label { color: var(--categoria-recordatorio-texto); }
 
 /* ── Colores de categoría — DayGrid ─────────────────────────────────────────── */
-.fc-daygrid-turno.categoria-turno-medico { background-color: oklch(0.52 0.16 155 / 12%); }
-.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-dot-custom { background-color: oklch(0.52 0.16 155); }
+.fc-daygrid-turno.categoria-turno-medico { background-color: color-mix(in oklab, var(--categoria-turno-medico) 12%, transparent); }
+.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-dot-custom { background-color: var(--categoria-turno-medico); }
 .fc-daygrid-turno.categoria-turno-medico .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-title-custom { color: oklch(0.32 0.12 155); }
+.fc-daygrid-turno.categoria-turno-medico .fc-daygrid-title-custom { color: var(--categoria-turno-medico-texto); }
 
-.fc-daygrid-turno.categoria-curso { background-color: oklch(0.56 0.18 220 / 12%); }
-.fc-daygrid-turno.categoria-curso .fc-daygrid-dot-custom { background-color: oklch(0.56 0.18 220); }
+.fc-daygrid-turno.categoria-curso { background-color: color-mix(in oklab, var(--categoria-curso) 12%, transparent); }
+.fc-daygrid-turno.categoria-curso .fc-daygrid-dot-custom { background-color: var(--categoria-curso); }
 .fc-daygrid-turno.categoria-curso .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-curso .fc-daygrid-title-custom { color: oklch(0.34 0.14 220); }
+.fc-daygrid-turno.categoria-curso .fc-daygrid-title-custom { color: var(--categoria-curso-texto); }
 
-.fc-daygrid-turno.categoria-personal { background-color: oklch(0.54 0.20 285 / 12%); }
-.fc-daygrid-turno.categoria-personal .fc-daygrid-dot-custom { background-color: oklch(0.54 0.20 285); }
+.fc-daygrid-turno.categoria-personal { background-color: color-mix(in oklab, var(--categoria-personal) 12%, transparent); }
+.fc-daygrid-turno.categoria-personal .fc-daygrid-dot-custom { background-color: var(--categoria-personal); }
 .fc-daygrid-turno.categoria-personal .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-personal .fc-daygrid-title-custom { color: oklch(0.34 0.16 285); }
+.fc-daygrid-turno.categoria-personal .fc-daygrid-title-custom { color: var(--categoria-personal-texto); }
 
-.fc-daygrid-turno.categoria-administrativo { background-color: oklch(0.55 0.12 55 / 12%); }
-.fc-daygrid-turno.categoria-administrativo .fc-daygrid-dot-custom { background-color: oklch(0.55 0.12 55); }
+.fc-daygrid-turno.categoria-administrativo { background-color: color-mix(in oklab, var(--categoria-administrativo) 12%, transparent); }
+.fc-daygrid-turno.categoria-administrativo .fc-daygrid-dot-custom { background-color: var(--categoria-administrativo); }
 .fc-daygrid-turno.categoria-administrativo .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-administrativo .fc-daygrid-title-custom { color: oklch(0.38 0.09 55); }
+.fc-daygrid-turno.categoria-administrativo .fc-daygrid-title-custom { color: var(--categoria-administrativo-texto); }
 
-.fc-daygrid-turno.categoria-recordatorio { background-color: oklch(0.78 0.16 80 / 14%); }
-.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-dot-custom { background-color: oklch(0.72 0.18 80); }
+.fc-daygrid-turno.categoria-recordatorio { background-color: color-mix(in oklab, var(--categoria-recordatorio) 14%, transparent); }
+.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-dot-custom { background-color: var(--categoria-recordatorio); }
 .fc-daygrid-turno.categoria-recordatorio .fc-daygrid-time-custom,
-.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-title-custom { color: oklch(0.44 0.16 80); }
+.fc-daygrid-turno.categoria-recordatorio .fc-daygrid-title-custom { color: var(--categoria-recordatorio-texto); }
 
 /* ── Evento pendiente de confirmar (sin hora) ─────────────────────────────── */
 .fc-event-pendiente-confirmar {

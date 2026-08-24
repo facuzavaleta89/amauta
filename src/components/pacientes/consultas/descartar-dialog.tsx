@@ -20,7 +20,7 @@ interface DescartarDialogProps {
 }
 
 // Confirmación de descarte de un BORRADOR de consulta. Controlado, igual que
-// `finalizar-dialog.tsx`; la estética destructiva (título en `text-destructive` con
+// `finalizar-dialog.tsx`; la estética destructiva (título en `text-destructive-strong` con
 // AlertTriangle + acción en `bg-destructive`) sigue a `pacientes/paciente-acciones.tsx`.
 // El borrado es FÍSICO y sin rastro: por eso el texto no promete ninguna papelera.
 export function DescartarDialog({ open, onOpenChange, onConfirm, isLoading }: DescartarDialogProps) {
@@ -28,7 +28,7 @@ export function DescartarDialog({ open, onOpenChange, onConfirm, isLoading }: De
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+          <AlertDialogTitle className="flex items-center gap-2 text-destructive-strong">
             <AlertTriangle className="h-5 w-5" />
             ¿Descartar este borrador?
           </AlertDialogTitle>

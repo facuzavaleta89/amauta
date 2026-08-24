@@ -204,7 +204,7 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
           )}
 
           {errors.paciente_id && (
-            <p className="text-xs text-destructive">{errors.paciente_id.message}</p>
+            <p className="text-xs text-destructive-strong">{errors.paciente_id.message}</p>
           )}
 
           <input type="hidden" {...register('paciente_id')} />
@@ -239,7 +239,7 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
               {...register('contenido')}
             />
             {errors.contenido && (
-              <p className="text-xs text-destructive">{errors.contenido.message}</p>
+              <p className="text-xs text-destructive-strong">{errors.contenido.message}</p>
             )}
           </div>
         </CardContent>

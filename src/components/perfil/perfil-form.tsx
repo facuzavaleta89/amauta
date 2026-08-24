@@ -183,7 +183,7 @@ function ImageUploader({
         </div>
         {current && (
           <Button type="button" variant="ghost" size="sm" onClick={onDelete} disabled={isPending}
-            className="text-destructive hover:text-destructive hover:bg-destructive/10 w-full gap-1.5">
+            className="text-destructive-strong hover:text-destructive-strong hover:bg-destructive/10 w-full gap-1.5">
             <Trash2 className="h-4 w-4" />Eliminar
           </Button>
         )}
@@ -283,7 +283,7 @@ function AsistenteCard({
             size="sm"
             onClick={() => onDesvincular(asistente.id)}
             disabled={isPendingGlobal || isSaving}
-            className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 text-xs px-2"
+            className="text-destructive-strong hover:text-destructive-strong hover:bg-destructive/10 h-8 text-xs px-2"
           >
             <Trash2 className="h-3.5 w-3.5" />Desvincular
           </Button>
@@ -541,8 +541,8 @@ export function PerfilForm({ profile, userEmail, medicoVinculado, asistentesInic
                                 <li key={perm} className="flex items-center justify-between">
                                   <span>{PERMISO_LABELS[perm]}</span>
                                   <span className={cn(
-                                    "px-1.5 py-0.5 rounded text-[10px] font-semibold",
-                                    habilitado ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-500"
+                                    "px-1.5 py-0.5 rounded-sm text-[10px] font-semibold",
+                                    habilitado ? "bg-success/10 text-success-strong" : "bg-destructive/10 text-destructive-strong"
                                   )}>
                                     {habilitado ? 'Habilitado' : 'Desactivado'}
                                   </span>

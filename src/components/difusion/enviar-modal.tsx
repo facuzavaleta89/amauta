@@ -230,7 +230,7 @@ export function EnviarModal({ postId, postTitulo, open, onOpenChange }: EnviarMo
               ))}
             </div>
           ) : loadError ? (
-            <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive-strong">
               <AlertCircle className="h-4 w-4 shrink-0" />
               {loadError}
             </div>
@@ -328,15 +328,15 @@ export function EnviarModal({ postId, postTitulo, open, onOpenChange }: EnviarMo
               {/* Lista de fallidos (persistente tras un envío parcial; fija, con scroll interno) */}
               {fallidos && fallidos.length > 0 && (
                 <div className="shrink-0 rounded-lg border border-destructive/20 bg-destructive/10 p-3 space-y-2">
-                  <p className="text-sm font-semibold text-destructive flex items-center gap-2">
+                  <p className="text-sm font-semibold text-destructive-strong flex items-center gap-2">
                     <AlertCircle className="h-4 w-4" />
                     No se pudo enviar a {fallidos.length} destinatario{fallidos.length !== 1 ? 's' : ''}
                   </p>
                   <ul className="max-h-40 overflow-y-auto space-y-1 text-xs">
                     {fallidos.map((f) => (
-                      <li key={f.paciente_id} className="text-destructive/90">
+                      <li key={f.paciente_id} className="text-destructive-strong">
                         <span className="font-medium">{nombrePorId.get(f.paciente_id) ?? f.email}</span>
-                        <span className="text-destructive/70"> — {f.email}: {f.error}</span>
+                        <span className="text-destructive-strong/90"> — {f.email}: {f.error}</span>
                       </li>
                     ))}
                   </ul>
@@ -350,11 +350,11 @@ export function EnviarModal({ postId, postTitulo, open, onOpenChange }: EnviarMo
         <DialogFooter className="shrink-0 mx-0 mb-0 px-6 py-4 border-t border-border sm:justify-between items-center gap-3">
           <div className="flex items-center gap-2 text-sm">
             <Users className="h-4 w-4 text-muted-foreground" />
-            <span className={excedeLimite ? 'font-semibold text-amber-700 dark:text-amber-400' : 'text-foreground'}>
+            <span className={excedeLimite ? 'font-semibold text-warning-strong' : 'text-foreground'}>
               {total} seleccionado{total !== 1 ? 's' : ''}
             </span>
             {excedeLimite && (
-              <span className="text-xs text-amber-700 dark:text-amber-400">
+              <span className="text-xs text-warning-strong">
                 · el límite diario es {DIFUSION_LIMITE_DIARIO}; destildá algunos
               </span>
             )}

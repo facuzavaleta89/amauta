@@ -104,7 +104,7 @@ export default async function DifusionPage(props: {
               variant="outline"
               className={`cursor-pointer select-none transition-colors ${
                 estado === 'listo'
-                  ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                  ? 'bg-info text-info-foreground border-info hover:bg-info/90'
                   : 'hover:bg-muted'
               }`}
             >
@@ -118,7 +118,7 @@ export default async function DifusionPage(props: {
               variant="outline"
               className={`cursor-pointer select-none transition-colors ${
                 estado === 'enviado'
-                  ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                  ? 'bg-success text-success-foreground border-success hover:bg-success/90'
                   : 'hover:bg-muted'
               }`}
             >

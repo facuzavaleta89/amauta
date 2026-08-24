@@ -70,9 +70,9 @@ function EstadoBadge({ estado }: { estado: DifusionEstado }) {
     case 'borrador':
       return <Badge variant="secondary" className="gap-1"><Clock className="w-3 h-3" /> Borrador</Badge>
     case 'listo':
-      return <Badge variant="default" className="gap-1 bg-blue-600 hover:bg-blue-700"><CheckCircle2 className="w-3 h-3" /> Listo para enviar</Badge>
+      return <Badge variant="default" className="gap-1 bg-info text-info-foreground hover:bg-info/90"><CheckCircle2 className="w-3 h-3" /> Listo para enviar</Badge>
     case 'enviado':
-      return <Badge variant="default" className="gap-1 bg-emerald-600 hover:bg-emerald-700"><Megaphone className="w-3 h-3" /> Enviado</Badge>
+      return <Badge variant="default" className="gap-1 bg-success text-success-foreground hover:bg-success/90"><Megaphone className="w-3 h-3" /> Enviado</Badge>
     case 'archivado':
       return <Badge variant="outline" className="gap-1"><Archive className="w-3 h-3" /> Archivado</Badge>
     default:
@@ -187,8 +187,8 @@ export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
           <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-2">Canal de envío</p>
           <div className="flex items-center gap-2 text-sm font-medium">
             {post.canal === 'whatsapp'
-              ? <MessageCircle className="h-4 w-4 text-green-600" />
-              : <Mail className="h-4 w-4 text-blue-600" />}
+              ? <MessageCircle className="h-4 w-4 text-success" />
+              : <Mail className="h-4 w-4 text-info" />}
             {DIFUSION_CANAL_LABELS[post.canal]}
           </div>
         </div>
@@ -202,14 +202,14 @@ export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
             className={cn(
               'flex items-start gap-3 rounded-xl border p-4',
               tieneFallos
-                ? 'border-amber-500/30 bg-amber-500/10'
-                : 'border-emerald-500/30 bg-emerald-500/10',
+                ? 'border-warning/30 bg-warning/10'
+                : 'border-success/30 bg-success/10',
             )}
           >
             {tieneFallos ? (
-              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
             ) : (
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
             )}
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground">
@@ -227,7 +227,7 @@ export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
           {/* Lista de fallidos (a quién no le llegó, con el motivo) */}
           {tieneFallos && (
             <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4">
-              <p className="text-sm font-semibold text-destructive flex items-center gap-2 mb-2">
+              <p className="text-sm font-semibold text-destructive-strong flex items-center gap-2 mb-2">
                 <AlertCircle className="h-4 w-4" />
                 No le llegó a {envioResumen.fallidos.length} destinatario{envioResumen.fallidos.length !== 1 ? 's' : ''}
               </p>
@@ -240,7 +240,7 @@ export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
                     {f.nombre && f.email && (
                       <span className="text-muted-foreground"> · {f.email}</span>
                     )}
-                    <span className="text-destructive/80"> — {f.error ?? 'Error desconocido'}</span>
+                    <span className="text-destructive-strong/90"> — {f.error ?? 'Error desconocido'}</span>
                   </li>
                 ))}
               </ul>
@@ -251,7 +251,7 @@ export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
 
       {/* Aviso borrador */}
       {post.estado === 'borrador' && (
-        <div className="flex items-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-700 dark:text-blue-400">
+        <div className="flex items-center gap-3 p-4 bg-info/10 border border-info/20 rounded-lg text-sm text-info-strong">
           <AlertCircle className="h-5 w-5 shrink-0" />
           <p>
             Este comunicado es un borrador. Editalo y cambiá su estado a <strong>&quot;Listo para enviar&quot;</strong> para poder enviarlo.
@@ -277,7 +277,7 @@ export function DifusionPreview({ post, envioResumen }: DifusionPreviewProps) {
         {/* Cuerpo simulado */}
         <div className="p-8 sm:p-12">
           {post.canal === 'whatsapp' && (
-            <div className="mb-6 flex items-center gap-2 text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded-lg text-sm w-fit">
+            <div className="mb-6 flex items-center gap-2 text-success-strong bg-success/10 border border-success/20 px-3 py-2 rounded-lg text-sm w-fit">
               <MessageCircle className="h-4 w-4" />
               Vista previa optimizada para mensaje de texto
             </div>

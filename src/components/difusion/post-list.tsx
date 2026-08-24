@@ -30,9 +30,9 @@ function EstadoBadge({ estado }: { estado: DifusionEstado }) {
     case 'borrador':
       return <Badge variant="secondary" className="gap-1 bg-muted text-muted-foreground"><Clock className="w-3 h-3"/> Borrador</Badge>
     case 'listo':
-      return <Badge variant="default" className="gap-1 bg-blue-600 hover:bg-blue-700"><CheckCircle2 className="w-3 h-3"/> Listo</Badge>
+      return <Badge variant="default" className="gap-1 bg-info text-info-foreground hover:bg-info/90"><CheckCircle2 className="w-3 h-3"/> Listo</Badge>
     case 'enviado':
-      return <Badge variant="default" className="gap-1 bg-emerald-600 hover:bg-emerald-700"><Megaphone className="w-3 h-3"/> Enviado</Badge>
+      return <Badge variant="default" className="gap-1 bg-success text-success-foreground hover:bg-success/90"><Megaphone className="w-3 h-3"/> Enviado</Badge>
     case 'archivado':
       return <Badge variant="outline" className="gap-1"><Archive className="w-3 h-3"/> Archivado</Badge>
   }
@@ -40,11 +40,11 @@ function EstadoBadge({ estado }: { estado: DifusionEstado }) {
 
 function CanalIcon({ canal }: { canal: DifusionCanal }) {
   if (canal === 'email') return <Mail className="w-4 h-4 text-muted-foreground" />
-  if (canal === 'whatsapp') return <MessageCircle className="w-4 h-4 text-green-600" />
+  if (canal === 'whatsapp') return <MessageCircle className="w-4 h-4 text-success" />
   return (
     <div className="flex -space-x-1">
       <Mail className="w-4 h-4 text-muted-foreground" />
-      <MessageCircle className="w-4 h-4 text-green-600 bg-background rounded-full" />
+      <MessageCircle className="w-4 h-4 text-success bg-background rounded-full" />
     </div>
   )
 }

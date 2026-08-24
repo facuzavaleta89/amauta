@@ -20,13 +20,13 @@ interface ConsultaTimelineProps {
 function EstadoBadge({ estado }: { estado: Consulta['estado'] }) {
   if (estado === 'finalizada') {
     return (
-      <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
+      <Badge className="text-[10px] px-1.5 py-0 bg-success/10 text-success-strong border-success/20 hover:bg-success/10">
         Finalizada
       </Badge>
     )
   }
   return (
-    <Badge className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100">
+    <Badge className="text-[10px] px-1.5 py-0 bg-warning/10 text-warning-strong border-warning/20 hover:bg-warning/10">
       Borrador
     </Badge>
   )
@@ -96,7 +96,7 @@ export function ConsultaTimeline({
               >
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="text-xs font-semibold text-primary">Nueva consulta</span>
-                  <Badge className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-700 border-amber-200">
+                  <Badge className="text-[10px] px-1.5 py-0 bg-warning/10 text-warning-strong border-warning/20">
                     Borrador
                   </Badge>
                 </div>

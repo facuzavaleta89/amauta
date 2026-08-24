@@ -125,7 +125,7 @@ export function PacienteAcciones({ patientId, patientName, archivado }: Paciente
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive-strong">
               <AlertTriangle className="h-5 w-5" />
               Eliminar definitivamente
             </AlertDialogTitle>

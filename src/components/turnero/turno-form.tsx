@@ -4,8 +4,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Loader2, CalendarPlus, Trash2, FileText, Stethoscope, GraduationCap, User, Clipboard, Bell } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { Loader2, CalendarPlus, Trash2, FileText } from 'lucide-react'
+import { CATEGORIA_STYLES, CATEGORIAS } from '@/constants/turno-categorias'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
 import { formatParaInputAR, parseFechaHoraAR } from '@/lib/utils/format-date'
@@ -50,24 +50,25 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
-// ── Configuración visual de estados ──────────────────────────
-const ESTADO_CONFIG: Record<string, { label: string; className: string }> = {
-  pendiente:            { label: 'Pendiente',             className: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
-  confirmado:           { label: 'Confirmado',            className: 'bg-blue-100 text-blue-800 border-blue-200' },
-  presente:             { label: 'Presente',              className: 'bg-green-100 text-green-800 border-green-200' },
-  ausente:              { label: 'Ausente',               className: 'bg-red-100 text-red-800 border-red-200' },
-  cancelado:            { label: 'Cancelado',             className: 'bg-gray-100 text-gray-600 border-gray-200' },
-  reprogramado:         { label: 'Reprogramado',          className: 'bg-purple-100 text-purple-800 border-purple-200' },
-  pendiente_confirmar:  { label: 'Pendiente de confirmar', className: 'bg-orange-100 text-orange-800 border-orange-200' },
-}
-
-// ── Configuración de categorías ─────────────────────────────
-const CATEGORIA_CONFIG: Record<string, { label: string; icon: LucideIcon }> = {
-  turno_medico:    { label: 'Turno médico',   icon: Stethoscope },
-  curso:           { label: 'Curso',          icon: GraduationCap },
-  personal:        { label: 'Personal',       icon: User },
-  administrativo:  { label: 'Administrativo', icon: Clipboard },
-  recordatorio:    { label: 'Recordatorio',   icon: Bell },
+// ── Etiquetas de los estados del turno ───────────────────────
+// ⚠ Los estados NO llevan color en el selector, y es una DECISIÓN: se distinguen
+// por su etiqueta. Este mapa tenía además un campo `className` con un color por
+// estado que NUNCA llegaba al DOM —el <span> que debía consumirlo usaba un
+// template literal sin interpolación—, así que los siete colores eran código
+// muerto: se eliminaron. Si alguna vez se decide colorearlos, hay que resolver
+// antes que `presente` y `reprogramado` quedaban visualmente pegados (los dos
+// terminaban en el salvia de marca).
+// ⚠ ESTADO ≠ CATEGORÍA: el estado es el ciclo de vida del turno (pendiente →
+// confirmado → presente/ausente); la categoría es el tipo de evento y sí tiene
+// su propio sistema de color (ver CATEGORIA_STYLES más abajo).
+const ESTADO_LABELS: Record<string, string> = {
+  pendiente:           'Pendiente',
+  confirmado:          'Confirmado',
+  presente:            'Presente',
+  ausente:             'Ausente',
+  cancelado:           'Cancelado',
+  reprogramado:        'Reprogramado',
+  pendiente_confirmar: 'Pendiente de confirmar',
 }
 
 interface TurnoFormModalProps {
@@ -328,12 +329,20 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {Object.entries(CATEGORIA_CONFIG).map(([value, config]) => {
+                      {CATEGORIAS.map((value) => {
+                        const config = CATEGORIA_STYLES[value]
                         const Icon = config.icon
                         return (
                           <SelectItem key={value} value={value}>
                             <span className="flex items-center gap-2">
-                              <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                              {/* El color sale de la MISMA variable CSS que pinta
+                                  el evento en el calendario (globals.css →
+                                  `--categoria-*`), no de una clase de Tailwind
+                                  que replique el valor. */}
+                              <Icon
+                                className="w-3.5 h-3.5"
+                                style={{ color: `var(${config.varColor})` }}
+                              />
                               <span>{config.label}</span>
                             </span>
                           </SelectItem>
@@ -354,7 +363,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                 render={({ field }) => (
                   <FormItem className="relative" ref={wrapperRef}>
                     <div className="flex items-center justify-between">
-                      <FormLabel>Paciente <span className="text-destructive">*</span></FormLabel>
+                      <FormLabel>Paciente <span className="text-destructive-strong">*</span></FormLabel>
                       {initialData?.paciente_id && (
                         puedeVerHistoria ? (
                           <Link
@@ -470,7 +479,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                   <FormLabel>
                     {esTurnoMedico
                       ? <>Motivo de consulta <span className="text-muted-foreground font-normal">(opcional)</span></>
-                      : <>Título / descripción <span className="text-destructive">*</span></>
+                      : <>Título / descripción <span className="text-destructive-strong">*</span></>
                     }
                   </FormLabel>
                   <FormControl>
@@ -503,10 +512,10 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {Object.entries(ESTADO_CONFIG).map(([value, config]) => (
+                        {Object.entries(ESTADO_LABELS).map(([value, label]) => (
                           <SelectItem key={value} value={value}>
-                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium`}>
-                              {config.label}
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                              {label}
                             </span>
                           </SelectItem>
                         ))}

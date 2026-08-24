@@ -16,7 +16,7 @@ import type {
 } from '@fullcalendar/core'
 import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { toast } from 'sonner'
-import { Loader2, CalendarPlus, Ban, RefreshCw, Tag, Stethoscope, GraduationCap, User, Clipboard, Bell } from 'lucide-react'
+import { Loader2, CalendarPlus, Ban, RefreshCw, Tag } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { BloqueoAgenda, TurnoConPaciente } from '@/types'
@@ -24,18 +24,11 @@ import type { BloqueoAgenda, TurnoConPaciente } from '@/types'
 import { TurnoFormModal } from './turno-form'
 import { BlockSlotModal } from './block-slot-modal'
 
-// ── Categorías: mapa de estilos ─────────────────────────────
-import type { LucideIcon } from 'lucide-react'
+// ── Categorías: etiqueta, ícono y clase de color, de la fuente compartida
+// (`constants/turno-categorias.ts`). El formulario de turnos consume la MISMA.
+import { CATEGORIA_STYLES, CATEGORIAS, categoriaStyle } from '@/constants/turno-categorias'
 
-const CATEGORIA_STYLES: Record<string, { accentClass: string; label: string; icon: LucideIcon }> = {
-  turno_medico:   { accentClass: 'categoria-turno-medico',   label: 'Turno médico',   icon: Stethoscope },
-  curso:          { accentClass: 'categoria-curso',          label: 'Curso',          icon: GraduationCap },
-  personal:       { accentClass: 'categoria-personal',       label: 'Personal',       icon: User },
-  administrativo: { accentClass: 'categoria-administrativo', label: 'Administrativo', icon: Clipboard },
-  recordatorio:   { accentClass: 'categoria-recordatorio',   label: 'Recordatorio',   icon: Bell },
-}
-
-const ALL_CATEGORIES = Object.keys(CATEGORIA_STYLES)
+const ALL_CATEGORIES: string[] = CATEGORIAS
 const LS_FILTER_KEY = 'turnero_categoria_filter'
 
 // ── Hook: detecta si es móvil ────────────────────────────────
@@ -88,11 +81,11 @@ function TurnoEventContent({ event, creationMode }: { event: EventApi; creationM
   }
 
   const categoria = raw?.categoria || 'turno_medico'
-  const catStyle = CATEGORIA_STYLES[categoria] || CATEGORIA_STYLES.turno_medico
+  const catStyle = categoriaStyle(categoria)
   const CatIcon = catStyle.icon
 
   return (
-    <div className={cn('fc-event-custom fc-event-turno', catStyle.accentClass)}>
+    <div className={cn('fc-event-custom fc-event-turno', catStyle.claseCalendario)}>
       <div className="fc-event-accent" />
       <div className="fc-event-body">
         <span className="fc-event-time-label">{startTime} – {endTime}</span>
@@ -114,13 +107,13 @@ function DayGridEventContent({ event, creationMode }: { event: EventApi; creatio
     : ''
 
   const categoria = raw?.categoria || 'turno_medico'
-  const catStyle = CATEGORIA_STYLES[categoria] || CATEGORIA_STYLES.turno_medico
+  const catStyle = categoriaStyle(categoria)
   const CatIcon = catStyle.icon
 
   return (
     <div className={cn(
       `fc-daygrid-event-custom`,
-      isBloqueo ? 'fc-daygrid-bloqueo' : `fc-daygrid-turno ${catStyle.accentClass}`
+      isBloqueo ? 'fc-daygrid-bloqueo' : `fc-daygrid-turno ${catStyle.claseCalendario}`
     )}>
       <span className="fc-daygrid-dot-custom" />
       <span className="fc-daygrid-time-custom">{startTime}</span>
@@ -429,7 +422,7 @@ export function CalendarView() {
             }}
             className={cn(
               "gap-1.5 h-8 text-xs font-semibold transition-all",
-              creationMode === 'turno' && "bg-emerald-600 hover:bg-emerald-700 text-white border-transparent"
+              creationMode === 'turno' && "bg-success text-success-foreground hover:bg-success/90 border-transparent"
             )}
           >
             <CalendarPlus className="w-3.5 h-3.5" />
@@ -446,7 +439,7 @@ export function CalendarView() {
               "gap-1.5 h-8 text-xs font-semibold transition-all",
               creationMode === 'bloqueo'
                 ? "bg-destructive text-white hover:bg-destructive/90 border-transparent hover:text-white"
-                : "text-destructive border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
+                : "text-destructive-strong border-destructive/30 hover:bg-destructive/5 hover:text-destructive-strong"
             )}
           >
             <Ban className="w-3.5 h-3.5" />

@@ -194,7 +194,7 @@ export function EstudiosList({ estudios, esMedico, archivado }: EstudiosListProp
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            className="text-destructive-strong hover:bg-destructive/10 hover:text-destructive-strong"
                             aria-label="Eliminar estudio"
                             title="Eliminar"
                             disabled={deletingId === estudio.id}
@@ -208,7 +208,7 @@ export function EstudiosList({ estudios, esMedico, archivado }: EstudiosListProp
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+                            <AlertDialogTitle className="flex items-center gap-2 text-destructive-strong">
                               <AlertTriangle className="h-5 w-5" />
                               ¿Eliminar estudio?
                             </AlertDialogTitle>

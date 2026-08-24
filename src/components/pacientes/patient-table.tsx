@@ -75,7 +75,7 @@ export function PatientTable({ pacientes }: PatientTableProps) {
                 <p className="font-medium text-sm text-foreground leading-tight truncate flex items-center gap-1.5">
                   {p.nombre_completo}
                   {p.archivado_at && (
-                    <Badge variant="secondary" className="gap-1 text-[10px] font-normal h-4 px-1.5 text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/10 shrink-0">
+                    <Badge variant="secondary" className="gap-1 text-[10px] font-normal h-4 px-1.5 text-warning-strong bg-warning/10 hover:bg-warning/10 shrink-0">
                       <Archive className="h-2.5 w-2.5" />
                       Archivado
                     </Badge>
@@ -175,7 +175,7 @@ export function PatientTable({ pacientes }: PatientTableProps) {
                         <p className="font-medium text-sm text-foreground leading-tight flex items-center gap-1.5">
                           {p.nombre_completo}
                           {p.archivado_at && (
-                            <Badge variant="secondary" className="gap-1 text-[10px] font-normal h-4 px-1.5 text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/10">
+                            <Badge variant="secondary" className="gap-1 text-[10px] font-normal h-4 px-1.5 text-warning-strong bg-warning/10 hover:bg-warning/10">
                               <Archive className="h-2.5 w-2.5" />
                               Archivado
                             </Badge>
