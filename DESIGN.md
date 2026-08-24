@@ -13,9 +13,14 @@ overrides) más los componentes de [`src/components/ui/`](./src/components/ui/).
 
 ## Paleta de colores
 
-Tema clínico de **verdes suaves** (salvia médico, hue ≈ 155 en OKLCH). Todos los
-tokens tienen variante clara (`:root`) y oscura (`.dark`). Abajo, los valores del
-**tema claro**.
+Tema clínico de **verdes suaves** (salvia médico, hue ≈ 155 en OKLCH). Los tokens se
+definen una sola vez, en `:root`: **el tema oscuro fue descartado como decisión de
+producto** y no hay bloque alternativo (ver *Tema oscuro* más abajo).
+
+**Todos los valores están dentro del gamut sRGB a propósito.** Un OKLCH con más croma del
+que sRGB puede representar lo mapea el navegador, así que el color que renderiza deja de
+ser el escrito y cualquier cálculo de contraste sobre el valor nominal miente. Al meterlos
+en gamut, el hex que emite Tailwind coincide exactamente con el valor declarado.
 
 ### Superficie y neutros
 
@@ -39,21 +44,54 @@ tokens tienen variante clara (`:root`) y oscura (`.dark`). Abajo, los valores de
 | `--secondary-foreground` / `--accent-foreground` | `oklch(0.35 0.10 155)` | Verde oscuro sobre pálido |
 | `--ring` | `oklch(0.52 0.13 155)` | Anillo de foco (= primary) |
 
-### Estado
+### Estado — las cuatro familias semánticas
 
-| Token | OKLCH | Uso |
+Cada familia tiene **tres** tokens, y la convención de uso es lo más importante de esta
+sección:
+
+| Token | Para qué | Ejemplo de clase |
 |---|---|---|
-| `--destructive` | `oklch(0.58 0.22 27.3)` | Errores, anulaciones, eliminar (rojo) |
-| `--destructive-foreground` | `oklch(0.99 0.004 155)` | Texto sobre destructivo |
+| **base** (`--destructive`) | **rellenos, bordes, anillos e íconos** | `bg-destructive`, `border-warning/30`, un `<Icon>` en `text-info` |
+| **`-strong`** (`--destructive-strong`) | **todo texto que el usuario lee** | `text-destructive-strong` |
+| **`-foreground`** (`--destructive-foreground`) | texto **sobre el relleno sólido** | `bg-destructive text-destructive-foreground` |
 
-> No existen tokens semánticos dedicados para **success / warning / info**. Los
-> estados de éxito (verde), advertencia/expirado (ámbar) e info se resuelven hoy
-> con clases crudas de Tailwind (`emerald-*`, `amber-*`, `red-*`) — ver
-> ⚠ Inconsistencias. Para toasts, Sonner usa `richColors` (paleta propia).
+| Familia | base | `-strong` | `-foreground` |
+|---|---|---|---|
+| `destructive` | `oklch(0.58 0.22 27.3)` | `oklch(0.46 0.175 27.3)` | `oklch(0.99 0.004 155)` |
+| `warning` | `oklch(0.62 0.134 70)` | `oklch(0.46 0.095 70)` | `oklch(0.20 0.04 70)` ⚠ |
+| `info` | `oklch(0.54 0.123 240)` | `oklch(0.46 0.10 240)` | `oklch(0.99 0.004 155)` |
+| `success` | `var(--primary)` | `oklch(0.46 0.11 155)` | `var(--primary-foreground)` |
+
+**Por qué el par base / `-strong`.** Reemplaza al par de tonos que traía la paleta cruda de
+Tailwind, donde el 600 servía de relleno y el 700/800/900 de texto. Al migrar a tokens los
+dos se colapsaron en uno solo, y un color no puede ser vivo como relleno **y** legible como
+texto sobre fondo claro a la vez: el cuerpo de los banners cayó de ~7:1 a 3.75:1. El
+`-strong` devuelve ese segundo valor, con nombre y con regla de uso.
+
+**Los fondos tenues NO tienen token propio.** Se derivan del base con opacidad:
+`bg-warning/10` + `text-warning-strong` + `border-warning/20` es el chip canónico. No
+agregar `--warning-bg` ni parientes.
+
+> **`success` es un ALIAS de `--primary`, no un verde propio.** La decisión de producto es
+> que **el sistema tiene un solo verde**: un badge de "Enviado" y un botón primario
+> comparten color, y se acepta. Está escrito como `var(--primary)` y no como una copia del
+> valor **a propósito**: si el salvia se retoca, el success lo sigue solo; una copia podría
+> quedar en un verde *casi* igual, que es justamente el segundo verde que esto elimina — y
+> esa divergencia no se ve hasta que alguien fotografía los dos juntos. ⚠ Lo que el alias
+> no cubre: si `--primary` dejara de ser verde, `success` deja de ser verde con él. Ese día
+> hay que **re-decidir**, no dejarlo correr.
+
+> ⚠ **`--warning-foreground` es OSCURO, y es la ÚNICA excepción del sistema** (el resto de
+> los `-foreground` son casi blancos). No es un descuido y no hay que "emparejarlo": el
+> ámbar es un color claro y el blanco encima da 2.6:1; con el foreground oscuro llega a
+> 4.9:1. El criterio es el contraste, no la simetría de la tabla — si algún día se aclara
+> un relleno, hay que **re-medir** ese par, no copiar el `-foreground` del vecino.
+
+Para toasts, Sonner usa `richColors` (paleta propia).
 
 ### Charts (gráficos de evolución — Recharts)
 
-`--chart-1` verde `oklch(0.52 0.13 155)` · `--chart-2` teal `oklch(0.65 0.12 190)` ·
+`--chart-1` verde `oklch(0.52 0.128 155)` · `--chart-2` teal `oklch(0.65 0.112 190)` ·
 `--chart-3` azul `oklch(0.72 0.10 220)` · `--chart-4` amarillo-verde `oklch(0.78 0.12 80)` ·
 `--chart-5` naranja `oklch(0.60 0.18 25)`.
 
@@ -75,9 +113,11 @@ Set propio de tokens (`--sidebar`, `--sidebar-foreground`, `--sidebar-primary`,
 - **Ajustes de fuente:** `font-feature-settings: "cv11", "ss01"` y antialiasing en `body`.
 - **Escala de texto:** se usa la escala utilitaria de Tailwind (`text-xs` … `text-sm`
   … `text-lg`, etc.); no hay una escala tipográfica custom definida en tokens.
-- ⚠ **Inconsistente:** `--font-mono` se mapea a `--font-geist-mono`, pero esa fuente
-  **no se carga** en ningún layout (solo se carga Inter). El texto "mono" cae al
-  fallback del sistema. Definir/cargar la fuente mono o eliminar el token.
+- **Monoespaciada:** `--font-mono` es una **pila del sistema** (`ui-monospace`,
+  `SFMono-Regular`, `Menlo`, `Consolas`, …). No se carga ninguna fuente por red: para los
+  ~19 usos que tiene (DNI, N° de afiliado, matrícula, códigos de verificación) no vale el
+  request. Antes apuntaba a una variable inexistente, así que la declaración se descartaba
+  en silencio y `font-mono` renderizaba en Inter.
 
 ---
 
@@ -90,9 +130,10 @@ Set propio de tokens (`--sidebar`, `--sidebar-foreground`, `--sidebar-primary`,
   (forma de píldora); cards → radio de card de shadcn.
 - **Espaciado:** escala utilitaria estándar de Tailwind (`gap-*`, `p-*`, `space-*`).
   No hay sistema de grilla propio; se usa `grid`/`flex` de Tailwind por vista.
-- ⚠ **Inconsistente:** conviven radios de token (`rounded-lg`) con radios hardcodeados
-  (`rounded-xl`, `rounded-2xl`) en vistas como `/onboarding` y `/verificar`. Unificar
-  hacia la escala de tokens.
+- ⚠ **`rounded-xl` y `rounded-2xl` SÍ son de la escala del proyecto**, no valores
+  hardcodeados: `@theme inline` redefine `--radius-xl` y `--radius-2xl` sobre `--radius`.
+  Lo que sí quedaba fuera era `rounded` a secas (el default de Tailwind, 0.25rem), y ya
+  se llevó a la escala. `rounded-full` es una utilidad fija legítima.
 
 ---
 
@@ -156,14 +197,16 @@ embebida de archivos del proyecto (el stub `shared/file-preview` sigue sin usars
 en el preview del documento (`pedido-pdf.tsx` / `certificado-pdf.tsx`) se usan **banners de
 estado a lo ancho** en el borde superior de la card, todos con el mismo layout (`px-8 py-3`,
 centrado, `flex items-center justify-center gap-2` + ícono `lucide` a la izquierda):
-el de **anulado** en tono destructivo (`bg-red-50 dark:bg-red-950/20` + `Ban`, preexistente) y
-el nuevo de **"sin datos del emisor"** en tono de **advertencia ámbar** (`bg-amber-50
-dark:bg-amber-950/20`, texto `amber-800/200`, ícono `AlertCircle`) — se muestra solo cuando el
+el de **anulado** en tono destructivo (`bg-destructive/10` + `text-destructive-strong` +
+`Ban`, preexistente) y el de **"sin datos del emisor"** en tono de **advertencia ámbar**
+(`bg-warning/10` + `text-warning-strong`, ícono `AlertCircle`) — se muestra solo cuando el
 documento no tiene `emisor_snapshot` (un bug: nunca cae a `profiles`). Además, la acción
 **Descargar PDF** de un documento **revocado** se envuelve en un `alert-dialog` de confirmación
 (el resto de las descargas es directo); el PDF servido es el original, sin marca de anulación.
-⚠ Estos ámbar/rojo son clases crudas de Tailwind, no tokens semánticos — mismo pendiente de
-`success/warning/info` señalado en Inconsistencias.
+⚠ **La hoja del documento tiene fondo blanco fijo (`bg-white`) y su interior sí usa tokens.**
+Es deliberado: representa papel impreso y debe coincidir con el PDF que se descarga. Como el
+proyecto no tiene tema oscuro, no hay contradicción — pero si alguna vez se implementara, ese
+interior quedaría ilegible sobre el papel blanco y habría que resolverlo primero.
 
 > ✅ Los **11 componentes stub** que no se usaban (`turnero/turno-card`,
 > `pacientes/{patient-tabs, evolucion-charts}`, `dashboard/weekly-calendar`,
@@ -213,8 +256,50 @@ calendario tiñe el highlight según la acción (`.mode-turno` verde / `.mode-bl
   active (`active:translate-y-px`) y `disabled:opacity-50 pointer-events-none`.
 - **Animación:** utilidad `.animate-fade-in` (fade + leve `translateY`), 0.2s ease-out;
   `tw-animate-css` disponible para animaciones de entrada/salida.
-- **Dark mode:** hay un set completo de tokens `.dark` ("mínimo, por si se necesita a
-  futuro"), pero la app **no expone un toggle** de tema hoy.
+---
+
+## Layout de página (área autenticada)
+
+**El encabezado de toda página arranca SIEMPRE en la misma coordenada horizontal: el borde
+izquierdo del contenedor de contenido.** Es la regla que ordena el resto, y el motivo es
+concreto: que el título no salte de posición al navegar de una sección a otra.
+
+| Tipo de página | Contenedor raíz | Ancho |
+|---|---|---|
+| Índice / listado (dashboard, pacientes, turnero, pedidos, certificados, difusión, notas, mensajes, notificaciones) | `space-y-6` | todo el disponible |
+| Detalle, formulario y perfil | `max-w-4xl space-y-6` | acotado, **alineado a la izquierda** |
+| Pantalla completa (turnero, historia clínica) | `h-full flex flex-col` | todo el disponible |
+
+⚠ **Los contenedores acotados van SIN `mx-auto`.** Centrarlos reintroduce exactamente el
+problema que este criterio vino a resolver: el título se corre hacia el centro en las
+páginas angostas y salta al volver a un índice. El `w-full` tampoco hace falta: sin
+márgenes automáticos, un bloque ya ocupa el ancho disponible y `max-w-4xl` lo recorta.
+
+**El encabezado sale siempre de `shared/page-header`** (`PageHeader`), cuya API es
+`{ title, description?, backHref?, children? }`:
+
+- **`h1` en `text-2xl font-bold text-foreground`** y descripción en
+  `text-sm text-muted-foreground mt-1`. Es el único tamaño de título de la app.
+- **Ninguna sección lleva ícono decorativo junto al título.** Es decisión de producto, no
+  una limitación del componente: `title` es `string` a propósito.
+- **`backHref` dibuja el único back-link del sistema**, con `ChevronLeft`, `aria-label`
+  "Volver" y foco visible. No hay otro ícono de volver.
+- **Las acciones van por `children`**, a la derecha. Los badges de estado que antes iban
+  pegados al `h1` (por ejemplo "Archivado" o "Anulado") viajan también por ahí.
+- **Espaciado vertical canónico: `space-y-6`** (1.5rem) en toda página; las de pantalla
+  completa usan `gap-6`, que es lo mismo en forma flex.
+
+---
+
+## Tema oscuro — descartado
+
+**No existe y no se va a implementar.** Es una decisión de producto cerrada, no un
+pendiente: se eliminaron el bloque de tokens alternativo, las clases con prefijo de tema en
+los componentes y toda la mención que lo describía como algo a medio hacer.
+
+⚠ La declaración `@custom-variant dark (@media not all)` que quedó en `globals.css` **no es
+un residuo**: deja la variante inerte por construcción. Ver `CLAUDE.md` → nota técnica 34,
+que explica por qué borrarla hace lo contrario de lo que parece.
 
 ---
 
@@ -225,35 +310,67 @@ calendario tiñe el highlight según la acción (`.mode-turno` verde / `.mode-bl
 - **Semántica de estado:** atributos `aria-invalid` / `aria-expanded` en componentes de
   formulario y menús (heredado de shadcn/Radix, que aporta roles y navegación por teclado).
 - **Antialiasing** y `font-feature-settings` para legibilidad del texto.
-- **Contraste:** paleta pensada para contraste (foreground casi negro sobre fondos claros).
-  ⚠ **Verificar** el contraste de los tintes de categoría al 10–12% de opacidad y de los
-  textos `muted-foreground` sobre `muted`, especialmente en la página pública.
+- **Contraste — dos umbrales distintos, y conviene no confundirlos:**
+  - **Texto: mínimo 4.5:1** (WCAG AA, texto normal). Es lo que sostiene la variante
+    `-strong` de cada familia: sobre el tinte al 10% de su propia familia quedan entre
+    5.9:1 y 6.7:1, y sobre `--card` entre 6.7:1 y 7.8:1. Todo lo que el usuario lee está
+    por encima del mínimo.
+  - **Íconos y objetos gráficos: mínimo 3:1** (WCAG 1.4.11). Es lo que sostiene el token
+    **base**: sobre el tinte de su familia dan entre 3.3:1 y 4.5:1 — por debajo de 4.5,
+    pero **ese no es su umbral**. Por eso un ícono puede quedarse en el token base y un
+    texto no.
+  - Los pares `-foreground` sobre relleno sólido están entre 4.7:1 y 5.0:1.
+  ⚠ **Queda por verificar** el contraste de los tintes de categoría del turnero (10–12% de
+  opacidad) y de `muted-foreground` sobre `muted`.
+
+---
+
+## Excepciones deliberadas (no son deuda)
+
+Tres cosas que parecen inconsistencias y no lo son. Están acá para que nadie las
+"arregle" creyendo que quedaron afuera por olvido.
+
+1. **`/verificar/[codigo]` usa paleta cruda de Tailwind** (`slate-*`, `emerald-*`,
+   `amber-*`, `red-*`), no los tokens del proyecto. **Es un sistema visual propio y se
+   queda así:** es la única pantalla **pública**, cumple otra función —la lee un paciente
+   o un tercero desde el celular, sin sesión y sin contexto de la app—, y funciona. Migrarla
+   a tokens la ataría a la identidad de la aplicación sin ganar nada.
+
+2. **Los estados del turno NO se distinguen visualmente en el calendario.** Un turno
+   `cancelado` se dibuja igual que uno `confirmado`. Es una decisión, no una omisión: el
+   estado se lee abriendo el turno. Lo único que colorea un evento es su **categoría**.
+
+3. **Los bloqueos de horario se renderizan como eventos normales**, no como región de fondo
+   (`display: 'background'` de FullCalendar). En ese modo se verían mejor —una franja a
+   ancho completo, sin competir por columna con los turnos— pero **dejarían de ser
+   arrastrables y de responder al click**, y el click en el calendario es la **única puerta**
+   para editar o borrar un bloqueo.
 
 ---
 
 ## ⚠ Inconsistencias a unificar (para el bloque estético)
 
-1. **Colores fuera del sistema de tokens:** `/verificar/[codigo]` y otras vistas usan
-   clases crudas `slate-*`, `emerald-*`, `red-*`, `amber-*` en lugar de los tokens
-   semánticos. Faltan tokens `success` / `warning` / `info`.
-2. **Radios hardcodeados** (`rounded-xl`, `rounded-2xl`) conviviendo con la escala de
-   tokens en `/onboarding` y `/verificar`.
-3. **Fuente mono** (`--font-geist-mono`) referenciada pero no cargada.
-4. **`turnos.color` (HEX `#3B82F6`)** en desuso frente a las clases `.categoria-*`.
-5. ~~**12 componentes stub** sin usar (código muerto que ensucia la carpeta de UI).~~
-   **✅ RESUELTO:** se eliminaron 11; queda solo `lib/pdf/receta-template.tsx`, mantenido a
-   propósito como marcador (recetas está bloqueado por ANMAT).
-6. **Dark mode a medias:** tokens definidos sin toggle en la UI.
-7. **Layout inconsistente entre secciones.** Las páginas del área autenticada no comparten un
-   patrón único de encabezado ni de ancho:
-   - **Grupo de referencia (correcto):** dashboard, pacientes, turnero, pedidos y certificados
-     — ocupan el espacio disponible y comparten el tamaño de título. **Notas** también es
-     consistente con este grupo.
-   - **Difusión:** título con **tamaño de fuente mayor** que el resto, y con un **ícono de
-     altavoz** que ninguna otra sección muestra.
-   - **Notificaciones y mensajes:** aparecen con **márgenes laterales**, más centradas y
-     angostas que el resto.
-   - **Criterio a definir:** (a) o **todas** las secciones llevan ícono en el título —y
-     coherente con el del sidebar— o **ninguna**; (b) unificar **ancho, márgenes y tamaño de
-     título**. Lo natural es centralizarlo en `shared/page-header` para que el patrón viva en
-     un único componente.
+Lo que sigue quedó **resuelto** en la tanda de pulido visual; se conserva el registro
+porque explica de dónde viene el sistema actual.
+
+1. ~~**Colores fuera del sistema de tokens.**~~ ✅ Migrada toda la app a tokens semánticos
+   (`success` / `warning` / `info` existen, con su variante `-strong`). `/verificar` queda
+   afuera **a propósito** — ver *Excepciones deliberadas*.
+2. ~~**Radios hardcodeados** (`rounded-xl`, `rounded-2xl`).~~ ✅ **El ítem apuntaba al blanco
+   equivocado:** esas dos clases **sí** son de la escala del proyecto. Lo que estaba fuera
+   era `rounded` a secas, ya corregido.
+3. ~~**Fuente mono referenciada pero no cargada.**~~ ✅ **Estaba mal descrito:** el problema
+   no era que faltara cargar una fuente, sino que `--font-mono` apuntaba a una variable
+   inexistente y la declaración se descartaba en silencio. Resuelto con una pila del sistema.
+4. **`turnos.color`** sigue abierto, movido a *tareas chicas de barrido* en `PENDIENTES.md`:
+   la decisión es **eliminar la columna**.
+5. ~~**Componentes stub sin usar.**~~ ✅ Resuelto: se eliminaron 11; queda solo
+   `lib/pdf/receta-template.tsx`, a propósito (recetas está bloqueado por ANMAT).
+6. ~~**Dark mode a medias.**~~ ✅ **Descartado como decisión de producto** — ver *Tema oscuro*.
+7. ~~**Layout inconsistente entre secciones.**~~ ✅ Resuelto con el criterio de *Layout de
+   página*. ⚠ El diagnóstico original **era incorrecto en dos puntos**: daba por
+   "consistentes" a pacientes, pedidos, certificados y notas, que en realidad tenían anchos
+   distintos entre sí, y **omitía** todas las páginas de detalle, formulario y perfil, más la
+   historia clínica. Hoy **21 de las 22 páginas con UI** usan `PageHeader` y todas
+   siguen el mismo patrón de contenedor; la excepción es `/sin-acceso`, una pantalla de estado
+   vacío centrada que no lleva encabezado de sección.

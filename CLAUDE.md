@@ -63,6 +63,7 @@ Node LTS 20+. Tailwind v4 se configura en `src/app/globals.css` con `@theme`
     /pacientes /turnero /pedidos /certificados /difusion /perfil
     /mensajes /notas /notificaciones /dashboard /recetas
   /constants         → nav-items.ts (navegación por rol+permiso),
+                       turno-categorias.ts (fuente única de etiqueta/ícono/color de categoría),
                        difusion.ts (DIFUSION_LIMITE_DIARIO, compartida cliente/servidor)
   /contexts          → permisos-context.tsx (+ MensajesContext para badge no leídos)
   /hooks             → use-view-mode.ts (preferencia mosaico/lista; los 4 stubs se eliminaron)
@@ -726,7 +727,10 @@ solo se envía por email).
 ## Documentación del proyecto
 
 - **`README.md`** — puesta en marcha para desarrolladores (requisitos, instalación, scripts).
-- **`DESIGN.md`** — sistema de diseño (paleta OKLCH, tipografía, componentes, categorías del turnero).
+- **`DESIGN.md`** — sistema de diseño: paleta OKLCH con las cuatro familias semánticas y la
+  convención base / `-strong` / `-foreground`, tipografía, componentes, categorías del turnero,
+  el criterio de **layout de página** (encabezado siempre en la misma coordenada, contenedores
+  acotados **sin centrar**) y las **excepciones deliberadas** que no hay que "arreglar".
 - **`supabase/migrations/000_baseline.sql`** — ⭐ **la AUTORIDAD sobre el esquema.** Archivo único que recrea el esquema completo (21 tablas, 4 ENUM, 12 funciones, 15 triggers, 72 políticas, 78 índices, 2 buckets y el catálogo `obras_sociales`) sobre un proyecto Supabase nuevo y vacío. Se generó **leyendo la base de producción**, no transcribiendo las migraciones — que es lo que venía produciendo drift. ⚠ **No se aplica a producción:** producción ya tiene ese esquema.
 - **`supabase/migrations/_historico/`** — las **49 migraciones** `001`→`047`, archivadas **sin editar**. Siguen siendo consultables y se consultan: casi todas traen en su encabezado el *por qué* de un cambio, y `CLAUDE.md` y `PENDIENTES.md` las referencian por número. **No son ejecutables como secuencia** (ver nota técnica 6). Su `README.md` explica el corte.
   - `_historico/_copias-ejecutables/` — los `MIGRACION-*.sql` que vivían en la raíz del repo: copias que se pegaban en el SQL Editor para aplicar cada migración a mano. **Ese flujo terminó**; se conservan como contexto de *cómo* se aplicó cada una.
@@ -1510,3 +1514,57 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       —no es equivalente, difiere en cuanto se inserte una receta con `fecha_receta` explícita
       distinta de hoy— ni con un trigger `BEFORE INSERT`, que sería crear en el entorno nuevo
       un objeto que producción **no tiene**.
+
+32. **⚠⚠ LA CADENA DE ALTURAS DEL LAYOUT: `h-full` NO ES INTERCAMBIABLE POR `min-h-full`.** Si
+    alguien lo cambia, **el calendario colapsa a cero y `/turnero` se ve VACÍA, sin un solo
+    error en consola.** Es la trampa más silenciosa del repo.
+    - **La cadena** (`components/layout/layout-shell.tsx`): `div.flex.h-dvh` → columna
+      `flex-1` → **`<main class="flex-1 min-h-0 flex flex-col overflow-hidden">`**, que **NO
+      scrollea** → **`div.h-full.overflow-y-auto`** con el padding (`p-3 sm:p-4 md:p-6`), que
+      **sí** scrollea → la página.
+    - **Por qué `h-full` y no `min-h-full`:** las páginas de PANTALLA COMPLETA —`/turnero` y
+      `/pacientes/[id]/historia`— se dimensionan con `h-full`, y adentro hay **más alturas en
+      PORCENTAJE**: `h-[calc(100%-3rem)]` en el contenedor del calendario y `height="100%"` en
+      el propio `<FullCalendar>`. **Un `min-height` no sirve como referencia para un
+      porcentaje**: si el wrapper pasa a `min-h-full` (o a cualquier `min-height`), su `height`
+      computado es `auto`, todos esos porcentajes resuelven a `auto` y la cadena se cae entera.
+    - **El fallo es MUDO:** no hay excepción, no hay warning, el HTML se renderiza. Solo se ve
+      una página en blanco. Ya pasó.
+    - ⚠ **Y el padding tampoco se puede mover al `<main>`:** el wrapper es el contenedor de
+      scroll y su padding forma parte del área scrolleable, que es lo que conserva el padding
+      inferior de las páginas largas.
+33. **El contenedor de SCROLL del área autenticada NO es `window` ni `<main>`: es el `div`
+    interno del shell.** `<main>` está en `overflow-hidden` a propósito (ver nota 32); el que
+    tiene `overflow-y-auto` es el `div` que hay adentro.
+    - **Consecuencia práctica:** cualquier código que quiera scrollear "la página" —volver
+      arriba tras una acción, `scrollIntoView` sobre un elemento, restaurar posición— tiene que
+      apuntar a **ese div**, no a `window` ni a `document.documentElement`. Un `window.scrollTo`
+      no hace nada.
+    - Hoy no hay ningún llamador (cero coincidencias de `scrollTo`/`scrollIntoView`/`scrollTop`
+      en `src/`), así que esto es información preventiva: el primero que lo necesite se va a
+      encontrar con que el patrón obvio falla en silencio.
+34. **⚠ `@custom-variant dark (@media not all)` en `globals.css` NO ES CÓDIGO MUERTO — BORRARLA
+    HACE LO CONTRARIO DE LO QUE PARECE.** El tema oscuro está **descartado como decisión de
+    producto** (ver `DESIGN.md`): se eliminaron el bloque de tokens alternativo y todas las
+    clases con prefijo de tema de los componentes.
+    - **Qué hace esa línea:** redefine la variante con una consulta que por especificación
+      **nunca es verdadera**, así que ninguna utilidad con ese prefijo puede aplicarse a ningún
+      elemento — ni por clase, ni por atributo, ni por preferencia del sistema operativo.
+    - ⚠ **Qué pasa si se la borra:** la variante **no se desactiva**, vuelve a su comportamiento
+      **por defecto** en Tailwind, que es `@media (prefers-color-scheme: dark)`. O sea que
+      cualquier clase con ese prefijo pasaría a aplicarse **sola** en las máquinas configuradas
+      en modo oscuro. **Ya pasó una vez**, justo al eliminar la declaración anterior.
+    - ⚠ **Tailwind escanea los `.md` como contenido:** un ejemplo de clase con ese prefijo
+      escrito en la documentación **genera la utilidad**. Por eso no se escriben en los `.md`
+      del repo; si hay que mencionar el prefijo, va en prosa.
+35. **Los contenedores acotados de página van SIN `mx-auto`, y eso es el criterio, no un
+    olvido.** Las páginas de detalle, formulario y perfil usan `max-w-4xl space-y-6`; las de
+    índice, `space-y-6` a secas.
+    - **Por qué:** el encabezado de toda página tiene que arrancar en la **misma coordenada
+      horizontal**. Centrar los contenedores acotados corre el título hacia el centro en esas
+      páginas y lo hace **saltar** al volver a un índice. Es exactamente el problema que el
+      criterio vino a resolver.
+    - **`w-full` tampoco hace falta:** sin márgenes automáticos un bloque ya ocupa el ancho
+      disponible, y `max-w-4xl` lo recorta. Lo llevó un tiempo el patrón
+      `w-full max-w-4xl mx-auto`, que hoy sería redundante y además volvería a centrar.
+    - El encabezado sale siempre de `shared/page-header` — ver `DESIGN.md` → *Layout de página*.

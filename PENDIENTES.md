@@ -64,6 +64,16 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
 - **Recetas:** bloqueadas por certificación ANMAT. `src/app/api/recetas/route.ts` es
   stub y `src/lib/pdf/receta-template.tsx` es un placeholder vacío (esperado; dejar
   documentado que está en pausa).
+  - ⚠ **BLOQUEANTE DE PUESTA EN PRODUCCIÓN — la sección está ENLAZADA en el sidebar y su
+    página devuelve una PANTALLA VACÍA, sin ningún mensaje.** Verificado: `nav-items.ts`
+    publica `/recetas` para el rol médico (con badge "Próx."), y tanto
+    `src/app/(app)/recetas/page.tsx` como `recetas/nueva/page.tsx` son
+    `export default function Page() { return null }`. El médico hace clic en un ítem visible
+    del menú y le queda la pantalla en blanco: sin título, sin explicación, sin forma de saber
+    que la sección está en pausa por certificación. **No se puede salir a producción así.**
+    Salidas: (a) una pantalla de "sección no disponible" que explique el motivo, (b) sacar el
+    ítem del sidebar hasta que se habilite, o (c) dejarlo deshabilitado en el menú. El badge
+    "Próx." no alcanza: no evita el clic ni explica la pantalla vacía.
 - **✅ RESUELTO (migraciones 027–028, 2026-07-23) — Persistencia de PDFs + "firma viva".**
   El PDF ahora se **congela al emitir** en el bucket privado `documentos` (`pdf_path`) y las
   descargas sirven ese objeto **inmutable**; ya no se regeneran con los datos actuales del
@@ -2258,27 +2268,92 @@ Información Pública**). Hallazgos:
 
 ## Bloque C — Estético
 
-Unificación visual y pulido de interfaz. Detalle y ubicaciones en `DESIGN.md`
-(sección "⚠ Inconsistencias a unificar").
+Unificación visual y pulido de interfaz. El sistema resultante está documentado en
+`DESIGN.md`; las trampas que dejó, en `CLAUDE.md` → notas técnicas 32–35.
 
-- **Colores fuera del sistema de tokens:** `/verificar/[codigo]` (y otras vistas) usan
-  clases crudas `slate-*`, `emerald-*`, `red-*`, `amber-*` en lugar de los tokens
-  semánticos OKLCH. **Agregar tokens `success` / `warning` / `info`** y migrar esos usos.
-- **Radios hardcodeados** (`rounded-xl`, `rounded-2xl`) conviviendo con la escala de
-  tokens (`--radius-*`) en `/onboarding` y `/verificar`. Unificar a la escala.
-- **Fuente mono fantasma:** `--font-mono` → `--font-geist-mono` está referenciada en
-  `globals.css` pero **no se carga** en ningún layout. Cargar la fuente o quitar el token.
-- **`turnos.color` (HEX `#3B82F6`)** quedó en desuso frente a las clases `.categoria-*`
-  del turnero; limpiar el default o reutilizarlo coherentemente.
-- **Componentes stub sin usar** (los 12 del Bloque A) ensucian `components/ui` y demás
-  carpetas; eliminarlos también mejora la prolijidad visual del árbol de UI.
-- **Dark mode a medias:** hay un set completo de tokens `.dark` en `globals.css` pero la
-  app no expone un toggle de tema. Decidir: implementar el toggle o retirar los tokens.
-- **Contraste / accesibilidad:** verificar contraste de los tintes de categoría del
-  turnero (10–12% de opacidad) y de `muted-foreground` sobre `muted`, sobre todo en la
-  página pública de verificación.
-- **⚠ COSMÉTICO (2026-08-08, ampliado 2026-08-11) — un bloqueo creado sobre un turno que NO ocupa la
-  franja se dibuja a MEDIA FRANJA. Severidad MUY BAJA.** Efecto secundario visible del criterio de
+### ✅ CERRADOS por la tanda de pulido visual
+
+- **✅ Colores fuera del sistema de tokens.** Toda la app migró a tokens semánticos: se
+  crearon las familias `success` / `warning` / `info` (con su `-foreground`) y la variante
+  **`-strong`** para texto. Barrido final: **cero** clases de paleta cruda de Tailwind fuera
+  de `/verificar`. ⚠ **`/verificar/[codigo]` queda afuera A PROPÓSITO** — ver `DESIGN.md` →
+  *Excepciones deliberadas*. No es deuda.
+- **✅ Layout inconsistente entre secciones.** De las **22 páginas con UI** del área autenticada,
+  **21 usan `shared/page-header`** —17 directo y 4 a través del componente que renderiza su
+  contenido (los detalles de pedido, certificado y difusión, y la historia clínica)— y todas
+  siguen el mismo patrón de contenedor. La 22ª es `/sin-acceso`, una pantalla de estado vacío
+  centrada que no lleva encabezado de sección a propósito.
+  ⚠ **El diagnóstico original estaba mal en dos puntos:** daba por "consistentes" a
+  pacientes, pedidos, certificados y notas —que en realidad tenían anchos distintos entre
+  sí (`max-w-5xl`, `max-w-3xl`, sin acotar)— y **omitía por completo** las páginas de
+  detalle, formulario y perfil, más la historia clínica.
+- **✅ Fuente mono fantasma.** ⚠ **El ítem describía mal la consecuencia.** No era que
+  faltara *cargar* una fuente: `--font-mono` apuntaba a `--font-geist-mono`, una variable
+  que **no existía en ningún archivo**. Una `var()` sin definir invalida la declaración en
+  silencio, así que los ~19 usos de `font-mono` (DNI, N° de afiliado, matrícula, códigos de
+  verificación) **renderizaban en Inter**, no en monoespaciada. Resuelto apuntando a una
+  **pila del sistema**, sin cargar nada por red.
+- **✅ Radios hardcodeados.** ⚠ **El ítem apuntaba al blanco equivocado.** `rounded-xl` y
+  `rounded-2xl` **SÍ pertenecen** a la escala del proyecto: `@theme inline` redefine
+  `--radius-xl` y `--radius-2xl` sobre `--radius`. Lo que estaba realmente fuera de escala
+  eran **4 usos de `rounded` a secas** (el default de Tailwind, 0.25rem), ya llevados a
+  `rounded-sm` / `rounded-md`.
+- **✅ Componentes stub sin usar.** ⚠ **El ítem se contradecía con el propio archivo**, que
+  ya los daba por eliminados en *Limpieza de código muerto* (2026-07-23) — y con distinto
+  número: acá decía 12, allá 11. Queda **1**, a propósito: `lib/pdf/receta-template.tsx`.
+- **✅ Dark mode a medias.** **Descartado como decisión de producto**: no existe y no se va a
+  implementar. Se eliminaron el bloque de tokens alternativo, las 91 clases con prefijo de
+  tema y la declaración de la variante. ⚠ La que quedó en `globals.css` la deja **inerte**;
+  borrarla la reactivaría por preferencia del sistema operativo — ver `CLAUDE.md` → nota 34.
+- **✅ Contraste / accesibilidad (parcial).** El sistema sostiene hoy dos umbrales
+  verificados: **4.5:1 para texto** (variante `-strong`) y **3:1 para íconos** (token base).
+  ⚠ **Sigue abierto** lo que el ítem pedía puntualmente: los tintes de categoría del turnero
+  (10–12% de opacidad) y `muted-foreground` sobre `muted`.
+- **✅ Bloqueo dibujado a media franja** (el ítem cosmético de acá abajo, ampliado
+  2026-08-11). Resuelto con `slotEventOverlap={false}` en el calendario: los eventos
+  solapados se reparten el ancho en columnas limpias, sin encaballarse. Se conserva el
+  registro porque explica el porqué de esa opción.
+
+### Tareas chicas de barrido
+
+Cosas menores que no bloquean nada y conviene resolver juntas.
+
+- **`turnos.color` — eliminar la columna (cambio de MODELO DE DATOS, necesita migración).**
+  Verificado: la columna se **valida** (`colorHexSchema` en `turno.schema.ts`) y se
+  **escribe** desde `turno-form.tsx`, pero **no se lee nunca para renderizar**: el color de
+  un evento sale de su `categoria` vía las clases `.categoria-*`. Hoy hay **39 de 84 turnos**
+  con valor cargado. La decisión tomada es **eliminarla**; como es cambio de esquema, va con
+  su migración (numerar desde 048, ver nota técnica 7) y con la limpieza del schema de
+  validación y del formulario.
+- **`CERTIFICADO_TIPO_LABELS` huérfano, y DIVERGENTE de la copia viva.** Verificado:
+  `src/lib/validations/pedido.schema.ts` exporta ese mapa y **nadie lo importa** (una sola
+  aparición en todo `src/`, su propia declaración). Pero existe una **copia privada y viva**
+  en `src/lib/pdf/certificado-template.tsx` (`TIPO_LABELS`), que es la que ve el paciente
+  impresa, y **no dice lo mismo**:
+
+  | clave | huérfano (`CERTIFICADO_TIPO_LABELS`) | vivo (plantilla PDF) |
+  |---|---|---|
+  | `reposo` | Reposo | **Reposo Médico** |
+  | `otro` | Otro | **Certificado Médico** |
+
+  *(`aptitud_fisica`, `diagnostico` y `libre_deuda` coinciden.)*
+
+  ⚠ **No alcanza con borrar el huérfano.** Hay que decidir primero **qué texto lee el
+  paciente en el certificado**, y eso lo define el médico, no una limpieza de código. Recién
+  después se unifica: o el mapa vive en el schema y la plantilla lo importa, o se acepta que
+  el texto impreso sea distinto del que iría en pantalla y se documenta.
+- **El QR de pantalla arma su URL base distinto que el del PDF.**
+  `components/shared/qr-verificacion.tsx` deriva la base **solo del header `Host`**, mientras
+  que `getBaseUrl` en `lib/pdf/documentos.ts` **prioriza `NEXT_PUBLIC_SITE_URL`** y deja el
+  header como fallback — que es lo que manda la **nota técnica 11** de `CLAUDE.md`, escrita
+  justamente porque el `Host` lo controla el cliente. El riesgo acá es menor que el que
+  motivó esa nota (este QR es el del **preview en pantalla**, no el que queda congelado en el
+  PDF), pero **las dos rutas de generación no siguen el mismo criterio** y conviene alinearlas.
+
+### Registro histórico
+
+- **✅ RESUELTO — COSMÉTICO (2026-08-08, ampliado 2026-08-11) — un bloqueo creado sobre un turno que
+  NO ocupa la franja se dibujaba a MEDIA FRANJA. Severidad MUY BAJA.** Efecto secundario visible del criterio de
   solapamiento: cuando un turno no ocupa, se puede crear un bloqueo encima de él, y ahí
   **FullCalendar apila los eventos solapados** y el bloqueo se pinta con la mitad del ancho, como si
   cubriera medio horario.
@@ -2289,19 +2364,10 @@ Unificación visual y pulido de interfaz. Detalle y ubicaciones en `DESIGN.md`
     dos nuevos. Fuente única del criterio: `src/lib/agenda/solapamiento.ts` (`CLAUDE.md` → nota 23).
   - **Es solo pintura:** el bloqueo cubre el rango completo y se respeta al agendar; lo único raro es
     el ancho del evento.
-  - **Salidas posibles:** `eventOverlap` / `slotEventOverlap` en la config del calendario, o un
-    `eventOrder` que mande los bloqueos al fondo. Ver `DESIGN.md` → categorías del turnero y
-    `.fc-event-bloqueo`.
-- **Layout inconsistente entre secciones** (observado en el navegador). Las páginas del área
-  autenticada no comparten un patrón único de encabezado ni de ancho:
-  - **Correctas / de referencia:** dashboard, pacientes, turnero, pedidos y certificados —
-    ocupan el espacio disponible y su título tiene el mismo tamaño.
-  - **Difusión:** el título usa un **tamaño de fuente mayor** que el resto y muestra un
-    **ícono de altavoz** que ninguna otra sección tiene.
-  - **Notas:** consistente con el grupo de referencia.
-  - **Notificaciones y mensajes:** se ven con **márgenes laterales**, más centradas/angostas
-    que el resto.
-  - **Criterio a definir y aplicar:** (a) o **todas** las secciones llevan ícono en el título
-    —y coherente con el ícono del sidebar— o **ninguna**; (b) unificar **ancho, márgenes y
-    tamaño del título** en todas. Conviene resolverlo con el componente compartido
-    `shared/page-header` para que el patrón quede en un solo lugar.
+  - **✅ Cómo se resolvió:** `slotEventOverlap={false}` en `<FullCalendar>`. Con el default
+    (`true`) el motor de la grilla horaria **duplica el ancho** de cada columna, así que el
+    segundo evento arrancaba a mitad de franja y quedaba encimado; con `false` se reparten el
+    ancho limpio y los dos se ven completos. ⚠ **`eventOverlap` NO servía**: es una opción de
+    **interacción** (limita el arrastre), no de dibujo, y habría restringido la UI a menos de lo
+    que el servidor permite. `eventOrder` quedó en su default: una vez que ningún evento tapa a
+    otro, el orden solo decide qué columna ocupa cada uno.
