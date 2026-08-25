@@ -4,11 +4,19 @@
  * Genera un QR de verificación para pedidos y certificados.
  * Se renderiza en el servidor usando la librería `qrcode` (ya instalada).
  * La URL generada apunta a la página pública /verificar/[codigo].
+ *
+ * ⚠ La URL base sale de `getBaseUrl`, la MISMA función que usan los Route Handlers
+ * que generan el PDF — no de una derivación propia. Antes este componente leía el
+ * header `host` a secas, SIN mirar `NEXT_PUBLIC_SITE_URL`: como el `host` lo controla
+ * quien hace el request, un `Host` envenenado hacía que el QR de la pantalla
+ * apuntara a otro sitio que el del PDF. Ver nota técnica 11 de CLAUDE.md.
  */
 
 import QRCode from 'qrcode'
 import { headers } from 'next/headers'
 import { QrCode } from 'lucide-react'
+
+import { getBaseUrl } from '@/lib/pdf/documentos'
 
 interface QRVerificacionProps {
   codigo: string
@@ -16,10 +24,10 @@ interface QRVerificacionProps {
 }
 
 export async function QRVerificacion({ codigo, estado }: QRVerificacionProps) {
-  const headersList = await headers()
-  const host = headersList.get('host') ?? 'localhost:3000'
-  const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
-  const baseUrl = `${protocol}://${host}`
+  // `headers()` devuelve un `ReadonlyHeaders`, no un `NextRequest`: se le pasa a
+  // `getBaseUrl` envuelto en la forma que el helper consume. Solo se usa como
+  // FALLBACK — si `NEXT_PUBLIC_SITE_URL` está definida, el helper ni lo mira.
+  const baseUrl = getBaseUrl({ headers: await headers() })
 
   const verificationUrl = `${baseUrl}/verificar/${codigo}`
 
