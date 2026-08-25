@@ -1,0 +1,34 @@
+-- ============================================================================
+-- Migration 048 — Eliminar `turnos.color` (columna sin lectores)
+-- ============================================================================
+--
+-- ── QUÉ RESUELVE ────────────────────────────────────────────────────────────
+--   `turnos.color` era una columna ZOMBI: se validaba (`colorHexSchema`), se
+--   escribía en el INSERT del turnero y viajaba latente en el UPDATE del PATCH,
+--   pero NINGÚN código la leía para renderizar. El color de un evento del
+--   calendario sale enteramente de `turnos.categoria`, vía las clases
+--   `.categoria-*` y las variables `--categoria-*` de `globals.css`
+--   (fuente única: `src/constants/turno-categorias.ts`).
+--
+--   O sea: el sistema de categorías la reemplazó y nadie retiró la columna.
+--
+-- ── POR QUÉ SE PUEDE DROPEAR SIN MÁS ────────────────────────────────────────
+--   En la base NO hay CHECK, índice, vista, función, trigger ni política de RLS
+--   que dependa de esta columna (verificado por diagnóstico previo). El DROP no
+--   arrastra ningún otro objeto, así que va SIN `CASCADE` a propósito: si
+--   apareciera una dependencia inesperada, la migración debe FALLAR y no
+--   llevarse el objeto dependiente por delante en silencio.
+--
+--   El código de la app ya no menciona la columna: esta migración se aplica
+--   DESPUÉS del deploy que la sacó del schema Zod, del tipo TS, del INSERT y del
+--   formulario. No hay ventana en la que el código escriba una columna ausente.
+--
+-- ── IMPACTO ─────────────────────────────────────────────────────────────────
+--   Ninguno visible: el color que ve el usuario nunca salió de acá.
+--   Los valores almacenados (el DEFAULT '#3B82F6' y lo que se haya escrito) se
+--   pierden — es el punto de la migración, no un efecto colateral.
+--
+-- ⚠ IRREVERSIBLE en cuanto a datos: recrear la columna la deja vacía.
+-- ============================================================================
+
+ALTER TABLE public.turnos DROP COLUMN IF EXISTS color;

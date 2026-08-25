@@ -60,14 +60,6 @@ export const CERTIFICADO_TIPOS = [
 
 export type CertificadoTipo = (typeof CERTIFICADO_TIPOS)[number]
 
-export const CERTIFICADO_TIPO_LABELS: Record<CertificadoTipo, string> = {
-  aptitud_fisica: 'Aptitud Física',
-  reposo: 'Reposo',
-  diagnostico: 'Diagnóstico',
-  libre_deuda: 'Libre Deuda',
-  otro: 'Otro',
-}
-
 export const certificadoSchema = z
   .object({
     paciente_id: z.string().uuid({ message: 'Seleccioná un paciente válido' }),
