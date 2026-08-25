@@ -22,7 +22,6 @@ import React from 'react'
 import { renderToBuffer } from '@react-pdf/renderer'
 import QRCode from 'qrcode'
 import type { DocumentProps } from '@react-pdf/renderer'
-import type { NextRequest } from 'next/server'
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { createClient as createServerClient } from '@/lib/supabase/server'
@@ -53,16 +52,37 @@ const TABLA_POR_TIPO: Record<DocumentoTipo, 'pedidos' | 'certificados' | 'receta
 export type MedicoFirmante = EmisorSnapshot
 
 /**
+ * Lo ÚNICO que `getBaseUrl` necesita de su argumento: algo que tenga `headers`
+ * con un `.get()`. Es un tipo ESTRUCTURAL a propósito, y no `NextRequest`.
+ *
+ * ⚠ Los dos productores de cabeceras del proyecto son paquetes DISTINTOS:
+ *   · `NextRequest` de `next/server`  → Route Handlers (los 4 endpoints de PDF).
+ *   · `ReadonlyHeaders` de `next/headers` → Server Components (el QR de pantalla).
+ * Atar la firma a uno de los dos deja al otro afuera y obliga a un cast o a
+ * duplicar la derivación — que es exactamente el bug que este tipo cierra. Es el
+ * mismo criterio que el proyecto ya aplica al cliente de Supabase: se tipa por lo
+ * que la función consume, no por el paquete que lo produce.
+ */
+type ConCabeceras = { headers: Pick<Headers, 'get'> }
+
+/**
  * URL base para el QR de verificación. Prioriza NEXT_PUBLIC_SITE_URL (fuente de
- * verdad en Vercel), cae al header `host` del request solo si no está definida.
+ * verdad en Vercel), cae al header `host` solo si no está definida.
  * Esto cierra el riesgo del `Host` envenenado que quedaría grabado en un PDF
  * congelado (ver diagnóstico, Eje 4.4).
+ *
+ * ⚠ FUENTE ÚNICA: la usan las DOS rutas que arman la URL de `/verificar/[codigo]`
+ * — el PDF (Route Handlers, pasan el `NextRequest`) y el QR de pantalla
+ * (`components/shared/qr-verificacion.tsx`, pasa `{ headers: await headers() }`).
+ * No derivar la base a partir de cabeceras en ningún otro lado: el componente de
+ * pantalla tenía su propia copia que NO miraba la env var, así que con un `Host`
+ * envenenado el QR de la pantalla y el del PDF apuntaban a sitios distintos.
  */
-export function getBaseUrl(req?: NextRequest): string {
+export function getBaseUrl(fuente?: ConCabeceras): string {
   const fromEnv = process.env.NEXT_PUBLIC_SITE_URL
   if (fromEnv) return fromEnv.replace(/\/+$/, '') // sin barra(s) final(es)
 
-  const host = req?.headers.get('host') ?? 'localhost:3000'
+  const host = fuente?.headers.get('host') ?? 'localhost:3000'
   const protocol =
     host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
   return `${protocol}://${host}`
