@@ -41,7 +41,6 @@ export interface Turno {
   motivo: string | null
   notas: string | null
   estado: TurnoEstado
-  color: string | null                   // hex color para el calendario
   recordatorio_enviado: boolean
   medico_id: string                      // tenant key — agenda del médico
   agendado_por: string                   // quien creó el turno (médico o asistente)
@@ -93,7 +92,6 @@ export interface TurnoInsert {
   motivo?: string | null
   notas?: string | null
   estado?: TurnoEstado
-  color?: string | null
   categoria?: TurnoCategoria
   origen?: 'manual' | 'desde_hc'
   consulta_id?: string | null

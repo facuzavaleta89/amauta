@@ -100,8 +100,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
       estado: 'pendiente',
       categoria: 'turno_medico',
       origen: 'manual',
-      consulta_id: undefined,
-      color: undefined
+      consulta_id: undefined
     }
   })
 
@@ -188,8 +187,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
           estado: initialData.estado || 'pendiente',
           categoria: initialData.categoria || 'turno_medico',
           origen: initialData.origen || 'manual',
-          consulta_id: initialData.consulta_id || undefined,
-          color: initialData.color
+          consulta_id: initialData.consulta_id || undefined
         })
         // Pre-fill search term con las DOS fuentes posibles del nombre del paciente:
         // los turnos creados desde el formulario guardan `paciente_nombre_libre`, pero los
@@ -208,8 +206,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
           estado: 'pendiente',
           categoria: 'turno_medico',
           origen: 'manual',
-          consulta_id: undefined,
-          color: undefined
+          consulta_id: undefined
         })
       }
     } else {

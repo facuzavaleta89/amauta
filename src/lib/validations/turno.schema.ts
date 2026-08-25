@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { isValidDateStr, colorHexSchema } from './shared'
+import { isValidDateStr } from './shared'
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 const MIN_DURATION_MS = 10 * 60 * 1000 // 10 minutos mínimo
@@ -32,8 +32,6 @@ export const turnoBaseSchema = z.object({
     .enum(['manual', 'desde_hc'])
     .default('manual'),
   consulta_id: z.string().uuid().optional().nullable(),
-  // Valida que sea un color hex válido (#RGB o #RRGGBB) o vacío/null
-  color: colorHexSchema,
 })
 
 // ── turnoSchema (creación — campos requeridos + cross-field) ──────────────────
@@ -106,7 +104,6 @@ export const turnoUpdateWithDatesSchema = z
       .optional(),
     motivo: z.string().max(500).optional().nullable(),
     notas: z.string().max(1000).optional().nullable(),
-    color: colorHexSchema,
   })
   .superRefine((data, ctx) => {
     // Solo aplicar si se envían ambas fechas en el mismo request

@@ -138,7 +138,6 @@ export async function POST(request: NextRequest) {
         categoria:            t.categoria ?? 'turno_medico',
         origen:               t.origen ?? 'manual',
         consulta_id:          t.consulta_id ?? null,
-        color:                t.color ?? null,
         medico_id:            tenantMedicoId,
         agendado_por:         user.id,
       })

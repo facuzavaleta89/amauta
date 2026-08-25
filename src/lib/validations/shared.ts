@@ -25,14 +25,6 @@ export const requiredDateSchema = z
 /** Schema reutilizable para IDs UUID (usado en path params y foreign keys) */
 export const uuidSchema = z.string().uuid('ID inválido')
 
-// ── Color hex ─────────────────────────────────────────────────────────────────
-/** Acepta colores hex como #fff o #1a2b3c, o cadena vacía / null */
-export const colorHexSchema = z
-  .string()
-  .regex(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/, 'Color inválido (usa formato #RGB o #RRGGBB)')
-  .optional()
-  .nullable()
-
 // ── Texto libre con límite ────────────────────────────────────────────────────
 /** Texto corto (nombre, título) */
 export const shortTextSchema = (max = 200) =>
