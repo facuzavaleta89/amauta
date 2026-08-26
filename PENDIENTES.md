@@ -519,7 +519,8 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - ⚠ **ESE FLUJO YA NO RIGE (2026-08-23).** La parte de *"suelta `MIGRACION-NN-…` en la raíz"*
     quedó sin efecto: las 26 copias se movieron a
     `supabase/migrations/_historico/_copias-ejecutables/` y no se generan más. Hoy una migración
-    nueva se escribe **solo** versionada, en `supabase/migrations/`, numerando desde la **048**.
+    nueva se escribe **solo** versionada, en `supabase/migrations/`, numerando desde la **049**
+    (la **048** ya existe y está aplicada: el drop de `turnos.color`).
     Lo que **sí sigue rigiendo** de este párrafo, y con más fuerza, es la **verificación contra la
     base real, no contra `schema.sql`** — que ahora además se hace sin intermediarios (ver
     `CLAUDE.md` → *Acceso directo a la base*). El texto de arriba se conserva porque describe cómo
@@ -1287,6 +1288,14 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   **solo lee `nombre_completo`**, y sus hijos reciben `pacienteId`, no el objeto. Se recortaron los
   4 campos muertos, la llamada al helper, la aserción, y el `.select()`, que pasó de 8 columnas más
   el join `obras_sociales(nombre)` a **`'id, nombre_completo, archivado_at'`**.
+- **✅ RESUELTO (2026-08-25) — dos símbolos exportados sin consumidores.** La tanda del barrido
+  eliminó, además de la columna `turnos.color` (ver Bloque C):
+  - **`colorHexSchema`** (`lib/validations/shared.ts`), con su comentario y su separador de
+    sección. Su **único** consumidor era el schema de turnos, así que quedó huérfano en el mismo
+    momento en que se sacó el campo `color`. Se borró **en la misma tanda**, no "para después".
+  - **`CERTIFICADO_TIPO_LABELS`** (`lib/validations/pedido.schema.ts`), con **cero importadores**
+    en todo el repositorio. ⚠ **La copia privada `TIPO_LABELS` de la plantilla PDF NO se tocó** —
+    es la viva. Detalle y la divergencia latente entre las dos, en Bloque C.
 - **Queda 1 stub, a propósito:** `src/lib/pdf/receta-template.tsx`. Se **mantuvo** como
   marcador del template de recetas, bloqueado por ANMAT pero a implementar cuando se
   certifique. Eliminarlo o implementarlo cuando se desbloquee la funcionalidad.
@@ -2174,8 +2183,12 @@ Información Pública**). Hallazgos:
   repo; A VERIFICAR en producción, DevTools → Application → Cookies).
 
 ### Transporte, cabeceras y cifrado
-- **⚠ Endurecer la CSP — Fases 1a y 1b HECHAS y en producción; la Fase 2 (sacar
-  `script-src 'unsafe-inline'`) está BLOQUEADA.** Estado al 2026-07-29:
+- **⏸ Endurecer la CSP — Fases 1a y 1b HECHAS y en producción; la Fase 2 (sacar
+  `script-src 'unsafe-inline'`) queda CONGELADA.** Estado al **2026-08-25**:
+  > **DECISIÓN TOMADA (2026-08-25): el trabajo sobre la CSP se congela.** La CSP **permisiva
+  > actual sigue vigente y sigue protegiendo**; la endurecida sigue en **report-only** y **NO
+  > debe activarse**. La bloquean **DOS cosas independientes** —abajo—, y una de ellas dejaría
+  > la aplicación **inaccesible**. No es un "falta un empujón": es un alto deliberado.
   - **✅ Fase 1a — enforcement (`next.config.ts`, 2026-07-28).** Se agregaron `object-src 'none'`
     y **`base-uri 'self'` + `form-action 'self'`** — estas dos **no heredan de `default-src`**, así
     que hasta ahora estaban **sin restricción**: era un agujero real (inyección de `<base>`,
@@ -2193,30 +2206,53 @@ Información Pública**). Hallazgos:
     `script-src 'self' 'nonce-…' 'strict-dynamic'` **sin `'unsafe-inline'`**; el resto de las
     directivas copia la enforcement. Sin `report-uri`/`report-to`: las violaciones se leen en la
     consola del navegador.
-  - **⚠ BLOQUEANTE de la Fase 2 — el nonce NO se inyecta en los `<script>` en producción.**
-    Síntoma **confirmado** contra Vercel: la cabecera report-only llega **con** nonce, pero el
-    HTML sale con **0** `<script nonce=`, también en **rutas dinámicas** (p. ej.
-    `/verificar/[codigo]`: 17 `<script>`, ninguno nonceado). Como `'strict-dynamic'` hace que el
-    navegador **ignore `'self'`**, esos scripts —aunque sean del propio origen— se reportan como
-    violación: **todas las rutas reportan `script-src`**. Mientras esto no se resuelva, **el
-    enforcement no se puede activar**.
-  - **Causa ABIERTA (a investigar). NO es Turbopack — quedó descartado:** el **mismo build** con
-    `next start` **local** sí inyecta el nonce (20 `<script nonce=`). **Esa es la pista
-    principal: en local funciona, en Vercel no** → lo que cambia es la plataforma, no el bundler.
-    **Hipótesis a investigar:** la propagación de los **request headers del middleware a la
-    función de render** en Vercel. El middleware corre como **Edge Function separada** de la
-    función que renderiza; `NextResponse.next({ request: { headers } })` propaga los headers por
-    el mecanismo interno **`x-middleware-override-headers`**, y ése es el eslabón que parece no
-    cruzar el límite middleware→render. Next extrae el nonce del **request header**
-    (`node_modules/next/dist/server/app-render/app-render.js:166`): si el header no llega, no hay
-    nonce que inyectar — exactamente lo observado.
+  - **⚠⚠ SON DOS BLOQUEANTES INDEPENDIENTES, NO UNO CON UN SUB-PENDIENTE. Esta lista decía lo
+    contrario y estaba AL REVÉS** — trataba lo de las rutas prerenderizadas como algo
+    "subordinado" y afirmaba que arreglarlo "no destraba nada mientras el nonce no se propague".
+    **Es exactamente al revés: el segundo bloqueante sobrevive al primero.** Aunque la plataforma
+    se arreglara mañana, `/login` y `/registro` seguirían **sin nonce**, y con `'strict-dynamic'`
+    activo el navegador **ignora `'self'`** → sus scripts quedarían **BLOQUEADOS**. `/login` es la
+    **puerta de entrada de la aplicación**: **activar el enforcement hoy la dejaría inaccesible.**
+
+  - **BLOQUEANTE 1 — el nonce se pierde entre el middleware y el renderizador, EN LA PLATAFORMA.
+    El código del proyecto es correcto.** Medición del **2026-08-25**, contra producción y contra
+    local:
+    | Medición | `<script>` totales | con nonce |
+    |---|---|---|
+    | Ruta **dinámica**, `next start` **local** | 16 | **16** |
+    | **La misma ruta dinámica**, en **producción** | 16 | **0** |
+    - **Descartado que sea CACHÉ:** la respuesta de producción llegó con **indicación explícita de
+      fallo de caché y edad cero** — o sea **generada en el momento** para ese pedido, no servida
+      de un almacenamiento intermedio.
+    - **Descartado que el diferenciador sea el TARGET DE BUILD:** se compiló **con salida
+      standalone y sin ella**, y el HTML resultante fue **idéntico byte por byte** en las dos
+      rutas probadas.
+    - **Turbopack ya estaba descartado** (el mismo build local sí inyecta el nonce).
+    - **Conclusión:** el eslabón que falla es la propagación de los **request headers del
+      middleware a la función de render** en la plataforma de despliegue. El middleware corre como
+      **Edge Function separada**; `NextResponse.next({ request: { headers } })` propaga por el
+      mecanismo interno **`x-middleware-override-headers`**, y Next extrae el nonce del **request
+      header** (`node_modules/next/dist/server/app-render/app-render.js:166`): si el header no
+      cruza, no hay nonce que inyectar. **No hay nada que arreglar en este repositorio.**
+  - **BLOQUEANTE 2 — `/login` y `/registro` se PRERENDERIZAN en build time, y por eso NUNCA van a
+    recibir nonce. NO es un fallo de plataforma: es POR DISEÑO.** Un documento congelado en build
+    **no puede** llevar un valor que se genera **por request**. Es una propiedad del
+    prerenderizado, no un bug — y por lo tanto **no se arregla esperando a que la plataforma
+    mejore**. La salida documentada es forzar esas rutas a dinámicas con `await connection()` en
+    cada page
+    (`node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md:195-217`), a costa
+    de perder su prerenderizado. **Es una decisión pendiente, no una tarea mecánica.**
   - **Alternativas a explorar si el nonce no se puede propagar:** CSP por **hashes** de los
-    scripts, o **`experimental.sri`** (Subresource Integrity generada por Next).
-  - **Sub-pendiente subordinado (secundario al anterior): `/login` y `/registro` son estáticas.**
-    Se prerenderizan en build time —cuando no hay request— así que sus `<script>` no pueden
-    recibir nonce; la solución documentada es `await connection()` en cada page
-    (`node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md:195-217`). **Pero
-    mientras el nonce no se propague en Vercel, arreglar esas dos rutas no destraba nada.**
+    scripts, o **`experimental.sri`** (Subresource Integrity generada por Next). ⚠ **Las dos
+    esquivan el bloqueante 1 pero también el 2**, que es su principal atractivo: no dependen de
+    que nada se genere por request.
+  - **⚠ Nota permanente de MÉTODO: para contar `<script>` nonceados, la opción de CONTEO de grep
+    MIENTE.** El HTML que emite Next viene **en una sola línea**, y esa opción cuenta **líneas
+    que coinciden**, no coincidencias: devuelve siempre **0 o 1**. Así, "ningún script nonceado"
+    y "los 16 nonceados" **dan el mismo número**, y dos mediciones opuestas parecen idénticas.
+    **Costó tiempo real en este diagnóstico.** Se cuenta bien con la opción de
+    **solo-coincidencias** canalizada a un contador de líneas. Vale para cualquier conteo sobre
+    HTML servido. Registrado en `CLAUDE.md` → **nota técnica 38**.
   - **Nota permanente: `style-src 'unsafe-inline'` es IRREDUCTIBLE — no intentar sacarlo.**
     Radix/shadcn (y Sonner, FullCalendar) fijan **atributos `style=""`** para posicionar
     popovers/selects/diálogos, y **los nonces NO aplican a atributos `style`** (solo a elementos
@@ -2305,10 +2341,24 @@ Unificación visual y pulido de interfaz. El sistema resultante está documentad
   implementar. Se eliminaron el bloque de tokens alternativo, las 91 clases con prefijo de
   tema y la declaración de la variante. ⚠ La que quedó en `globals.css` la deja **inerte**;
   borrarla la reactivaría por preferencia del sistema operativo — ver `CLAUDE.md` → nota 34.
-- **✅ Contraste / accesibilidad (parcial).** El sistema sostiene hoy dos umbrales
-  verificados: **4.5:1 para texto** (variante `-strong`) y **3:1 para íconos** (token base).
-  ⚠ **Sigue abierto** lo que el ítem pedía puntualmente: los tintes de categoría del turnero
-  (10–12% de opacidad) y `muted-foreground` sobre `muted`.
+- **✅ Contraste / accesibilidad — AHORA COMPLETO (medición del 2026-08-25).** El sistema
+  sostiene dos umbrales verificados: **4.5:1 para texto** (variante `-strong`) y **3:1 para
+  íconos** (token base). Lo que quedaba abierto —los tintes de categoría del turnero y el texto
+  secundario sobre fondo tenue— **se midió con instrumento validado: 13 pares, 12 conformes.**
+  - **La única no conforme: la barra de acento y el punto de la categoría `recordatorio`**,
+    contra su propio tinte de fondo → **2.23–2.27** frente a un umbral de **3:1**. Falla porque
+    ese **ámbar es el color más claro de las cinco categorías**.
+  - **DECISIÓN TOMADA: no se cambia el color.** Bajo el criterio de contraste de **elementos no
+    textuales**, un componente cuya información **está disponible por otra vía** no constituye
+    fallo: el evento lleva además **ícono y texto**, ambos **por encima de 7:1**.
+  - ⚠⚠ **CONSECUENCIA QUE HAY QUE CONOCER ANTES DE TOCAR EL TURNERO: el ícono de categoría NO es
+    decorativo — es lo que sostiene esa conformidad.** Quien lo elimine por criterio visual
+    convierte una excepción tolerada en un **fallo real**, y **sin ningún error visible**. Está
+    documentado donde lo va a leer quien toque el color: `DESIGN.md` → *Colores de las categorías
+    del turnero*, junto a la tabla; y `CLAUDE.md` → **nota técnica 37**.
+  - ⚠ **Dato secundario con poca holgura:** el **texto secundario sobre fondo tenue** da **4.83**
+    contra un umbral de **4.5**. Conforme, pero por 0.33: **si se toca la paleta neutra hay que
+    volver a medirlo.**
 - **✅ Bloqueo dibujado a media franja** (el ítem cosmético de acá abajo, ampliado
   2026-08-11). Resuelto con `slotEventOverlap={false}` en el calendario: los eventos
   solapados se reparten el ancho en columnas limpias, sin encaballarse. Se conserva el
@@ -2318,37 +2368,67 @@ Unificación visual y pulido de interfaz. El sistema resultante está documentad
 
 Cosas menores que no bloquean nada y conviene resolver juntas.
 
-- **`turnos.color` — eliminar la columna (cambio de MODELO DE DATOS, necesita migración).**
-  Verificado: la columna se **valida** (`colorHexSchema` en `turno.schema.ts`) y se
-  **escribe** desde `turno-form.tsx`, pero **no se lee nunca para renderizar**: el color de
-  un evento sale de su `categoria` vía las clases `.categoria-*`. Hoy hay **39 de 84 turnos**
-  con valor cargado. La decisión tomada es **eliminarla**; como es cambio de esquema, va con
-  su migración (numerar desde 048, ver nota técnica 7) y con la limpieza del schema de
-  validación y del formulario.
-- **`CERTIFICADO_TIPO_LABELS` huérfano, y DIVERGENTE de la copia viva.** Verificado:
-  `src/lib/validations/pedido.schema.ts` exporta ese mapa y **nadie lo importa** (una sola
-  aparición en todo `src/`, su propia declaración). Pero existe una **copia privada y viva**
-  en `src/lib/pdf/certificado-template.tsx` (`TIPO_LABELS`), que es la que ve el paciente
-  impresa, y **no dice lo mismo**:
+- **✅ RESUELTO (2026-08-25, migración 048) — se eliminó la columna `turnos.color`.**
+  Era una **columna zombi**: se **validaba** (`colorHexSchema`) y se **escribía**, pero **ningún
+  código la leía para renderizar** — el color de un evento sale de su `categoria`. En la base no
+  había CHECK, índice, vista, función ni política que dependiera de ella, así que el `DROP COLUMN`
+  no arrastró nada (va **sin `CASCADE`** a propósito: una dependencia inesperada debe hacer
+  fallar la migración, no llevarse el objeto por delante).
+  - **Qué salió del código, además de la columna:** el campo en el schema de validación de turnos
+    (sus **dos** ocurrencias — la del schema base y la del de actualización), sus **dos**
+    declaraciones de tipo, la línea del insert del endpoint del turnero, las **tres** semillas del
+    formulario y el helper **`colorHexSchema`**, que quedó sin consumidores.
+  - ⚠ **El PATCH de un turno individual NO necesitó tocarse**, aunque persistía la columna: hacía
+    `.update()` con el objeto **entero** devuelto por el schema de actualización, así que la
+    escritura latente **desapareció sola** al sacar el campo de ahí. Vale la pena recordarlo: una
+    columna puede escribirse desde un archivo que **no la nombra en ninguna línea**.
+  - **Intactos:** el sistema de categorías completo (variables y clases de categoría en
+    `globals.css`, `constants/turno-categorias.ts`, el selector del formulario) y el array de
+    tipos de certificado.
+  - Documentado en `CLAUDE.md` → nota técnica 7 (numeración) y `DESIGN.md` → *Colores de las
+    categorías del turnero*.
+- **✅ RESUELTO (2026-08-25) — se eliminó el mapa huérfano `CERTIFICADO_TIPO_LABELS`.**
+  `src/lib/validations/pedido.schema.ts` lo exportaba y **nadie lo importaba** (una sola
+  aparición en todo el repo: su propia declaración). Se borró **solo el huérfano**; la copia
+  privada y viva `TIPO_LABELS` de `src/lib/pdf/certificado-template.tsx` **no se tocó**, igual
+  que el array de tipos y el tipo TS que deriva de él, los dos en uso.
+  - **⚠ La objeción que este ítem levantaba —"hay que decidir primero qué texto lee el paciente"—
+    resultó NO APLICABLE hoy, por un motivo que el ítem no registraba:** verificado que
+    **`certificados.tipo` no se carga desde ningún formulario**, que el schema lo declara
+    **opcional y de redacción libre**, y que **todos los certificados existentes lo tienen en
+    NULL**. Con `tipo` nulo la plantilla resuelve cadena vacía, así que **la etiqueta de tipo
+    nunca se imprime**: borrar el mapa exportado no pudo cambiar nada de lo que ve un paciente.
+  - **⚠ Pero la divergencia sigue latente y hay que resolverla SI ALGUNA VEZ se habilita la carga
+    del tipo desde la UI**, porque los dos mapas **no decían lo mismo**:
 
-  | clave | huérfano (`CERTIFICADO_TIPO_LABELS`) | vivo (plantilla PDF) |
-  |---|---|---|
-  | `reposo` | Reposo | **Reposo Médico** |
-  | `otro` | Otro | **Certificado Médico** |
+    | clave | huérfano (ya eliminado) | vivo (plantilla PDF) |
+    |---|---|---|
+    | `reposo` | Reposo | **Reposo Médico** |
+    | `otro` | Otro | **Certificado Médico** |
 
-  *(`aptitud_fisica`, `diagnostico` y `libre_deuda` coinciden.)*
-
-  ⚠ **No alcanza con borrar el huérfano.** Hay que decidir primero **qué texto lee el
-  paciente en el certificado**, y eso lo define el médico, no una limpieza de código. Recién
-  después se unifica: o el mapa vive en el schema y la plantilla lo importa, o se acepta que
-  el texto impreso sea distinto del que iría en pantalla y se documenta.
-- **El QR de pantalla arma su URL base distinto que el del PDF.**
-  `components/shared/qr-verificacion.tsx` deriva la base **solo del header `Host`**, mientras
-  que `getBaseUrl` en `lib/pdf/documentos.ts` **prioriza `NEXT_PUBLIC_SITE_URL`** y deja el
-  header como fallback — que es lo que manda la **nota técnica 11** de `CLAUDE.md`, escrita
-  justamente porque el `Host` lo controla el cliente. El riesgo acá es menor que el que
-  motivó esa nota (este QR es el del **preview en pantalla**, no el que queda congelado en el
-  PDF), pero **las dos rutas de generación no siguen el mismo criterio** y conviene alinearlas.
+    *(`aptitud_fisica`, `diagnostico` y `libre_deuda` coincidían.)* Qué texto lee el paciente lo
+    define **el médico**, no una limpieza de código. Queda registrado en `CLAUDE.md` → regla de
+    negocio 5.
+- **✅ RESUELTO (2026-08-25) — el QR de pantalla y el del PDF comparten una sola fuente de
+  verdad.** `components/shared/qr-verificacion.tsx` derivaba la base **solo del header `Host`**,
+  ignorando `NEXT_PUBLIC_SITE_URL`, mientras que `getBaseUrl` prioriza la env var (lo que manda la
+  **nota técnica 11**, escrita justamente porque el `Host` lo controla el cliente). Ahora el
+  componente **importa y usa `getBaseUrl`**: no hay dos derivaciones, hay una función.
+  - **La firma del helper se amplió a un tipo ESTRUCTURAL** —cualquier objeto con cabeceras que
+    tengan un método de lectura— en vez del tipo request de Next. Así acepta **tanto** el request
+    de un Route Handler **como** las cabeceras de un Server Component, **sin casts** y **sin tocar
+    los 4 llamadores existentes**. Detalle y justificación en `CLAUDE.md` → **nota técnica 36**.
+  - ⚠ **LÍMITE, y no es menor: esto corrige el QR de PANTALLA, que se recalcula en cada render.
+    Los PDF YA EMITIDOS conservan el QR grabado al momento de emisión y NO se regeneran** (regla
+    de negocio 5: el PDF congelado es inmutable). **No hubo backfill.** Un documento emitido con
+    una base incorrecta sigue como está; lo que manda sobre el estado es igual la página
+    `/verificar/[codigo]`, y el código textual permite verificarlo a mano.
+  - ⚠ **Observación abierta, señalada y NO resuelta:** `getBaseUrl` vive en el módulo de
+    utilidades de **PDF**, que se declara a sí mismo **pesado y solo-servidor** (usa el admin
+    client y renderiza el motor de PDF), pero **ya no es un helper de PDF** — ahora lo consume un
+    componente de pantalla. Mudarlo a un módulo neutro sería **mecánico** (no tiene ninguna
+    dependencia del resto de ese archivo: se muda entero y quedan 5 imports que reapuntar), pero
+    **es otra tarea y no se hizo**.
 
 ### Registro histórico
 

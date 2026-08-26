@@ -41,8 +41,10 @@
 --
 -- QUÉ ES
 --   Un archivo único que, corrido sobre un proyecto Supabase NUEVO Y VACÍO, produce
---   el esquema que hoy tiene producción. Reemplaza a la secuencia 001–047 como punto
---   de partida. Las 49 migraciones históricas se conservan en `_historico/` (ver su
+--   el esquema que hoy tiene producción. Reemplaza a la secuencia 001–048 como punto
+--   de partida — la 048 (drop de `turnos.color`) YA ESTÁ INCORPORADA acá, así que un
+--   entorno nuevo NO tiene que correrla aparte.
+--   Las 49 migraciones históricas se conservan en `_historico/` (ver su
 --   README): son el registro de las decisiones del proyecto, no un script ejecutable.
 --
 -- ⚠ NO SE APLICA A PRODUCCIÓN. Producción ya tiene este esquema. Este archivo existe
@@ -472,6 +474,9 @@ CREATE TABLE IF NOT EXISTS public.evoluciones (
 
 -- ── turnos ────────────────────────────────────────────────────────────────────
 -- Agenda. `consulta_id` liga el turno a la consulta que lo originó (origen='desde_hc').
+-- ⚠ SIN columna `color`: la dropeó la migración 048 (ya aplicada a producción). Era
+--   una columna sin lectores — el color del evento sale de `categoria`. Este baseline
+--   refleja el estado POSTERIOR a esa migración, así que no debe recrearla.
 CREATE TABLE IF NOT EXISTS public.turnos (
   id                    UUID NOT NULL DEFAULT extensions.uuid_generate_v4(),
   paciente_id           UUID,
@@ -481,7 +486,6 @@ CREATE TABLE IF NOT EXISTS public.turnos (
   motivo                TEXT,
   notas                 TEXT,
   estado                public.turno_estado NOT NULL DEFAULT 'pendiente'::public.turno_estado,
-  color                 TEXT DEFAULT '#3B82F6',
   recordatorio_enviado  BOOLEAN DEFAULT false,
   agendado_por          UUID NOT NULL,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2292,7 +2296,8 @@ SELECT setval('public.obras_sociales_id_seq', (SELECT MAX(id) FROM public.obras_
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- FIN DEL BASELINE
 -- ═══════════════════════════════════════════════════════════════════════════════
--- QUÉ NUMERAR DESPUÉS: las migraciones nuevas siguen desde 048. Este archivo es 000
+-- QUÉ NUMERAR DESPUÉS: las migraciones nuevas siguen desde 049 (la 048 ya está
+-- incorporada en este archivo). Este archivo es 000
 -- para que ordene ANTES que todo el historial y no colisione con la 001.
 --
 -- ⚠ ESTE ARCHIVO NO SE APLICÓ NUNCA y la verificación fue por COMPARACIÓN, no por

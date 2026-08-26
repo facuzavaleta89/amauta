@@ -46,8 +46,8 @@ cp .env.example .env.local
 #   Corré supabase/migrations/000_baseline.sql sobre tu proyecto Supabase NUEVO Y VACÍO
 #   (SQL Editor del dashboard, como postgres). Es un archivo único que recrea el esquema
 #   completo: tablas, tipos, funciones, triggers, políticas RLS, índices, los buckets de
-#   Storage y el catálogo de obras sociales. Después van las migraciones 048 en adelante,
-#   si las hubiera.
+#   Storage y el catálogo de obras sociales. Después van las migraciones 049 en adelante,
+#   si las hubiera: la 048 (drop de turnos.color) ya está incorporada en el baseline.
 #   ⚠ EL BASELINE NUNCA SE EJECUTÓ CONTRA NINGUNA BASE: está comparado objeto por objeto
 #   contra producción, pero comparar no es verificar. Mientras siga así, el entorno que
 #   levantes con él NO es equivalente a producción. El aviso completo —el riesgo concreto
