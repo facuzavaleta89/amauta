@@ -30,7 +30,8 @@
 -- ============================================================================
 -- Este archivo es un SNAPSHOT del estado FINAL del esquema de la base de datos,
 -- reconstruido a partir de las migraciones en supabase/migrations/ (001→047, hoy
--- archivadas en supabase/migrations/_historico/).
+-- archivadas en supabase/migrations/_historico/) MÁS la 048, que vive suelta al lado
+-- del baseline y ya está aplicada a producción.
 -- Sirve como referencia y lectura rápida del modelo de datos completo.
 --
 -- Migraciones recientes reflejadas: 022 (consultas.campos_extra), 023 (Realtime:
@@ -473,6 +474,9 @@ CREATE INDEX idx_evoluciones_paciente_fecha ON public.evoluciones(paciente_id, f
 -- Agenda de turnos. medico_id = tenant key. Las columnas categoria/origen/
 -- consulta_id son del Bloque 4 y las versionó la migración 030 (junto con sus
 -- tres CHECK, incluido check_paciente_id_required_for_turno_medico).
+-- ⚠ La migración 048 DROPEÓ la columna `color` (TEXT DEFAULT '#3B82F6'). No la
+--   leía nadie: el color de un evento se deriva enteramente de `categoria`. No
+--   volver a agregarla — ver CLAUDE.md → nota técnica 36.
 CREATE TABLE public.turnos (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   paciente_id   UUID REFERENCES public.pacientes(id) ON DELETE SET NULL,
@@ -482,7 +486,6 @@ CREATE TABLE public.turnos (
   motivo        TEXT,
   notas         TEXT,
   estado        turno_estado NOT NULL DEFAULT 'pendiente',
-  color         TEXT DEFAULT '#3B82F6',
   recordatorio_enviado BOOLEAN DEFAULT false,
   medico_id     UUID NOT NULL REFERENCES public.profiles(id),  -- tenant key
   agendado_por  UUID NOT NULL REFERENCES public.profiles(id),

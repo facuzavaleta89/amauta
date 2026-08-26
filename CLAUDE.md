@@ -298,6 +298,16 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
    estado actual en `/verificar/[codigo]`. Al descargar un documento revocado, la UI **avisa**
    con un diálogo (el PDF servido es el original, sin marca de anulación). Los datos del médico
    del documento salen del **`emisor_snapshot`** (ver regla 11), no de `profiles` en vivo.
+   ⚠ **`certificados.tipo` es hoy un campo MUERTO en la práctica, y conviene saberlo antes de
+   tocarlo** (verificado 2026-08-25): **ningún formulario lo carga**, el schema lo declara
+   **opcional y de redacción libre**, y **todos los certificados existentes lo tienen en NULL**.
+   Consecuencia: la **etiqueta de tipo nunca se imprime** — la plantilla PDF la resuelve con su
+   mapa privado `TIPO_LABELS`, que con un `tipo` nulo devuelve cadena vacía. Por eso el mapa
+   exportado `CERTIFICADO_TIPO_LABELS` se pudo eliminar sin que cambiara nada de lo que ve el
+   paciente. **Si alguna vez se habilita la carga del tipo desde la UI, hay que decidir primero
+   qué texto lee el paciente**: el mapa vivo de la plantilla y el que existía en el schema **no
+   decían lo mismo** (`reposo` → "Reposo Médico" vs "Reposo"; `otro` → "Certificado Médico" vs
+   "Otro"). Eso lo define el médico, no una limpieza de código.
 6. **Firma:** solo el médico tiene `firma_url`; los asistentes no pueden firmar.
 7. **Recetas:** solo el médico las ve; la creación está bloqueada (ANMAT pendiente).
 8. **Asistente sin vínculo** → redirigido a onboarding, no puede usar la app.
@@ -672,9 +682,8 @@ Dos frentes independientes:
    `src/constants/obra-sociales.ts` y una prop muerta de la página de historia clínica, que además
    sumó filtro de tenant a la query del paciente.
 
-**MENSAJERÍA — cuatro tandas, migraciones 046–047** (2026-08-21/22). **047 es la última migración
-aplicada.** Cierra el último hueco de RLS del esquema, cambia el orden de la bandeja y termina con
-el deep-link mudo:
+**MENSAJERÍA — cuatro tandas, migraciones 046–047** (2026-08-21/22). Cierra el último hueco de
+RLS del esquema, cambia el orden de la bandeja y termina con el deep-link mudo:
 1. **Seguridad de las server actions (sin migración).** Todas las actions del dominio
    —`obtenerBandeja`, `obtenerHilo`, `eliminarMensaje` (`(app)/mensajes/actions.ts`) y
    `enviarMensaje`, `marcarMensajeLeido`, `obtenerUsuariosTenant`, `contarMensajesNoLeidos`,
@@ -714,12 +723,32 @@ el deep-link mudo:
    **el mismo texto**, a propósito, para que nadie deduzca qué ids existen probando. El hilo traído
    por id **no se agrega a la lista** de la bandeja. Ver **nota técnica 20**.
 
+**BARRIDO DE CÓDIGO MUERTO Y ALINEACIÓN DEL QR — tres tandas, migración 048** (2026-08-25).
+**048 es la última migración aplicada.** Nada de esto cambia comportamiento observable:
+1. **Migración 048 — se dropeó `turnos.color`.** Era una **columna zombi**: se validaba y se
+   escribía, pero **ningún código la leía para renderizar** — el color de un evento sale
+   enteramente de `turnos.categoria` (clases y variables de categoría en `globals.css`). En la
+   base no había CHECK, índice, vista, función ni política que dependiera de ella. Salieron
+   también, del código: el campo en el schema de validación de turnos (sus **dos** ocurrencias),
+   sus **dos** declaraciones de tipo, la línea del insert del endpoint del turnero, las **tres**
+   semillas del formulario y el helper `colorHexSchema`, que quedó sin consumidores.
+   ⚠ **El PATCH de un turno individual no necesitó tocarse**: hacía `.update()` con el objeto
+   entero del schema de actualización, así que la escritura latente **desapareció sola** al sacar
+   el campo de ahí. **Intacto el sistema de categorías completo** y el array de tipos de
+   certificado.
+2. **Se eliminó el mapa huérfano `CERTIFICADO_TIPO_LABELS`** de `lib/validations/pedido.schema.ts`
+   (cero importadores). ⚠ **La copia privada `TIPO_LABELS` de la plantilla PDF NO se tocó.**
+   Ver **regla de negocio 5** para el estado real de ese campo.
+3. **La URL base del QR se unificó en `getBaseUrl`** y su firma pasó a ser **estructural**, para
+   aceptar tanto el request de un Route Handler como las cabeceras de un Server Component.
+   Ver **nota técnica 36** (incluye el límite: **los PDF ya emitidos no se regeneran**).
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
 ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live), la
-**Fase 2 de la CSP** (sacar `script-src 'unsafe-inline'` del enforcement — bloqueada porque el
-nonce no se propaga en Vercel, ver nota 17) y la sección "Recetas" (bloqueada por certificación
-ANMAT). El canal **WhatsApp** sigue **sin implementar** (`difusion_posts.canal` lo acepta, pero
+**Fase 2 de la CSP** (⏸ **CONGELADA** desde el 2026-08-25 — la bloquean **dos** cosas
+independientes, y una de ellas dejaría `/login` inaccesible; ver nota 17) y la sección "Recetas"
+(bloqueada por certificación ANMAT). El canal **WhatsApp** sigue **sin implementar** (`difusion_posts.canal` lo acepta, pero
 solo se envía por email).
 
 ---
@@ -854,11 +883,14 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
    el mismo error estaba copiado en `schema.sql`. Los dos se corrigieron.
    **Hoy el punto de partida es `supabase/migrations/000_baseline.sql`** — ver la sección
    *Documentación del proyecto*.
-7. **Migraciones nuevas: numerar desde 048.** El historial llega hasta la `047` y su
+7. **Migraciones nuevas: numerar desde 049.** El historial archivado llega hasta la `047`, y la
+   **`048`** (drop de `turnos.color`, aplicada el 2026-08-25) vive suelta en
+   `supabase/migrations/`, al lado del baseline. Su
    numeración **no se reinicia ni se renumera**. Una migración nueva va en
    `supabase/migrations/` (al lado del baseline, **no** dentro de `_historico/`) y sigue la
-   cuenta: `048`, `049`… El orden efectivo para un entorno nuevo es `000_baseline.sql` y
-   después las que se hayan agregado.
+   cuenta: `049`, `050`… El orden efectivo para un entorno nuevo es `000_baseline.sql` y
+   después las que se hayan agregado — ⚠ **la 048 NO**: su efecto ya está incorporado al
+   baseline, que refleja el estado de producción.
 8. **Migración 025 (seguridad):** `verificar_documento` ya **no expone** DNI completo ni
    contenido clínico (devuelve DNI enmascarado, fija `search_path`, y solo `service_role`
    puede ejecutarla); se dropearon dos RLS huérfanas en `consultas` que salteaban los
@@ -887,6 +919,8 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
     var tiene **prioridad** y el header quedó solo como fallback (ver `getBaseUrl` en
     `src/lib/pdf/documentos.ts`). Configurada en Vercel (production/preview/development) y en
     `.env.example` / `.env.local`. Prod: `https://amauta-salud.vercel.app`.
+    ✅ **Desde 2026-08-25 `getBaseUrl` es la fuente ÚNICA, y su firma es ESTRUCTURAL** — el QR de
+    pantalla también pasa por ahí. Ver **nota técnica 36**.
 12. **Migración 029 (drift de RLS):** las políticas de la base habían sido modificadas **a
     mano** hacia versiones más permisivas que las migraciones fuente. Como Supabase expone las
     tablas por **PostgREST**, un asistente podía escribir directo salteando la app. La 029
@@ -960,10 +994,25 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       Sonner, FullCalendar) escriben **atributos `style=""`** para posicionar popovers, selects y
       diálogos, y **los nonces no aplican a atributos** `style` (solo a elementos
       `<style>`/`<script>`). No intentar sacarlo.
-    - ⚠ **El nonce no se propaga en Vercel:** síntoma confirmado en producción (los `<script>`
-      salen sin `nonce=`), causa **abierta**; **Turbopack quedó descartado** (el mismo build con
-      `next start` local sí inyecta el nonce). Es lo que bloquea la Fase 2 (sacar de verdad
-      `'unsafe-inline'` de `script-src` en enforcement). Detalle en `PENDIENTES.md` → Bloque B.
+    - ⚠⚠ **LA FASE 2 ESTÁ CONGELADA, Y LA BLOQUEAN DOS COSAS INDEPENDIENTES — no una.**
+      Medición del 2026-08-25 contra producción y contra local. **No activar el enforcement
+      endurecido**; la CSP permisiva actual sigue vigente y sigue protegiendo, y la endurecida
+      sigue en **report-only**.
+      1. **El nonce se pierde entre el middleware y el renderizador, EN LA PLATAFORMA.** El
+         código del proyecto es correcto. Medido: una **ruta dinámica** con `next start`
+         **local** da **16 de 16** scripts nonceados; **esa misma ruta en producción** da **16
+         scripts y CERO** con nonce. **Descartado que sea caché** (la respuesta llegó con fallo
+         de caché explícito y edad cero: generada en el momento) y **descartado que sea el
+         target de build** (se compiló con salida standalone y sin ella, y el HTML salió
+         **idéntico byte por byte** en las dos rutas probadas). Turbopack ya estaba descartado.
+      2. **`/login` y `/registro` se PRERENDERIZAN en build time, así que NUNCA van a recibir
+         nonce.** Un documento congelado en build no puede llevar un valor que se genera por
+         request: **no es un fallo de plataforma, es por diseño.**
+      ⚠ **El segundo NO es un sub-pendiente del primero, y la documentación decía lo contrario.**
+      Aunque la plataforma se arreglara mañana, esas dos rutas seguirían sin nonce, y con
+      `'strict-dynamic'` activo el navegador **ignora `'self'`** → sus scripts quedarían
+      **bloqueados**. `/login` es la **puerta de entrada de la app**: activar el enforcement hoy
+      la dejaría **inaccesible**. Detalle en `PENDIENTES.md` → Bloque B.
 18. **Fechas: en el servidor se formatea SIEMPRE con `formatFechaAR`, nunca con `format()` a
     secas.** `src/lib/utils/format-date.ts` expone `formatFechaAR(fecha, patron)` —
     `formatInTimeZone` de **`date-fns-tz`** fijando `TZ_AR = 'America/Argentina/Buenos_Aires'` —
@@ -1568,3 +1617,62 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       disponible, y `max-w-4xl` lo recorta. Lo llevó un tiempo el patrón
       `w-full max-w-4xl mx-auto`, que hoy sería redundante y además volvería a centrar.
     - El encabezado sale siempre de `shared/page-header` — ver `DESIGN.md` → *Layout de página*.
+36. **La URL base del QR de verificación sale de `getBaseUrl`, y de NINGÚN otro lado. Su
+    parámetro es ESTRUCTURAL a propósito.** Vive en `src/lib/pdf/documentos.ts` y hoy tiene
+    **cinco** consumidores: los 4 Route Handlers que emiten o sirven PDFs, y —desde el
+    2026-08-25— el **componente de pantalla** `components/shared/qr-verificacion.tsx`.
+    - **El bug que cierra:** ese componente derivaba la base **solo del header `host`**, sin
+      mirar `NEXT_PUBLIC_SITE_URL`. Como el `host` lo controla quien hace el request, un `Host`
+      envenenado hacía que el QR de la **pantalla** apuntara a un sitio distinto que el del
+      **PDF** del mismo documento. La nota 11 fijaba el criterio correcto desde hacía tiempo; el
+      componente había quedado afuera **por omisión**, no por una limitación.
+    - **La firma:** `getBaseUrl(fuente?: { headers: Pick<Headers, 'get'> })`. ⚠ **Ya NO pide
+      `NextRequest`.** Los dos productores de cabeceras del proyecto son de paquetes
+      **distintos** —`NextRequest` de `next/server` en los Route Handlers, y el `ReadonlyHeaders`
+      que devuelve `headers()` de `next/headers` en un Server Component— y **ninguno es subtipo
+      del otro**. Tipando por **lo que la función consume** (un `.get()`) entran los dos **sin un
+      solo cast** y sin ramas en runtime. Es el mismo criterio que el proyecto ya aplica al
+      cliente de Supabase: se tipa por el productor real, no por un paquete que no lo produce.
+    - **Cómo se llama desde un Server Component:** `getBaseUrl({ headers: await headers() })`. El
+      import de `next/headers` **se conserva** ahí: es la fuente del **fallback**, no un residuo.
+    - **Precedencia, sin cambios:** env var → header `host` → `localhost:3000`. Con la env var
+      definida el helper **ni mira las cabeceras**, así que pantalla y PDF devuelven el mismo
+      string desde la misma línea de código. Los dos escenarios de fallback quedaron **idénticos**
+      a lo que hacía cada lado por separado.
+    - ⚠ **LO QUE ESTO NO ARREGLA: los PDF ya emitidos.** El QR de pantalla se recalcula en cada
+      render, así que se corrigió solo; los PDF **congelados** conservan el QR grabado al emitir y
+      **no se regeneran** (regla de negocio 5). **No hubo backfill.** Un documento emitido con una
+      base incorrecta sigue como está.
+    - ⚠ **Observación pendiente (señalada, no resuelta):** el helper vive en un módulo que se
+      declara a sí mismo **pesado y solo-servidor** (usa el admin client y renderiza
+      `@react-pdf/renderer`), pero **ya no es un helper de PDF**. Mudarlo a un módulo neutro sería
+      **mecánico** —no tiene ninguna dependencia del resto de ese archivo— pero es otra tarea y
+      **no se hizo**.
+37. **⚠⚠ EL ÍCONO DE CATEGORÍA DEL TURNERO NO ES DECORATIVO: ES LO QUE SOSTIENE LA CONFORMIDAD DE
+    CONTRASTE DE `recordatorio`. Si alguien lo saca por criterio visual, convierte una excepción
+    tolerada en un FALLO REAL, y sin ningún error visible.** Medición del 2026-08-25 con
+    instrumento validado: **13 pares medidos, 12 conformes**.
+    - **El único no conforme:** la **barra de acento** y el **punto** de la categoría
+      `recordatorio`, medidos **contra su propio tinte de fondo**, dan entre **2.23 y 2.27**
+      frente a un umbral de **3:1**. Falla porque ese ámbar es **el color más claro de las cinco
+      categorías** — no por un error de la paleta.
+    - **DECISIÓN TOMADA: no se cambia el color.** El criterio de contraste de **elementos no
+      textuales** no exige el mínimo cuando la información del componente **está disponible por
+      otra vía**, y acá lo está: el evento lleva además **ícono y texto**, que contrastan **por
+      encima de 7:1**. La categoría **no se comunica solo por ese acento**.
+    - **De ahí la advertencia de arriba, y por eso está en una nota y no en un pie de página:** la
+      conformidad de esa categoría **depende de que el ícono siga estando**. Es exactamente el
+      tipo de elemento que una limpieza visual borra por "ruido". Ver `DESIGN.md` → *Colores de
+      las categorías del turnero*, donde la advertencia está junto a la tabla de colores.
+    - **Dato secundario, con poca holgura:** el par de **texto secundario sobre fondo tenue** da
+      **4.83** contra un umbral de **4.5**. Conforme, pero por poco: ⚠ **si se toca la paleta
+      neutra hay que volver a medirlo.**
+38. **⚠ Contar ocurrencias en el HTML de Next: la opción de CONTEO de grep MIENTE.** El HTML que
+    emite Next viene **en una sola línea**, y esa opción cuenta **líneas que coinciden**, no
+    coincidencias: devuelve siempre **0 o 1**. Dos mediciones completamente distintas —"ningún
+    script nonceado" y "los 16 nonceados"— **dan el mismo número**, y parece que no hay diferencia.
+    - **Costó tiempo real** en el diagnóstico de la CSP (nota 17), donde justamente había que
+      comparar cuántos `<script>` llevan nonce en local contra producción.
+    - **Cómo se cuenta bien:** la opción de **solo-coincidencias** de grep, canalizada a un
+      contador de líneas. Ahí sí sale el número real.
+    - Aplica a **cualquier** conteo sobre HTML servido, no solo al nonce.

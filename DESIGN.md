@@ -225,20 +225,51 @@ fondo + color de texto), consistentes entre vistas TimeGrid y DayGrid de FullCal
 
 | Categoría | Color | Acento (OKLCH) |
 |---|---|---|
-| `turno_medico` | Verde | `oklch(0.52 0.16 155)` |
-| `curso` | Azul | `oklch(0.56 0.18 220)` |
+| `turno_medico` | Verde | `oklch(0.52 0.128 155)` |
+| `curso` | Azul | `oklch(0.56 0.101 220)` |
 | `personal` | Morado | `oklch(0.54 0.20 285)` |
 | `administrativo` | Marrón | `oklch(0.55 0.12 55)` |
-| `recordatorio` | Amarillo | `oklch(0.72 0.18 80)` |
+| `recordatorio` | Ámbar | `oklch(0.72 0.149 80)` |
+
+> Los valores salen de las variables de categoría de `globals.css`, que son la **fuente
+> única**: cada una se referencia entre 4 y 6 veces desde las clases de categoría. Si se
+> agrega una categoría, va ahí primero.
+
+### ⚠⚠ El ícono de categoría NO es decorativo — no lo saques
+
+**La conformidad de contraste de `recordatorio` depende de que ese ícono siga estando.**
+Quien lo elimine por criterio visual convierte una excepción tolerada en un **fallo real**,
+y **sin ningún error visible en ninguna parte**.
+
+Medición del **2026-08-25** con instrumento validado: **13 pares medidos, 12 conformes**.
+El único que no lo es:
+
+| Par medido | Ratio | Umbral | Estado |
+|---|---|---|---|
+| Barra de acento y punto de `recordatorio`, contra su propio tinte de fondo | **2.23 – 2.27** | 3:1 | ✗ No conforme |
+
+Falla porque **ese ámbar es el color más claro de las cinco categorías** — no por un error
+de la paleta.
+
+**Decisión tomada: el color NO se cambia.** El criterio de contraste de **elementos no
+textuales** no exige el mínimo cuando la información del componente **está disponible por
+otra vía**, y acá lo está: el evento del calendario lleva además **ícono y texto**, que
+contrastan **por encima de 7:1**. La categoría **no se comunica solo por ese acento** — se
+comunica por tres cosas a la vez, y dos de ellas están muy por encima del umbral.
+
+De ahí la advertencia: **sacar el ícono deja el acento como único portador de la categoría**,
+y ese acento mide 2.23. Ver también `CLAUDE.md` → nota técnica 37.
 
 Además, los **bloqueos de agenda** se pintan en rojo coral con patrón rayado
 (`.fc-event-bloqueo`), y los eventos **pendientes de confirmar** usan borde punteado
 y opacidad reducida (`.fc-event-pendiente-confirmar`). El modo de selección del
 calendario tiñe el highlight según la acción (`.mode-turno` verde / `.mode-bloqueo` rojo).
 
-> ⚠ **Inconsistente:** `turnos.color` tiene default `#3B82F6` (azul HEX) en la base,
-> pero el color visual real lo determinan las clases `.categoria-*`. El campo `color`
-> HEX queda en desuso frente al sistema de categorías.
+> ✅ **Resuelto (2026-08-25, migración 048).** La tabla `turnos` tenía además una columna
+> `color` con un default azul en HEX, que **nadie leía**: el color visual siempre lo
+> determinaron las clases de categoría. Se **eliminó la columna** —y el campo del schema de
+> validación, del tipo y del formulario— así que ya no hay dos fuentes de color compitiendo.
+> El sistema de categorías es la **única**.
 
 ---
 
@@ -320,8 +351,17 @@ que explica por qué borrarla hace lo contrario de lo que parece.
     pero **ese no es su umbral**. Por eso un ícono puede quedarse en el token base y un
     texto no.
   - Los pares `-foreground` sobre relleno sólido están entre 4.7:1 y 5.0:1.
-  ⚠ **Queda por verificar** el contraste de los tintes de categoría del turnero (10–12% de
-  opacidad) y de `muted-foreground` sobre `muted`.
+  - ✅ **Ya no queda nada por verificar (medición del 2026-08-25).** Se midieron con instrumento
+    validado los pares que faltaban —los tintes de categoría del turnero y el texto secundario
+    sobre fondo tenue—: **13 pares, 12 conformes**.
+    - **La única no conformidad** es la barra de acento y el punto de la categoría
+      `recordatorio` contra su propio tinte (**2.23–2.27** contra un umbral de 3:1). **Se
+      acepta y no se cambia el color**, porque la categoría también se comunica por ícono y
+      texto, ambos por encima de 7:1. ⚠ **Eso hace que el ícono sea funcional, no decorativo**
+      — el detalle y la advertencia están arriba, en *Colores de las categorías del turnero*.
+    - ⚠ **Texto secundario sobre fondo tenue: 4.83 contra un umbral de 4.5. Conforme, pero con
+      poca holgura.** Si se toca la **paleta neutra**, hay que **volver a medir este par**: son
+      0.33 de margen, y un ajuste chico de los neutros puede tumbarlo sin que se note.
 
 ---
 
@@ -362,8 +402,10 @@ porque explica de dónde viene el sistema actual.
 3. ~~**Fuente mono referenciada pero no cargada.**~~ ✅ **Estaba mal descrito:** el problema
    no era que faltara cargar una fuente, sino que `--font-mono` apuntaba a una variable
    inexistente y la declaración se descartaba en silencio. Resuelto con una pila del sistema.
-4. **`turnos.color`** sigue abierto, movido a *tareas chicas de barrido* en `PENDIENTES.md`:
-   la decisión es **eliminar la columna**.
+4. ~~**`turnos.color`.**~~ ✅ **Resuelto (2026-08-25, migración 048):** la columna se
+   **eliminó**, junto con el campo del schema de validación, del tipo y del formulario. El
+   sistema de categorías quedó como única fuente de color — ver *Colores de las categorías del
+   turnero*.
 5. ~~**Componentes stub sin usar.**~~ ✅ Resuelto: se eliminaron 11; queda solo
    `lib/pdf/receta-template.tsx`, a propósito (recetas está bloqueado por ANMAT).
 6. ~~**Dark mode a medias.**~~ ✅ **Descartado como decisión de producto** — ver *Tema oscuro*.
