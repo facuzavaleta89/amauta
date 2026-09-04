@@ -1069,6 +1069,119 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
       igual — y ahora eso significaría **un toast por una búsqueda que el usuario ya abandonó**.
       Mismo patrón que el efecto de `changeView` en `calendar-view.tsx`.
 
+- **✅ RESUELTO (2026-09-04, commit `e19e4f3`, sin migración) — el campo "Fecha y hora de la consulta"
+  se precargaba con la hora UTC (+3 h). Severidad MEDIA-ALTA. PREEXISTENTE.**
+  - **Síntoma reportado:** al crear una consulta desde la historia clínica, el campo abría con **3
+    horas de más** respecto del reloj del consultorio. A las 15:30 ART el input decía **18:30**.
+  - **Causa:** las dos puntas de lectura de `consultas.fecha_hora` en
+    `pacientes/consultas/consulta-detail.tsx` usaban `.toISOString().slice(0, 16)` — el **formato**
+    correcto para un `datetime-local`, pero `toISOString()` serializa **siempre en UTC**. Afectaba
+    tanto al default de consulta nueva (`nowLocal`) como a la precarga de una consulta existente.
+  - ⚠ **El par era AUTOCONSISTENTE, pero en la zona equivocada — y por eso parecía cosmético.** La
+    escritura mandaba el string **crudo, sin offset**; el schema (`z.string().min(1)`) no valida
+    formato, los endpoints hacen `.insert({ ...consulta })` sin tocar nada, y el **cluster de
+    Postgres está en UTC** (verificado: sin override de `TimeZone` para `authenticated` /
+    `authenticator`). UTC ↔ UTC: **el instante guardado era CORRECTO** mientras el prefill quedara
+    intacto. **Lo prueban los datos: 33 de 38 filas** tienen `fecha_hora` a **menos de 10 minutos**
+    de su `created_at`, y **ninguna** con desplazamiento de +3 h.
+  - ⚠⚠ **PERO NO ERA COSMÉTICO: 5 filas quedaron guardadas 3 h ANTES de la realidad.** El usuario
+    veía la hora mal y **la corregía a mano**, tecleando la hora argentina real — que se persistía
+    como si fuera UTC. **La firma es inequívoca:** en esas 5 filas, la hora tecleada coincide con el
+    reloj **ARGENTINO** del momento de carga dentro de **0 a 3 minutos** (el 2026-09-02 tecleó
+    `18:59` con el reloj ART en `19:00`; el 2026-09-03 tecleó `18:30` con el reloj en `18:33`), y
+    **con la hora UTC de `created_at` no coincide en ninguna**. Ver el ítem abierto de acá abajo.
+  - **El fix (un solo archivo, un solo commit — y eso era el requisito, no una comodidad):**
+    - **LECTURA, consulta nueva** — `nowLocal` pasó a `formatParaInputAR(new Date())`. El
+      `setSeconds(0, 0)` se eliminó: el patrón del helper termina en `HH:mm`, **sin `ss`**, así que
+      ya no hay segundos que recortar (solo existían porque `toISOString()` los emite).
+    - **LECTURA, consulta existente** — `formatParaInputAR(consulta.fecha_hora)`, con el **string
+      directo**, sin `new Date()` intermedio (nota técnica 18).
+    - **ESCRITURA** — el payload ancla con `parseFechaHoraAR(values.fecha_hora).toISOString()`, más
+      la guarda de `Invalid Date` con toast, ubicada **antes** de `setIsSubmitting(true)`.
+    - **`todayStr`** (misma tanda, mismo archivo) — pasó a `formatFechaAR(new Date(), 'yyyy-MM-dd')`.
+      Era "hoy" en UTC y se usa como `min` del input de fecha del próximo control: **entre las 21:00
+      y las 00:00 ART apuntaba al día siguiente** y el input rechazaba la fecha de hoy.
+  - ⚠ **Las tres puntas de `fecha_hora` fueron en el MISMO commit, y no es prolijidad:** convertir
+    **solo la lectura** habría movido **todas** las consultas **−3 h** al abrir y guardar sin
+    editar, en silencio. Es el escenario exacto que ya documentaba la **nota técnica 25** a partir
+    del turnero — este es el segundo caso, y por eso la nota ahora cubre los dos.
+  - **`proximo_turno_sugerido` NO se tocó: ya estaba correcto** en las dos puntas desde la migración
+    041 (`formatFechaAR` para leer, `parseFechaHoraAR` para escribir), **en este mismo archivo, 70
+    líneas más abajo**. Sirvió de **modelo** del fix. Conviven dos pares independientes en la misma
+    pantalla — ver `CLAUDE.md` → nota técnica 25.
+  - **Verificación:** `tsc --noEmit`, `npm run lint` y `npm run build` los tres en **exit 0**; el
+    lint **se mantuvo en 0 problemas**.
+
+- **⬜ ABIERTO — DECISIÓN DEL MÉDICO, NO deuda técnica (anotado 2026-09-04) — 5 consultas quedaron
+  guardadas 3 h antes de la realidad. ¿Se corrigen o se dejan?**
+  Son las filas que el usuario corrigió a mano mientras el bug de zona de `fecha_hora` estaba vivo
+  (ver el ítem resuelto de arriba). **El fix cortó la fuente; no reinterpretó lo viejo.**
+  - **Alcance exacto: 5 filas de `public.consultas`** (sobre 38). Las otras **33 están bien**.
+  - ⚠⚠ **Las 5 están en `estado = 'finalizada'`.** Corregirlas es **escribir sobre historia clínica
+    cerrada**: contra la **regla de negocio 1** (una consulta finalizada no se edita) y sobre
+    documentación que la **Ley 26.529** obliga a conservar. **Por eso lo decide el médico y no una
+    limpieza de código** — no se anota acá como una tarea pendiente de ejecutar.
+  - ⚠ **Si se decide corregir, la selección tiene que ser EXPLÍCITA, fila por fila.** Un criterio
+    automático del tipo *"diferencia contra `created_at` ≈ 3 h"* **confundiría una consulta
+    legítimamente retroactiva con una corrompida**: la fila del **2026-06-18** es exactamente ese
+    caso ambiguo —fecha antedatada a propósito, hora indistinguible de las demás—.
+  - ⚠ **Las otras 33 filas NO se tocan.** Su instante es **correcto** y sumarles 3 h las rompería.
+    Un `UPDATE` sin `WHERE` acotado convertiría **un problema de 5 filas en uno de 38**.
+  - **Las 15 filas de `proximo_turno_sugerido` a las 00:00 UTC quedan AFUERA de este ítem:** son el
+    artefacto ya asumido de la migración **041** (columna `DATE` → `timestamptz` **sin backfill**,
+    decisión registrada en su propio ítem), no de este bug. Todas fueron creadas hasta el
+    2026-08-17, la fecha de esa migración.
+  - ⚠ **Efecto ya visible del fix, que puede leerse como regresión y no lo es:** esas 5 consultas
+    **ahora MUESTRAN su hora real** — 3 h antes de la que el médico recuerda haber escrito. Es el
+    valor que estaba guardado; hasta ahora se leía con el mismo desfase con que se había escrito, y
+    por eso parecía correcto.
+
+- **⬜ ABIERTO (anotado 2026-09-04) — 8 sitios más derivan "hoy" o "ahora" en UTC. Severidad BAJA a
+  MEDIA. PREEXISTENTE.** Comparten la raíz del bug de `fecha_hora` —calcular un día u hora de pared
+  con `toISOString()`— pero son de **otro riesgo** (ver el ⚠ del final).
+  - **Los dos que más importan** — la fecha se **imprime en el PDF y se congela al emitir** (regla de
+    negocio 5), así que **queda mal para siempre**. Entre las **21:00 y las 00:00 ART el documento se
+    fecha MAÑANA**:
+    - `components/pedidos/pedido-form.tsx:60` → `fecha_pedido`
+    - `components/certificados/certificado-form.tsx:49` → `fecha_certificado`
+  - **Los mismos dos campos, pero del lado del SERVIDOR — y ahí es peor:** son el fallback si el
+    cliente no manda la fecha, y en **Vercel el runtime es UTC SIEMPRE**, no solo 3 h por día:
+    - `app/api/pedidos/route.ts:136`
+    - `app/api/certificados/route.ts:128`
+  - `components/dashboard/stats-cards.tsx:7` → la ventana de **"Turnos Hoy"** queda **corrida 3 h**:
+    incluye los turnos de 21:00–24:00 de ayer y excluye los de 21:00–24:00 de hoy.
+  - Badge **"expirado"** adelantado 3 h (`valido_hasta < hoy`), **uno de ellos en la ruta pública
+    del QR**:
+    - `app/(app)/certificados/page.tsx:116`
+    - `app/verificar/[codigo]/page.tsx:107`
+  - `app/api/consultas/[id]/pdf/route.ts:79` → **nombre del archivo** PDF. Una consulta de las 22:00
+    ART sale nombrada con la fecha del día siguiente. **Cosmético.**
+  - ⚠ **Por qué NO son de la misma clase que el bug de `fecha_hora`, y por qué no entraron en esa
+    tanda:** todos apuntan a columnas **`DATE`** (sin zona) o son **solo display**. **No hay un par
+    lectura/escritura que pueda desincronizarse**, así que arreglarlos **no puede desplazar datos**
+    y **no requieren la disciplina de "los dos lados en el mismo commit"**. Se pueden hacer sueltos.
+  - ⚠ **El canon NO tiene hoy un helper de "hoy en AR".** La forma correcta con lo que hay es
+    `formatFechaAR(new Date(), 'yyyy-MM-dd')`. Si se ataca esta familia, **conviene agregar el helper
+    a `lib/utils/format-date.ts`** en vez de repetir esa expresión en 8 archivos — que es
+    exactamente cómo nacieron los 6 duplicados que la **nota técnica 18** vino a unificar.
+
+- **⬜ ABIERTO (anotado 2026-09-04, hallado relevando el turnero) — el PATCH del turnero DESCARTA la
+  mitad del payload en silencio. Bug VIVO. PREEXISTENTE.** `turno-form.tsx` manda por PATCH el
+  objeto completo del formulario (10 claves), pero `PATCH /api/turnero/[id]` valida con
+  **`turnoUpdateWithDatesSchema`**, que **no declara `paciente_id`, `categoria`,
+  `paciente_nombre_libre`, `origen` ni `consulta_id`** — y es un `z.object` **sin `.passthrough()`**,
+  así que Zod los **borra** antes del `.update()`. Consecuencia: **cambiar el paciente o la categoría
+  de un turno existente desde el modal NO HACE NADA**, y el toast dice *"Turno actualizado"*. Sin
+  error, sin 400, sin log.
+
+- **⬜ ABIERTO (anotado 2026-09-04) — `turnoUpdateSchema` (`lib/validations/turno.schema.ts:87`) no
+  tiene consumidores.** Convive con `turnoUpdateWithDatesSchema`, que es el que usa el PATCH.
+  Conviene decidir cuál queda **antes** de tocar el ítem de arriba, no después.
+
+- **⬜ ABIERTO (anotado 2026-09-04) — `/turnero?paciente_id={id}` es un link muerto.** Lo emite
+  `app/(app)/pacientes/[id]/page.tsx:265` ("Ver turnos"), pero `app/(app)/turnero/page.tsx` **no lee
+  `searchParams`**: el filtro por paciente **nunca se aplicó**. El botón navega a la agenda completa.
+
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
   Bloque 4 de `turnos` (`categoria/origen/consulta_id` + sus 3 CHECK) y

@@ -1188,9 +1188,19 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       guarda por `consulta_id` que hay en el código pasa por `turnos_select`, así que **depende de
       los permisos de lectura de la agenda** (desde la 039, `ver_turnos` OR `gestionar_turnos`): sin
       ninguno de los dos devuelve `null` aunque el turno exista. El índice no depende de permisos.
-    - ⚠ **Lo que NO cambió:** el turno se sigue insertando con **`paciente_id` y SIN
+    - ⚠ **Lo que NO cambió:** el turno `desde_hc` se sigue insertando con **`paciente_id` y SIN
       `paciente_nombre_libre`** (el dato canónico es el id; duplicar el nombre lo desactualizaría).
       `turno-form.tsx` asume esa forma al precargar el buscador.
+      ⚠⚠ **Eso vale SOLO para `origen='desde_hc'`, que es el turno que crea este endpoint. Los
+      turnos MANUALES del turnero guardan LOS DOS campos** (corregido el 2026-09-04: la afirmación
+      anterior no distinguía los orígenes y por lo tanto era falsa para la mitad de la tabla). Al
+      elegir un paciente del dropdown, `turno-form.tsx` hace `form.setValue('paciente_id', p.id)`
+      **y** `form.setValue('paciente_nombre_libre', p.nombre_completo)`, y el POST del turnero
+      persiste ambos. Verificado contra la base viva: **35 filas `turno_medico`** tienen
+      `paciente_id` **y** `paciente_nombre_libre` no nulos, todas con `origen='manual'`.
+      Consecuencia práctica: **`paciente_nombre_libre IS NOT NULL` no significa "turno sin paciente
+      registrado"**, y el precargado del buscador (`:197`) lee las **dos** fuentes justamente porque
+      los dos orígenes guardan cosas distintas.
 23. **"Franja ocupada" se pregunta en UN solo lugar: `buscarSolapamientos` de
     `src/lib/agenda/solapamiento.ts`. No escribir una query de solapamiento nueva.** Antes el
     criterio vivía **duplicado en 12 queries repartidas por 6 endpoints**, con tres criterios
@@ -1307,7 +1317,7 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
     - ⚠ **Ante una entrada inválida devuelve `Invalid Date`, NO lanza** — como `new Date`, y a
       diferencia de `formatFechaAR` (que sí lanza). **El llamador debe chequear** con
       `isNaN(d.getTime())` antes de usarlo.
-    - **Los DOS consumidores del par, hoy:**
+    - **Los TRES pares del proyecto, hoy** — dos de ellos en el MISMO archivo:
       1. **La hora del próximo control de la HC** (`consultas/consulta-detail.tsx`) — el caso que
          originó el helper. La columna `consultas.proximo_turno_sugerido` era `DATE` y **descartaba
          la hora** (se agendaba todo a las 09:00); la migración **041** la pasó a `timestamptz` y el
@@ -1315,9 +1325,74 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
       2. **El turnero** (`turnero/turno-form.tsx` y `turnero/block-slot-modal.tsx`), desde la tanda
          que unificó su zona horaria. Es el que usa **el par completo**, en los 12 sitios que llenan
          sus `<input type="datetime-local">` más los 2 que arman el payload.
-      ⚠ **Los dos son Client Components**, y eso importa: la nota 18 acota su regla al servidor
+      3. **La fecha y hora de la consulta** (`consultas/consulta-detail.tsx`, **2026-09-04**) — el
+         último en incorporarse, y el que había quedado afuera cuando se escribió esta nota. Ver la
+         subsección de acá abajo.
+      ⚠ **Los tres son Client Components**, y eso importa: la nota 18 acota su regla al servidor
       porque el navegador ya está en la zona del usuario, pero acá **la zona del usuario es
       justamente el problema**. Que el código corra en el cliente **NO** exime de fijar `TZ_AR`.
+
+    ### El formulario de consultas tiene DOS pares independientes. No unificarlos.
+
+    `consultas/consulta-detail.tsx` maneja **dos** valores de fecha en la **misma pantalla**, y cada
+    uno es un par completo por su cuenta. Los dos anclan en **`TZ_AR`**; ninguno de los dos depende
+    del otro.
+
+    | Campo | Input | Lectura | Escritura |
+    |---|---|---|---|
+    | **`fecha_hora`** | **un** `<input type="datetime-local">` | `formatParaInputAR` (el default `nowLocal` y la precarga de la consulta existente) | `parseFechaHoraAR(...).toISOString()` en el payload del submit |
+    | **`proximo_turno_sugerido`** | **dos** inputs separados, `type="date"` + `type="time"` | `formatFechaAR(valor, 'yyyy-MM-dd')` y `formatFechaAR(valor, 'HH:mm')`, del **mismo memo** | ``parseFechaHoraAR(`${fecha}T${hora}`).toISOString()`` en un efecto |
+
+    ⚠ **No "unificarlos" en un helper común: usan formas de input distintas.** Uno lee y escribe un
+    string único; el otro compone y descompone **dos** strings, y por eso su lectura sale de un solo
+    `useMemo` (cerca de medianoche, fecha y hora tienen que venir de la **misma** proyección o
+    quedan desfasadas un día). Comparten el criterio de zona, no la mecánica.
+
+    - ⚠⚠ **En el payload del submit, `fecha_hora` va DESPUÉS del spread de `...values`.** Tiene que
+      **pisar** el valor crudo del formulario:
+      ```ts
+      const payload = {
+        ...values,
+        estado,
+        fecha_hora: fechaHoraInstante.toISOString(),   // ⚠ DESPUÉS del spread, a propósito
+      }
+      ```
+      **Invertir el orden anula el fix por completo** —el spread reescribiría el campo con el string
+      de pared sin offset— y el fallo **compila, pasa el lint y no se nota**: no hay error, ni toast,
+      ni log. Se descubre mirando los datos.
+    - ⚠ **La guarda de `Invalid Date` va ANTES de `setIsSubmitting(true)`.** `parseFechaHoraAR`
+      devuelve `Invalid Date` en vez de lanzar, así que el chequeo es explícito
+      (`isNaN(instante.getTime())`) y aborta con un toast. **Su ubicación no es estética:** adentro
+      del `try` el `return` saltearía el `finally` que baja `isSubmitting`, y entre el
+      `setIsSubmitting(true)` y el `try` dejaría **el botón deshabilitado con el spinner girando
+      hasta recargar la página**. Puesta antes, aborta igual que el `if (!valid) return` de
+      `form.trigger()` que ya estaba dos líneas más arriba: no hay estado que desarmar.
+      ⚠ Hace falta porque **`form.getValues()` entrega el INPUT crudo** —el tercer genérico de
+      `useForm` solo tipa `handleSubmit`, que este componente no usa— y `consultaSchema` declara
+      `fecha_hora` como `z.string().min(1)`, **sin validación de formato**.
+
+    ### ⚠⚠ Por qué este bug parecía cosmético y NO lo era: el cluster está en UTC
+
+    Verificado contra la base viva (2026-09-04): **`TimeZone = UTC`** a nivel de cluster
+    (`current_setting('TimeZone')` y `pg_settings`), y en `pg_db_role_setting` **no hay ningún
+    override de `TimeZone`** para `authenticated` ni para `authenticator` —los roles que usa
+    PostgREST—; solo `statement_timeout` y `lock_timeout`. **Nada reescribe la zona de la sesión.**
+
+    Ese dato es la clave del diagnóstico, y conviene tenerlo a mano para el próximo caso:
+
+    - Un string **sin offset** (`"2026-09-04T15:30"`) que llega a un `timestamptz` lo interpreta
+      **Postgres**, no JS, y lo hace en la zona de la **sesión** → **UTC**.
+    - Antes del fix, la **lectura** también estaba en UTC (`toISOString().slice(0,16)`). O sea que
+      **las dos puntas coincidían**: el round-trip cerraba y **el instante guardado era CORRECTO**
+      mientras nadie tocara el campo. Lo confirmó el dato: **33 de 38 filas** tenían `fecha_hora` a
+      menos de 10 minutos de su `created_at`.
+    - ⚠ **Pero el usuario veía +3 h, y lo corregía a mano.** Al teclear la hora argentina real, esa
+      hora se guardaba **como si fuera UTC** → la consulta quedaba **3 horas en el pasado**. **5
+      filas** terminaron así. Ver `PENDIENTES.md` → Bloque A → *Bugs menores detectados*.
+    - **Moraleja para el próximo par que aparezca:** *"el round-trip cierra"* **no** significa *"está
+      bien"*. Significa que las dos puntas comparten la zona — y si esa zona no es la del
+      consultorio, el bug es **latente**: se materializa apenas alguien edita el campo para
+      compensar lo que ve mal.
 26. **Un valor centinela compartido entre una Server Action y un componente cliente vive en un
     archivo de TIPOS, no en la action.** Un módulo **`'use server'`** solo puede exportar **funciones
     async**: una `export const` ahí **rompe el build**. Así que cuando el productor (la action) y el
