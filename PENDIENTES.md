@@ -1182,6 +1182,56 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   `app/(app)/pacientes/[id]/page.tsx:265` ("Ver turnos"), pero `app/(app)/turnero/page.tsx` **no lee
   `searchParams`**: el filtro por paciente **nunca se aplicó**. El botón navega a la agenda completa.
 
+- **✅ HECHO (2026-09-04, commit `21a345b`, sin migración) — alta rápida de paciente desde el modal
+  del turno.** ⚠ **No era un bug: es una funcionalidad nueva**, y se anota acá para que quede el
+  registro de qué se tocó y por qué.
+  - **Qué resuelve:** cuando el buscador del turnero no encontraba al paciente, el usuario tenía que
+    **abandonar el modal**, ir a `/pacientes/nuevo`, dar de alta y volver a empezar el turno desde
+    cero. Ahora lo da de alta ahí mismo con **5 campos** y vuelve al formulario del turno con el
+    paciente **ya seleccionado**. ⚠ **El alta y el turno siguen siendo dos acciones separadas**: no
+    se crean juntos, el turno se agenda en un segundo paso.
+  - **Tres archivos — uno nuevo, dos modificados. El endpoint NO necesitó cambios** (`POST
+    /api/pacientes` ya validaba, resolvía el tenant, exigía `editar_pacientes` y devolvía la fila
+    completa con 201):
+    - **NUEVO** `components/turnero/alta-rapida-paciente.tsx` — el formulario de 5 campos. ⚠ **No
+      es un Dialog** y **no reusa `PatientForm`** (que está acoplado a su página: hace `router.push`
+      al guardar y arrastra el catálogo de obras sociales, que acá no se usa).
+    - `components/turnero/turno-form.tsx` — el intercambio de vista, el botón en el estado vacío del
+      dropdown y el handler de vuelta.
+    - `lib/validations/paciente.schema.ts` — se extrajo `pacienteBaseObject` y se sumó
+      `pacienteAltaRapidaSchema`, derivado con `.pick()` para **no duplicar** las reglas del DNI,
+      del nombre y de la fecha de nacimiento.
+  - **El detalle vive en `CLAUDE.md`, no acá** — no se repite: **regla de negocio 14** (los 5
+    campos, el teléfono obligatorio solo en el cliente, `sexo` sin preselección, las tres ramas del
+    choque de DNI), **nota técnica 39** (la trampa de `.pick()` en Zod 4, que es lo más
+    reutilizable de la tanda) y **nota técnica 40** (por qué es un intercambio de vista y no un
+    `Dialog` anidado).
+  - **Verificación:** `tsc --noEmit`, `npm run lint` y `npm run build` los tres en **exit 0**, con
+    el lint **mantenido en 0 problemas**. ⚠ **El build era la prueba que importaba**, no el `tsc`:
+    ver la nota técnica 39.
+
+- **⬜ ABIERTO (anotado 2026-09-04, al implementar el alta rápida) — el asistente SIN `ver_pacientes`
+  no tiene punto de entrada al alta rápida… ni puede crear un turno médico. Severidad MEDIA.
+  LATENTE (hoy nadie está en esa configuración).**
+  - **El botón "Dar de alta" vive en el estado vacío del dropdown** del buscador, al que solo se
+    llega si la búsqueda **funcionó** y no encontró a nadie.
+  - ⚠ **Un asistente sin `ver_pacientes` recibe 403 del `GET /api/pacientes`**, y el `catch` del
+    efecto de búsqueda **cierra el dropdown a propósito** —para que un 403 no se lea como "no
+    existe", que fue un fix deliberado de 2026-08-21—. Como el dropdown no se abre, **el estado
+    vacío NUNCA se renderiza y el botón es invisible justo para ese perfil**. ⚠ Ese `catch` **no
+    hay que "arreglarlo"**: hace lo correcto.
+  - ⚠⚠ **Y el problema real es anterior y más grande: ese asistente hoy no puede crear NINGÚN turno
+    médico.** Sin poder buscar no obtiene un `paciente_id`, y lo rechazan **las dos capas** — el
+    `superRefine` de `turnoSchema` y la CHECK `check_paciente_id_required_for_turno_medico`. Queda
+    **sin salida**, con `gestionar_turnos` y todo. El alta rápida **no lo empeora**; lo deja igual.
+  - **Hoy es LATENTE, no activo** (verificado contra la base al relevar): los **3 asistentes con
+    `gestionar_turnos` tienen también `ver_pacientes` y `editar_pacientes`**. Pero los 12 permisos
+    son **independientes** y la combinación se arma con dos clics en `/perfil`.
+  - **Resolverlo requiere un punto de entrada FUERA del dropdown** —el botón no puede colgar de una
+    búsqueda que ese usuario no puede hacer—, y eso es **una decisión de diseño aparte**: dónde va,
+    y si tiene sentido que alguien dé de alta un paciente sin poder ver la lista de pacientes. No se
+    resolvió en la tanda del alta rápida a propósito.
+
 ### Esquema sin migración fuente (reproducibilidad)
 - **✅ RESUELTO (migración 030, 2026-07-23).** `consultas`, `notificaciones`, las columnas de
   Bloque 4 de `turnos` (`categoria/origen/consulta_id` + sus 3 CHECK) y

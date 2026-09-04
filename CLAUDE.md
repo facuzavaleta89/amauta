@@ -366,6 +366,54 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
     rechaza con **409** si el paciente está archivado (regla 9) y trae **guarda de "0 filas"** (403,
     la lección de la 033). Una consulta **finalizada no se borra nunca** (regla 1) y **desde la 038
     eso lo garantiza la base**, no solo el código.
+14. **Alta rápida de paciente desde el modal del turno:** cuando el buscador del turnero no
+    encuentra a nadie, se puede dar de alta al paciente **sin salir del modal**, con **5 campos**.
+    El alta y el turno son **dos acciones separadas**: se crea el paciente, la vista vuelve al
+    formulario del turno con ese paciente **ya seleccionado**, y el turno se agenda en un segundo
+    paso. **Nunca se crean juntos.** La mecánica del intercambio de vista está en la **nota
+    técnica 40**; el schema derivado, en la **39**.
+    - **Los 5 campos son `nombre_completo`, `dni`, `fecha_nacimiento`, `sexo` y `telefono`**, y el
+      número no es arbitrario: son **los 4 `NOT NULL` de `pacientes`** (verificados contra la base)
+      **más el teléfono**. No hay un subconjunto más chico posible sin tocar el esquema. El resto de
+      la ficha —obra social, email, domicilio, número de afiliado— se completa después desde
+      `/pacientes`.
+    - ⚠ **El teléfono es obligatorio SOLO en el alta rápida, y SOLO en el CLIENTE.** `POST
+      /api/pacientes` valida con `pacienteSchema`, donde el campo es **opcional**, y el alta normal
+      desde `/pacientes` **sigue aceptando pacientes sin teléfono**. Es una **desviación deliberada
+      de la convención** de validar también en el servidor: no es un invariante de la entidad ni
+      una regla de seguridad, es **calidad de dato propia de este flujo** — a un paciente que se
+      carga en el momento de agendarle un turno se le está pidiendo justamente un contacto.
+      Endurecerlo en el endpoint cambiaría la regla del alta normal, que **no** es lo que se quiso.
+      ⚠ El campo se declara **sin `.optional()` ni `.or(z.literal(''))`**: sin eso la cadena vacía
+      —lo que manda un `<input>` en blanco— pasaría la validación y el campo sería obligatorio solo
+      en el asterisco del label.
+    - ⚠ **`sexo` arranca SIN preselección**, a diferencia de `patient-form.tsx`, que siembra
+      `'femenino'` por default. Es un **dato clínico**: no debe quedar guardado por inferencia
+      porque el usuario no tocó el selector. El schema lo exige, así que el submit no pasa hasta que
+      se elija. **No "unificar" esto copiando el default del alta normal.**
+    - **El choque de DNI (400) NO es un callejón sin salida: tiene TRES ramas.** El POST rechaza con
+      *"Ya existe un paciente registrado con este DNI"*, y el cliente hace un `GET /api/pacientes?q=<dni>`
+      para averiguar cuál es el caso:
+      1. **Devuelve filas → el paciente existe y está ACTIVO.** Se ofrece **seleccionarlo** (es el
+         que la búsqueda por nombre no encontró) y **no se crea nada**.
+      2. **Devuelve vacío → el paciente existe pero está ARCHIVADO.** El `GET` filtra
+         `archivado_at IS NULL` y el `UNIQUE (creado_por, dni)` **no es parcial**, así que un
+         archivado **sigue ocupando su DNI** sin aparecer en el buscador. Sin explicar esto el
+         usuario queda trabado: la app le dice que el paciente existe y a la vez no se lo muestra.
+         Se le indica dónde desarchivarlo — ⚠ **sin ofrecer la acción, que es exclusiva del médico
+         (regla 9)**.
+      3. ⚠ **El `GET` falla (403, red) → no se puede saber cuál de las dos es.** Se informa el
+         choque **a secas**, sin inventar una explicación, y con una salida concreta ("buscalo por
+         nombre"). **Mostrar la rama equivocada sería peor que no explicar nada.**
+    - ⚠ **El `ilike` del buscador es por CONTENCIÓN (`%dni%`), no exacto**, así que el paso 1 puede
+      devolver **más de una fila** (buscar `1234567` trae también al DNI `12345678`). **Se
+      renderizan todas y elige el usuario**: acá no se adivina cuál es.
+    - **Permisos:** el botón exige **`editar_pacientes`** (no existe `crear_pacientes`), y sin él va
+      **deshabilitado, no oculto** — mismo criterio que `BotonCrearConPermiso`, que **no se reusa**
+      porque su API está atada a un `href` + `<Link>` y acá no se navega. Es **solo UX**: la
+      autorización real la hacen el endpoint (403) y la RLS `pacientes_insert`. ⚠ El buscador, en
+      cambio, exige **`ver_pacientes`** — son **dos permisos independientes**, y de ahí sale el
+      hueco anotado en `PENDIENTES.md` (un asistente sin `ver_pacientes` nunca llega al botón).
 
 ---
 
@@ -1751,3 +1799,73 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
     - **Cómo se cuenta bien:** la opción de **solo-coincidencias** de grep, canalizada a un
       contador de líneas. Ahí sí sale el número real.
     - Aplica a **cualquier** conteo sobre HTML servido, no solo al nonce.
+39. **⚠⚠ `.pick()` / `.omit()` / `.partial()` SOBRE UN SCHEMA REFINADO COMPILAN Y TUMBAN EL BUILD.
+    Todo schema con derivaciones exporta un OBJETO BASE sin refinements.** No es específico de
+    ningún dominio: aplica a **cualquier** schema de `lib/validations/` y es la clase de error que
+    pasa el CI de tipos y se cae recién en el deploy.
+    - **La causa, y por qué la intuición de Zod 3 engaña:** en **Zod 3**, `.refine()` sobre un
+      objeto devolvía un **`ZodEffects`**, que **no tiene** esos métodos — el error saltaba en
+      `tsc`, a la cara. En **Zod 4** (el que usa el proyecto) `.refine()` devuelve **el mismo
+      `ZodObject`**, con el refinamiento guardado adentro. O sea que **`.pick` existe en el tipo y
+      en el objeto**, y `tsc --noEmit` da **exit 0**.
+    - ⚠⚠ **Y al ejecutarse lanza:** *"`.pick()` cannot be used on object schemas containing
+      refinements"*. Idem `.omit()` y `.partial()`. **`.extend()` es la ÚNICA que sí funciona**
+      sobre un schema refinado.
+    - ⚠⚠ **El momento del throw es lo que lo vuelve grave: es AL IMPORTAR EL MÓDULO.** Un schema
+      se declara a **nivel de módulo**, así que la derivación se evalúa cuando alguien importa el
+      archivo — y **`next build` importa los módulos** para recolectar los datos de las rutas. **Se
+      cae el build entero**, no el endpoint que lo usa. Es **exactamente** el modo de fallo que
+      tenía el cliente de Resend antes del lazy-init (**nota técnica 16**), con la misma
+      consecuencia: un deploy roto por una línea que compilaba.
+    - **La regla del proyecto:** *todo schema que vaya a tener derivaciones se escribe en **dos
+      pasos** — un `z.object({...})` en una constante propia (el **base**, sin refinements) y el
+      refinado construido sobre él. **Las derivaciones van sobre el base, NUNCA sobre el
+      refinado.*** Convertir un schema existente a esta forma es **mecánico y sin cambio de
+      comportamiento**: el valor exportado y sus tipos no cambian.
+    - **Los TRES casos vivos hoy**, los tres en el mismo patrón:
+
+      | Base | Refinado que se exporta | Derivación | ¿El base se exporta? |
+      |---|---|---|---|
+      | `turnoBaseSchema` (`turno.schema.ts`) | `turnoSchema` (`.superRefine`) | `turnoUpdateSchema = turnoBaseSchema.partial()` | **Sí** |
+      | `bloqueoAgendaBaseObject` (`turno.schema.ts`) | `bloqueoAgendaSchema` | `bloqueoAgendaUpdateSchema = …​.partial()` | No |
+      | **`pacienteBaseObject`** (`paciente.schema.ts`) | `pacienteSchema` (`.refine` de obra social) | `pacienteAltaRapidaSchema = …​.pick({…}).extend({…})` | **No** |
+
+      ⚠ **`pacienteBaseObject` NO se exporta, a diferencia de `turnoBaseSchema`**, y es
+      deliberado: su único derivado vive **en el mismo archivo**, así que dejarlo privado impide
+      que alguien derive desde afuera sin leer el JSDoc que explica todo esto. Si algún día hace
+      falta derivarlo desde otro módulo, se exporta — pero recién ahí.
+    - ⚠ **`tsc --noEmit` en 0 NO es prueba suficiente al tocar schemas.** Es el único cambio del
+      repo donde el compilador **no puede** ver el error. **La verificación es `npm run build`.**
+40. **El modal del turno INTERCAMBIA LA VISTA; no anida un segundo `Dialog`. No convertirlo en uno.**
+    `turno-form.tsx` **es** el Dialog —no existe un `turno-form-modal.tsx` separado— y su
+    `DialogContent` muestra **el formulario del turno O el del alta rápida de paciente**, según el
+    `useState` `modoAlta`. **Un solo Dialog, un solo overlay, un solo `Escape`.**
+    - ⚠ **Por qué NO se anidó un `Dialog`:** habría sido **el primero del proyecto** (verificado:
+      las 4 apariciones de `<Dialog>` en `src/` son raíces independientes). Dos `Dialog` de Radix
+      son **dos overlays, dos trampas de foco y dos handlers de `Escape`**, y el riesgo concreto
+      era que **`Escape` sobre el sub-dialog cerrara los dos** y se perdiera el formulario del
+      turno entero, con la fecha, la hora y el motivo ya cargados.
+    - ⚠ **El `AlertDialog` de borrado que YA está anidado en ese mismo archivo NO es precedente
+      válido.** Es **otra primitiva**, más simple por diseño: sin campos, sin scroll, con el foco
+      atrapado entre dos botones. Que aquél anide bien **no dice nada** sobre anidar un `Dialog`
+      con un formulario adentro. **Ese `AlertDialog` se queda como está.**
+    - ⚠ **Por qué el estado del turno SOBREVIVE al intercambio** (que es lo que hace viable el
+      patrón): el `<Form>` **se desmonta del DOM**, pero los valores **no viven ahí** — viven en el
+      `useForm` de `TurnoFormModal`, **que no se desmonta** (el intercambio ocurre adentro suyo), y
+      **`shouldUnregister` es `false` por defecto en RHF v7**: desmontar un campo no borra su
+      valor. Y el efecto de reset depende de **`[initialDates, initialData, open, form]`**,
+      **ninguna** de las cuales cambia al alternar la vista. **En todo el flujo del alta no se
+      llama a `form.reset()`.**
+    - ⚠ **Al CERRAR el modal hay que resetear `modoAlta`**, en la rama `else` de ese mismo efecto
+      (donde ya se limpian `searchTerm`, `pacientes` y `showDropdown`). Sin eso, cerrar estando en
+      el alta y volver a abrir deja el modal **en la vista de alta** en vez del formulario del
+      turno.
+    - ⚠ **`onCreado` NO llama a `onSaved()` ni a `onOpenChange(false)`.** Crear un paciente **no
+      es guardar un turno**: son dos acciones separadas y el turno se agenda en un segundo paso.
+      Llamar a cualquiera de las dos **cerraría el modal y tiraría lo que el usuario ya cargó**.
+      Lo que sí hace es replicar las 6 líneas del clic en una sugerencia del dropdown (los dos
+      `setValue`, los dos `clearErrors`, limpiar `searchTerm` y cerrar el dropdown) más
+      `setModoAlta(false)`.
+    - **Si aparece otro flujo que pida "un formulario dentro de un modal", este es el patrón**: un
+      `useState` de vista y dos ramas en el mismo `DialogContent`, con el encabezado reflejando en
+      cuál está. Es más barato que un Dialog anidado y no tiene sus problemas de foco.
