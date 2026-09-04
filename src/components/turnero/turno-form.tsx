@@ -4,13 +4,14 @@ import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Loader2, CalendarPlus, Trash2, FileText } from 'lucide-react'
+import { Loader2, CalendarPlus, Trash2, FileText, UserPlus } from 'lucide-react'
 import { CATEGORIA_STYLES, CATEGORIAS } from '@/constants/turno-categorias'
 import { toast } from 'sonner'
 import { TurnoFormData, turnoSchema } from '@/lib/validations/turno.schema'
 import { formatParaInputAR, parseFechaHoraAR } from '@/lib/utils/format-date'
 import { usePermisos } from '@/contexts/permisos-context'
 import type { PacienteBusqueda, TurnoConPaciente } from '@/types'
+import { AltaRapidaPaciente } from './alta-rapida-paciente'
 
 import {
   Dialog,
@@ -87,6 +88,19 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
   // de rebotar contra /sin-acceso. La protección real es server-side y no cambia.
   const { tienePermiso } = usePermisos()
   const puedeVerHistoria = tienePermiso('ver_historia_clinica')
+  // Alta rápida de paciente desde el buscador. ⚠ También es SOLO UX: la autorización real
+  // la hacen `POST /api/pacientes` (403) y la RLS `pacientes_insert`, que exigen el mismo
+  // permiso. Acá solo se decide si el botón se ve habilitado o apagado.
+  // ⚠ No existe un permiso `crear_pacientes`: el alta usa `editar_pacientes`.
+  const puedeCrearPaciente = tienePermiso('editar_pacientes')
+
+  // Vista activa del modal. ⚠ Es un INTERCAMBIO DE VISTA dentro del mismo DialogContent, no
+  // un Dialog anidado: dos <Dialog> de Radix traerían dos overlays, dos trampas de foco y
+  // dos handlers de Escape, y habría sido el primer anidamiento del proyecto. Como
+  // `TurnoFormModal` no se desmonta y `shouldUnregister` es false por defecto en RHF, el
+  // formulario del turno conserva fecha, hora, motivo y notas mientras se da de alta.
+  const [modoAlta, setModoAlta] = useState(false)
+  const [nombreParaAlta, setNombreParaAlta] = useState('')
 
   const form = useForm<TurnoFormData>({
     resolver: zodResolver(turnoSchema),
@@ -214,6 +228,10 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
       setSearchTerm('')
       setPacientes([])
       setShowDropdown(false)
+      // ⚠ Sin esto, cerrar el modal estando en el alta y volver a abrirlo lo dejaría en la
+      // vista de alta en vez del formulario del turno.
+      setModoAlta(false)
+      setNombreParaAlta('')
     }
   }, [initialDates, initialData, open, form])
 
@@ -227,6 +245,29 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
       setShowDropdown(false)
     }
   }, [esTurnoMedico, form])
+
+  /**
+   * Vuelta del alta rápida con un paciente disponible (recién creado, o el que ya existía
+   * y se encontró por DNI). Replica exactamente lo que hace el clic en una sugerencia del
+   * dropdown, y además sale del modo alta.
+   *
+   * ⚠ NO llama a `onSaved()` ni a `onOpenChange(false)`: eso cerraría el modal y perdería
+   * lo que el usuario ya cargó del turno. Crear un paciente **no** es guardar un turno —
+   * son dos acciones separadas y el turno se agenda en un segundo paso.
+   *
+   * ⚠ Tampoco mete al paciente en el estado `pacientes`: está tipado `PacienteBusqueda[]`
+   * y exige campos que el POST no devuelve (el join `obras_sociales`). No hace falta — el
+   * dropdown ya se cerró y el turnero solo necesita el id y el nombre.
+   */
+  function onPacienteCreado(nuevo: { id: string; nombre_completo: string }) {
+    form.setValue('paciente_id', nuevo.id)
+    form.setValue('paciente_nombre_libre', nuevo.nombre_completo)
+    form.clearErrors('paciente_id')
+    form.clearErrors('paciente_nombre_libre')
+    setSearchTerm('')
+    setShowDropdown(false)
+    setModoAlta(false)
+  }
 
   async function onDelete() {
     if (!initialData) return
@@ -288,20 +329,38 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
         <DialogHeader>
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
-              <CalendarPlus className="h-4 w-4 text-primary" />
+              {modoAlta
+                ? <UserPlus className="h-4 w-4 text-primary" />
+                : <CalendarPlus className="h-4 w-4 text-primary" />}
             </div>
             <div>
-              <DialogTitle>{initialData ? 'Editar Evento' : 'Nuevo Evento'}</DialogTitle>
+              {/* El encabezado refleja en qué vista está el modal: es el único indicio de
+                  que el formulario del turno sigue vivo detrás. */}
+              <DialogTitle>
+                {modoAlta
+                  ? 'Nuevo paciente'
+                  : initialData ? 'Editar Evento' : 'Nuevo Evento'}
+              </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                {initialData
-                  ? 'Modificá los detalles del evento.'
-                  : 'Completá los datos del evento.'}
+                {modoAlta
+                  ? 'Cargá los datos mínimos. Después volvés al turno con el paciente seleccionado.'
+                  : initialData
+                    ? 'Modificá los detalles del evento.'
+                    : 'Completá los datos del evento.'}
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
-        {!initialData && (
+        {modoAlta && (
+          <AltaRapidaPaciente
+            nombreInicial={nombreParaAlta}
+            onCreado={onPacienteCreado}
+            onCancelar={() => setModoAlta(false)}
+          />
+        )}
+
+        {!modoAlta && !initialData && (
           <div className="flex justify-start -mt-1">
             <Button type="button" variant="link" className="px-0 h-auto text-xs text-muted-foreground" onClick={onSwitchToBlock}>
               ¿Necesitás bloquear este horario?
@@ -309,6 +368,11 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
           </div>
         )}
 
+        {/* ⚠ El formulario del turno se DESMONTA del DOM mientras se da de alta, pero sus
+            valores NO se pierden: viven en el `useForm` de este componente, que sigue
+            montado, y `shouldUnregister` es `false` por defecto en RHF. Por eso el alta
+            rápida puede ser un intercambio de vista y no un Dialog anidado. */}
+        {!modoAlta && (
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 
@@ -425,8 +489,35 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                             ))}
                           </ul>
                         ) : (
-                          <div className="p-3 text-sm text-muted-foreground">
-                            No se encontraron pacientes.
+                          /* Estado vacío del dropdown: la búsqueda FUNCIONÓ y no encontró a
+                             nadie. ⚠ Un fallo del fetch NO llega acá — el catch del efecto
+                             cierra el dropdown a propósito, para que un 403 no se lea como
+                             "no existe". Por eso el botón de alta aparece solo cuando de
+                             verdad no hay resultados. */
+                          <div className="p-3 space-y-2">
+                            <p className="text-sm text-muted-foreground">
+                              No se encontraron pacientes.
+                            </p>
+                            {/* Sin `editar_pacientes` el botón va DESHABILITADO, no oculto:
+                                mismo criterio que `BotonCrearConPermiso`. No se importa ese
+                                componente porque su API está atada a un `href` + `<Link>` y
+                                acá no se navega — se cambia de vista dentro del modal. */}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="w-full gap-1.5"
+                              disabled={!puedeCrearPaciente}
+                              title={puedeCrearPaciente ? undefined : 'Requiere permiso para dar de alta pacientes'}
+                              onClick={() => {
+                                setNombreParaAlta(searchTerm)
+                                setShowDropdown(false)
+                                setModoAlta(true)
+                              }}
+                            >
+                              <UserPlus className="h-3.5 w-3.5" />
+                              Dar de alta
+                            </Button>
                           </div>
                         )}
                       </div>
@@ -580,6 +671,7 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
 
           </form>
         </Form>
+        )}
       </DialogContent>
     </Dialog>
   )

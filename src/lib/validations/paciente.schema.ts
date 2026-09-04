@@ -16,8 +16,37 @@ function getAge(fechaNac: string): number {
   return age
 }
 
+// ── Constantes compartidas ────────────────────────────────────────────────────
+
+/**
+ * Formato aceptado de teléfono: dígitos, espacios, `+`, `-`, `(` y `)`, entre 6 y 20
+ * caracteres. Vive acá —y no inline— porque lo usan DOS declaraciones del archivo: el
+ * campo `telefono` del alta normal (opcional) y el del alta rápida (obligatorio). Si el
+ * regex se duplicara, las dos reglas podrían divergir en silencio.
+ */
+const TELEFONO_REGEX = /^[\d\s\+\-\(\)]{6,20}$/
+const TELEFONO_MENSAJE = 'Formato inválido (ej: +54 11 1234-5678)'
+
 // ── Schema ────────────────────────────────────────────────────────────────────
-export const pacienteSchema = z.object({
+
+/**
+ * Objeto base **SIN refinements**, necesario para poder derivar schemas con `.pick()`
+ * (mismo motivo por el que existe `bloqueoAgendaBaseObject` en `turno.schema.ts`).
+ *
+ * ⚠⚠ **No es una preferencia de estilo: sin esto se rompe el BUILD.** En Zod 4 `.refine()`
+ * devuelve un **`ZodObject`** (en Zod 3 devolvía `ZodEffects`), así que `.pick()` **existe
+ * en el tipo y `tsc` compila sin una queja** — pero al ejecutarse lanza
+ * *".pick() cannot be used on object schemas containing refinements"*. Como los schemas se
+ * declaran a **nivel de módulo**, ese throw ocurre **al importar el archivo**, y
+ * `next build` importa los módulos para recolectar los datos de las rutas: el build entero
+ * se cae. Mismo modo de fallo que tenía el cliente de Resend antes del lazy-init (nota
+ * técnica 16). Lo mismo aplica a `.omit()` y `.partial()`; `.extend()` es la única que sí
+ * funciona sobre un schema ya refinado.
+ *
+ * **Regla:** toda derivación (`.pick()`, `.omit()`, `.partial()`) va sobre
+ * `pacienteBaseObject`, **nunca** sobre `pacienteSchema`.
+ */
+const pacienteBaseObject = z.object({
   dni: z
     .string()
     .min(7, 'El DNI debe tener al menos 7 dígitos')
@@ -53,10 +82,7 @@ export const pacienteSchema = z.object({
 
   telefono: z
     .string()
-    .regex(
-      /^[\d\s\+\-\(\)]{6,20}$/,
-      'Formato inválido (ej: +54 11 1234-5678)'
-    )
+    .regex(TELEFONO_REGEX, TELEFONO_MENSAJE)
     .optional()
     .or(z.literal('')),
 
@@ -89,7 +115,15 @@ export const pacienteSchema = z.object({
     .or(z.literal(''))
     .transform((val) => val?.trim() || null),
   numero_afiliado: z.string().max(50).optional().or(z.literal('')),
-}).refine(
+})
+
+/**
+ * Schema del alta de paciente (formulario completo de `/pacientes/nuevo` y el PATCH de
+ * edición). Es `pacienteBaseObject` **más** el refine cruzado de obra social.
+ *
+ * ⚠ Este es el valor refinado: **no derivar de acá** (ver el JSDoc de `pacienteBaseObject`).
+ */
+export const pacienteSchema = pacienteBaseObject.refine(
   (data) => {
     // Si no hay obra_social_id y hay texto en obra_social_otro, debe tener al menos 2 chars.
     // Sin `.trim()`: el valor ya llega recortado por el `.transform()` del campo.
@@ -109,3 +143,41 @@ export const pacienteSchema = z.object({
 // `useForm` de tres genéricos en `patient-form.tsx` (mismo patrón que `consulta-detail.tsx`).
 export type PacienteFormValues = z.infer<typeof pacienteSchema>
 export type PacienteFormInput  = z.input<typeof pacienteSchema>
+
+// ── Alta rápida (desde el modal del turnero) ──────────────────────────────────
+
+/**
+ * Los 5 campos mínimos para dar de alta un paciente **desde el modal del turno**, sin salir
+ * del turnero. Deriva de `pacienteBaseObject` para **no duplicar** las reglas: el regex del
+ * DNI, el del nombre y los tres refines de la fecha de nacimiento son exactamente los mismos
+ * que valida el alta completa.
+ *
+ * ⚠ El `.pick()` va sobre `pacienteBaseObject` y **NUNCA** sobre `pacienteSchema` — ver el
+ * JSDoc de aquél: sobre el refinado compila y rompe el build.
+ *
+ * ⚠⚠ **`telefono` es OBLIGATORIO acá y opcional en el alta normal, a propósito.** No es una
+ * inconsistencia: es una regla de **calidad de dato propia de este flujo**, no un invariante
+ * de la entidad. Un paciente que se carga en el momento de agendarle un turno necesita un
+ * teléfono de contacto —es para eso que se lo está cargando—; uno que se carga desde
+ * `/pacientes` puede no tenerlo todavía. **El servidor sigue sin exigirlo** (`POST
+ * /api/pacientes` valida con `pacienteSchema`, donde el campo es opcional) y eso también es
+ * deliberado: endurecerlo ahí cambiaría la regla del alta normal, que no es lo que se quiso.
+ * La consecuencia asumida es que esta exigencia vive **solo en el cliente**.
+ *
+ * ⚠ El `.extend()` del teléfono **no lleva `.optional()` ni `.or(z.literal(''))`**. Sin eso,
+ * la cadena vacía —que es lo que manda un `<input>` en blanco— **pasaría la validación** y el
+ * campo sería obligatorio solo en el asterisco del label.
+ */
+export const pacienteAltaRapidaSchema = pacienteBaseObject
+  .pick({
+    nombre_completo: true,
+    dni: true,
+    telefono: true,
+    sexo: true,
+    fecha_nacimiento: true,
+  })
+  .extend({
+    telefono: z.string().regex(TELEFONO_REGEX, TELEFONO_MENSAJE),
+  })
+
+export type PacienteAltaRapidaValues = z.infer<typeof pacienteAltaRapidaSchema>
