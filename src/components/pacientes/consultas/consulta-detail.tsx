@@ -23,7 +23,7 @@ import {
 
 import { usePermisos } from '@/contexts/permisos-context'
 import { consultaSchema, type ConsultaFormInput, type ConsultaFormData } from '@/lib/validations/consulta.schema'
-import { formatFechaAR, parseFechaHoraAR } from '@/lib/utils/format-date'
+import { formatFechaAR, formatParaInputAR, parseFechaHoraAR } from '@/lib/utils/format-date'
 import { FinalizarDialog } from './finalizar-dialog'
 import { DescartarDialog } from './descartar-dialog'
 import { ConsultaPDFButton } from './pdf-download-button'
@@ -238,16 +238,30 @@ function ConsultaForm({
     !archivado &&
     (esMedico || consulta.creado_por === currentUserId)
 
-  // Valor default para fecha_hora: ahora, en formato datetime-local
-  const nowLocal = useMemo(() => {
-    const now = new Date()
-    now.setSeconds(0, 0)
-    return now.toISOString().slice(0, 16)
-  }, [])
+  // Valor default para fecha_hora: ahora, como hora de PARED ARGENTINA en el formato
+  // que pide un <input type="datetime-local">.
+  //
+  // ⚠ Antes era `new Date().toISOString().slice(0, 16)`, y ahí estaba el bug: el formato
+  // era el correcto pero la ZONA no — `toISOString()` serializa siempre en UTC, así que
+  // el campo abría con +3 h respecto del reloj del consultorio. `formatParaInputAR` fija
+  // `TZ_AR` y devuelve "yyyy-MM-dd'T'HH:mm", o sea que YA VIENE SIN SEGUNDOS: el
+  // `setSeconds(0, 0)` que había acá era para recortar lo que el slice se llevaba, y
+  // dejó de hacer falta.
+  //
+  // ⚠⚠ Esta punta es la MITAD de un par: la otra es el anclaje con `parseFechaHoraAR`
+  // en `submitWithEstado`. Las dos tienen que estar en `TZ_AR` a la vez — convertir una
+  // sola mueve el instante guardado en silencio (CLAUDE.md → nota técnica 25).
+  const nowLocal = useMemo(() => formatParaInputAR(new Date()), [])
 
-  const todayStr = useMemo(() => {
-    return new Date().toISOString().split('T')[0]
-  }, [])
+  // "Hoy" en la zona del CONSULTORIO, para el `min` del input de fecha del próximo
+  // control. Con el `toISOString().split('T')[0]` anterior era "hoy" en UTC, así que
+  // entre las 21:00 y las 00:00 ART apuntaba al día siguiente y el input rechazaba la
+  // fecha de hoy.
+  //
+  // Sin try/catch a propósito: `formatFechaAR` LANZA ante una entrada inválida, pero acá
+  // la entrada es `new Date()`, que nunca lo es. ⚠ No copiar este patrón a un caso donde
+  // la fecha venga de afuera (ver el try/catch del memo de `proximo_turno_sugerido`).
+  const todayStr = useMemo(() => formatFechaAR(new Date(), 'yyyy-MM-dd'), [])
 
   // Los tres genéricos documentan el nudo del schema: ENTRA `ConsultaFormInput`
   // (z.input) y SALE `ConsultaFormData` (z.output). Difieren por el `.transform()`
@@ -258,8 +272,13 @@ function ConsultaForm({
     resolver: zodResolver(consultaSchema),
     defaultValues: {
       paciente_id:           pacienteId,
+      // ⚠ Se pasa el STRING de la base tal cual, sin `new Date()` intermedio:
+      // `formatParaInputAR` ya acepta el ISO con offset que devuelve PostgREST, y el
+      // canon pide no meter parseos de más en el camino (nota técnica 18). Antes esto
+      // era `new Date(...).toISOString().slice(0, 16)` — el mismo bug de zona que
+      // `nowLocal`, en la rama de EDICIÓN.
       fecha_hora:            consulta?.fecha_hora
-        ? new Date(consulta.fecha_hora).toISOString().slice(0, 16)
+        ? formatParaInputAR(consulta.fecha_hora)
         : nowLocal,
       motivo_consulta:       consulta?.motivo_consulta ?? '',
       anamnesis:             consulta?.anamnesis ?? '',
@@ -356,12 +375,37 @@ function ConsultaForm({
     const valid = await form.trigger()
     if (!valid) return
 
+    // ── Anclar `fecha_hora` a la zona del CONSULTORIO antes de mandarla ──────────
+    // El <input type="datetime-local"> entrega hora de PARED argentina, sin offset
+    // ("2026-09-04T15:30"). Mandarla cruda la dejaba a merced de la zona de la sesión de
+    // Postgres (UTC), así que las 15:30 AR se guardaban como 15:30Z = 12:30 AR. Mismo
+    // patrón que `turno-form.tsx` y que el `proximo_turno_sugerido` de más arriba.
+    //
+    // ⚠⚠ Esta es la otra mitad del par que empieza en `nowLocal` / el default de
+    // `fecha_hora`. Las dos anclan en `TZ_AR`; tocar una sola desplaza los datos en
+    // silencio (CLAUDE.md → nota técnica 25).
+    //
+    // ⚠ `form.getValues()` devuelve el INPUT crudo —el tercer genérico de `useForm` solo
+    // tipa `handleSubmit`, que acá no se usa—, y `parseFechaHoraAR` devuelve
+    // `Invalid Date` en vez de lanzar. Por eso el chequeo explícito, igual que en el
+    // efecto de `proximo_turno_sugerido`. Va ANTES de `setIsSubmitting(true)` para no
+    // dejar el botón colgado al abortar.
+    const values = form.getValues()
+    const fechaHoraInstante = parseFechaHoraAR(values.fecha_hora)
+    if (isNaN(fechaHoraInstante.getTime())) {
+      toast.error('La fecha y hora de la consulta no es válida. Revisá el campo e intentá de nuevo.')
+      return
+    }
+
     setIsSubmitting(true)
     setShowFinalizar(false)
 
     try {
-      const values = form.getValues()
-      const payload = { ...values, estado }
+      const payload = {
+        ...values,
+        estado,
+        fecha_hora: fechaHoraInstante.toISOString(),
+      }
 
       const url    = consulta ? `/api/consultas/${consulta.id}` : '/api/consultas'
       const method = consulta ? 'PATCH' : 'POST'
