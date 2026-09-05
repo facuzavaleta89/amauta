@@ -236,10 +236,25 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
   }, [initialDates, initialData, open, form])
 
   // When category changes away from turno_medico, clear patient fields
+  //
+  // ⚠⚠ Los dos campos se limpian con `null`, NUNCA con `undefined` ni con `''`, y no es
+  // estilo: `JSON.stringify` —el submit— **DESCARTA las claves `undefined`**, así que con
+  // `undefined` la clave nunca viaja en el request y el endpoint no recibe la orden de
+  // limpiar: el `paciente_id` viejo SOBREVIVE en la base. Es una diferencia semántica real
+  // entre "no mandes este campo" (`undefined`) y "poneló en null" (`null`), y acá lo que se
+  // quiere decir es lo segundo.
+  //
+  // Los síntomas que producía, los tres verificados en el navegador: el evento del
+  // calendario seguía mostrando el nombre del paciente tras pasar a `personal` (el join de
+  // `GET /api/turnero` seguía resolviendo), volver a `turno_medico` dejaba el campo Paciente
+  // vacío pero la fila con su id viejo, y `paciente_nombre_libre` quedaba guardado como `''`.
+  //
+  // Mismo motivo por el que `patient-form.tsx` manda `obra_social_id: null` explícito al
+  // soltar la obra social — ver el comentario de `paciente.schema.ts`.
   useEffect(() => {
     if (!esTurnoMedico) {
-      form.setValue('paciente_id', undefined)
-      form.setValue('paciente_nombre_libre', '')
+      form.setValue('paciente_id', null)
+      form.setValue('paciente_nombre_libre', null)
       setSearchTerm('')
       setPacientes([])
       setShowDropdown(false)
@@ -458,7 +473,12 @@ export function TurnoFormModal({ open, onOpenChange, initialDates, initialData, 
                         value={field.value || ''}
                         onChange={(e) => {
                             field.onChange(e)
-                            form.setValue('paciente_id', undefined)
+                            // Tipear DESVINCULA el paciente elegido.
+                            // ⚠ `null`, no `undefined`: `JSON.stringify` descarta las claves
+                            // `undefined`, así que con `undefined` la desvinculación no viaja
+                            // en el request y el `paciente_id` viejo sobrevive en la base.
+                            // Ver el comentario del efecto que limpia por categoría.
+                            form.setValue('paciente_id', null)
                             setSearchTerm(e.target.value)
                         }}
                         onFocus={() => { if(pacientes.length > 0 || searchTerm.trim().length >= 3) setShowDropdown(true) }}

@@ -5,6 +5,7 @@ import { buscarSolapamientos } from '@/lib/agenda/solapamiento'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { formatFechaAR } from '@/lib/utils/format-date'
 import { resolverAcceso } from '@/lib/auth/tenant'
+import { verificarPacienteDelTenant } from '@/lib/pacientes/verificar-paciente'
 
 export const dynamic = 'force-dynamic'
 
@@ -103,6 +104,36 @@ export async function POST(request: NextRequest) {
 
     const t = result.data
 
+    // ── Validación de TENANT del paciente ──────────────────────────────────────
+    // ⚠ Misma guarda que el PATCH de `[id]/route.ts`, y entra en la misma tanda a
+    // propósito: ponerla solo en la edición dejaba el turnero INCOHERENTE — se habría
+    // podido CREAR un turno para un paciente archivado (o de otro tenant) pero no editarlo.
+    //
+    // Lo que cierra son dos cosas distintas:
+    //  1. **Aislamiento**: la RLS de `turnos` solo valida `medico_id` (el del TURNO) y la
+    //     FK a `pacientes` no filtra tenant, así que hasta acá el POST aceptaba el id de un
+    //     paciente de OTRO consultorio.
+    //  2. **Regla de negocio 9**: un paciente archivado no admite escritura. Es el mismo
+    //     criterio que ya aplicaban `POST /api/pedidos`, `/api/certificados` y
+    //     `/api/consultas`; el turnero era el único que no lo chequeaba.
+    //
+    // El criterio vive en `lib/pacientes/verificar-paciente.ts` (ver su JSDoc: admin client
+    // + `.eq('creado_por', …)`). Solo corre con un `paciente_id` no nulo: las categorías sin
+    // paciente (curso, personal, administrativo, recordatorio) no tienen nada que validar.
+    if (t.paciente_id) {
+      const chequeo = await verificarPacienteDelTenant(t.paciente_id, tenantMedicoId)
+
+      if (!chequeo.ok) {
+        if (chequeo.motivo === 'archivado') {
+          return NextResponse.json(
+            { error: 'El paciente está archivado. Desarchivalo para agendarle turnos.' },
+            { status: 409 }
+          )
+        }
+        return NextResponse.json({ error: 'Paciente no encontrado' }, { status: 404 })
+      }
+    }
+
     // ── Verificación de solapamiento ───────────────────────────
     // Criterio único del proyecto: `lib/agenda/solapamiento.ts`. Dos cambios respecto de
     // lo que había acá inline: los estados que ocupan ahora son una lista de INCLUSIÓN, y
@@ -129,7 +160,16 @@ export async function POST(request: NextRequest) {
       .from('turnos')
       .insert({
         paciente_id:          t.paciente_id ?? null,
-        paciente_nombre_libre: t.paciente_nombre_libre ?? null,
+        // ⚠ `''` NO es NULL, y la diferencia se nota río abajo: los fallbacks `??` de
+        // `turno-form.tsx` (al reabrir el modal) y de `next-appointments.tsx` NO atrapan la
+        // cadena vacía, así que el dashboard mostraba un nombre en blanco en vez de
+        // 'Sin nombre'. Se normaliza acá, en la escritura, con el mismo criterio que ya usa
+        // `api/difusion/destinatarios` (`?? ''` + `.trim()`) más el colapso a `null` de
+        // `paciente.schema.ts` → `obra_social_otro`. Un nombre de solo espacios tampoco
+        // entra sucio a la base.
+        // ⚠ Hay 21 filas viejas guardadas con `''`: esto CORTA LA FUENTE, no las arregla.
+        // No hay backfill, a propósito.
+        paciente_nombre_libre: (t.paciente_nombre_libre ?? '').trim() || null,
         fecha_inicio:         t.fecha_inicio,
         fecha_fin:            t.fecha_fin,
         motivo:               t.motivo ?? null,
