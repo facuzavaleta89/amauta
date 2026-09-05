@@ -7,6 +7,7 @@ import { DIFUSION_LIMITE_DIARIO } from '@/constants/difusion'
 import { sendEmail } from '@/lib/email/resend'
 import { renderDifusionEmailHtml } from '@/lib/email/difusion-template'
 import { resolverTenant } from '@/lib/auth/tenant'
+import { hoyAR, parseFechaHoraAR } from '@/lib/utils/format-date'
 
 // El SDK de Resend requiere runtime Node (no Edge).
 export const runtime = 'nodejs'
@@ -93,13 +94,28 @@ export async function POST(request: NextRequest) {
     // difusion_envios queda acotado al tenant por su RLS (envios_select), así que este
     // count con el cliente de sesión ya es tenant-scoped. Contamos filas con enviado_at
     // dentro del día actual.
-    const startOfDay = new Date()
-    startOfDay.setHours(0, 0, 0, 0)
+    //
+    // ⚠⚠ EL CORTE DEL DÍA ES LA MEDIANOCHE **ARGENTINA**, y acá no es cosmético: este
+    // contador es el que hace cumplir el límite diario de la regla de negocio 12, así que
+    // el punto de corte decide QUÉ ENVÍOS SE RECHAZAN.
+    //
+    // Antes se derivaba con `new Date()` + `setHours(0, 0, 0, 0)`, o sea la medianoche del
+    // RUNTIME — que en Vercel es **UTC siempre**, no la zona del consultorio. Eso ponía el
+    // reseteo del cupo a las **21:00 ART**, con dos consecuencias reales:
+    //  · los envíos hechos entre las 21:00 y las 00:00 ART se contaban contra el día
+    //    SIGUIENTE, gastándole el cupo por adelantado;
+    //  · y por eso un envío legítimo podía rechazarse con 429 "se superaría el límite"
+    //    cuando en el día real del consultorio todavía tenía cupo de sobra.
+    //
+    // ⚠ `difusion_envios.enviado_at` es `timestamptz` (verificado), así que la comparación
+    // siempre fue instante contra instante: lo único que estaba mal era DÓNDE se ponía el
+    // corte, no el tipo de dato ni el operador.
+    const startOfDay = parseFechaHoraAR(`${hoyAR()}T00:00`).toISOString()
 
     const { count: enviadosHoy, error: countError } = await supabase
       .from('difusion_envios')
       .select('id', { count: 'exact', head: true })
-      .gte('enviado_at', startOfDay.toISOString())
+      .gte('enviado_at', startOfDay)
 
     if (countError) {
       console.error('[difusion/enviar] error contando envíos del día:', countError)
