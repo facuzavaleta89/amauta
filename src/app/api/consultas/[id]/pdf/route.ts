@@ -8,6 +8,7 @@ import type { DocumentProps } from '@react-pdf/renderer'
 import { sanitizePdfFilename } from '@/lib/utils'
 import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL, type ConObraSocial } from '@/lib/pacientes/obra-social'
 import { resolverAcceso } from '@/lib/auth/tenant'
+import { formatFechaAR } from '@/lib/utils/format-date'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -76,7 +77,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       }) as React.ReactElement<DocumentProps>
     )
 
-    const fecha = new Date(consulta.fecha_hora).toISOString().slice(0, 10)
+    // ⚠ Esto NO deriva "hoy" (por eso no va `hoyAR()`): deriva el día de un instante
+    // GUARDADO, `consulta.fecha_hora`, que es un timestamptz. Con `toISOString()` salía
+    // el día en UTC, así que una consulta de las 22:00 ART se descargaba con el nombre de
+    // archivo del día SIGUIENTE.
+    const fecha = formatFechaAR(consulta.fecha_hora, 'yyyy-MM-dd')
     const nombreArchivo = sanitizePdfFilename(`consulta_${pacienteData.nombre_completo}_${fecha}.pdf`)
 
     return new NextResponse(new Uint8Array(buffer), {

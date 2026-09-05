@@ -22,6 +22,7 @@ import {
   type CertificadoFormInput,
 } from '@/lib/validations/pedido.schema'
 import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL } from '@/lib/pacientes/obra-social'
+import { hoyAR } from '@/lib/utils/format-date'
 import type { PacienteBusqueda } from '@/types'
 
 interface CertificadoFormProps {
@@ -46,7 +47,7 @@ export function CertificadoForm({ preselectedPacienteId }: CertificadoFormProps)
   } = useForm<CertificadoFormInput>({
     resolver: zodResolver(certificadoSchema),
     defaultValues: {
-      fecha_certificado: new Date().toISOString().slice(0, 10),
+      fecha_certificado: hoyAR(),
       contenido: '',
     },
   })

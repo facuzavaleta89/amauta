@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { rateLimitAction, getIpFromHeaders } from '@/lib/rate-limit'
-import { formatFechaLarga } from '@/lib/utils/format-date'
+import { formatFechaLarga, hoyAR } from '@/lib/utils/format-date'
 import { XCircle, AlertTriangle, ShieldCheck, User, Calendar, FileText, Award, Clock } from 'lucide-react'
 import React from 'react'
 
@@ -104,7 +104,12 @@ export default async function VerificarDocumentoPage({ params }: PageProps) {
   }
 
   // Verificar expiración si existe valido_hasta
-  const hoyStr = new Date().toISOString().slice(0, 10)
+  // ⚠⚠ Server Component en la ruta PÚBLICA del QR: el runtime es UTC SIEMPRE, así que
+  // con `toISOString()` acá el día no se corría tres horas por día sino todos los días.
+  // Un certificado que vence HOY se le mostraba EXPIRADO a un tercero —un empleador, una
+  // obra social— desde las 21:00 del día anterior. `valido_hasta` es DATE (sin zona), así
+  // que hay que compararlo contra el día del CONSULTORIO, no contra el del runtime.
+  const hoyStr = hoyAR()
   const isExpired = doc.valido_hasta ? hoyStr > doc.valido_hasta : false
 
   return (
