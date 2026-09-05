@@ -30,9 +30,10 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   `components/ui/checkbox.tsx`, y el resumen de envío + lista de "a quién no le llegó" en el
   detalle (`(app)/difusion/[id]/page.tsx` → `difusion-preview.tsx`). Es **tenant-only**: sin
   chequeo de rol, coherente con que difusión no tenga permiso granular. Ver `CLAUDE.md` → regla de
-  negocio 12 y nota técnica 16. **Quedan pendientes** los **cinco** ítems de difusión listados
-  abajo (opt-out, dominio de Resend, envío por lotes, reintento de fallidos y corte del día en
-  UTC), más **WhatsApp**, que no es un pendiente activo sino un canal **fuera de alcance**.
+  negocio 12 y nota técnica 16. **Quedan pendientes** los **cuatro** ítems de difusión listados
+  abajo (opt-out, dominio de Resend, envío por lotes y reintento de fallidos), más **WhatsApp**, que
+  no es un pendiente activo sino un canal **fuera de alcance**. ⚠ El quinto —el **corte del día en
+  UTC**— se **resolvió** el 2026-09-04 (PR #123); su ítem quedó marcado abajo.
 - **✅ RESUELTO (migración 038 + tanda de descarte, 2026-08-08) — no había forma de descartar un
   BORRADOR de consulta.** Detectado al verificar la tanda L4 (2026-08-03) y **preexistente**: se podía
   crear y guardar un borrador, pero **no cancelarlo ni borrarlo**, así que un borrador equivocado o de
@@ -116,12 +117,31 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   pasa a `estado='enviado'`, y a partir de ahí el POST responde **409** ("ya fue enviado"). Los
   destinatarios que fallaron quedan listados en el detalle, pero **no hay forma de reintentarles**
   desde la UI. Falta un reintento acotado a los `difusion_envios` con `enviado_ok=false`.
-- **Difusión — el corte del día del límite es UTC, no hora argentina.** El conteo diario usa
-  `new Date(); setHours(0,0,0,0)` con la hora **local del server** (UTC en Vercel), así que la
-  ventana de 100 se renueva a las **21:00 de Argentina**, no a medianoche. Cosmético mientras el
-  volumen sea bajo; revisar si se acerca al tope. Código: `src/app/api/difusion/enviar/route.ts`
-  (`startOfDay`). Nota: los envíos **fallidos también consumen** la cuota (se cuentan las filas de
-  `difusion_envios` del día, sin filtrar por `enviado_ok`).
+- **✅ RESUELTO (2026-09-04, PR #123 / commit `b1add88`, sin migración) — el corte del día del
+  límite de difusión era UTC, no hora argentina.** El conteo diario usaba `new Date();
+  setHours(0,0,0,0)`, o sea la medianoche del **runtime** (UTC en Vercel), así que **el cupo de 100
+  se reseteaba a las 21:00 ART**. Hoy se ancla con `parseFechaHoraAR(`${hoyAR()}T00:00`)` — ver
+  `CLAUDE.md` → **nota técnica 41**. Un solo archivo: `src/app/api/difusion/enviar/route.ts`
+  (`startOfDay`).
+  - **No era cosmético, y por eso vale dejar escrito qué producía** (el diagnóstico original lo
+    subestimaba). El corrimiento partía el día en dos y la franja **21:00–00:00 ART** se
+    contabilizaba en el día equivocado, con **dos efectos opuestos**:
+    - **Rechazar envíos que SÍ tenían cupo.** Los envíos de esa franja gastaban el cupo del día
+      siguiente **por adelantado**: 40 emails un martes a las 22:00 dejaban el miércoles arrancando
+      en 40/100 sin que nadie hubiera enviado nada ese día. Un envío legítimo de 70 el miércoles a
+      la mañana daba **429** — y como el rechazo es **todo-o-nada** (no envía hasta el tope y
+      corta), no salía **ni un solo email**.
+    - **Permitir hasta 200 en un mismo día argentino.** Simétricamente, después de las 21:00 el
+      contador ya se había reseteado, así que esa franja podía enviar otros 100 **además** de los
+      100 del día que estaba terminando — contra un límite que existe porque el free tier de Resend
+      lo impone.
+  - ⚠ **`difusion_envios.enviado_at` es `timestamptz`** (verificado), así que la comparación
+    siempre fue instante contra instante: lo único que estaba mal era **dónde se ponía el corte**.
+  - ⚠ **No se tocó el límite de 100 en sí** ni el `enviado_at: new Date().toISOString()` del insert
+    del historial — ése es un timestamp de **auditoría** que escribe *"ahora"* en un `timestamptz`,
+    sin hora de pared involucrada, y es **correcto**.
+  - **Sigue vigente:** los envíos **fallidos también consumen** la cuota (se cuentan las filas de
+    `difusion_envios` del día, sin filtrar por `enviado_ok`). Eso **no** cambió.
 - **Difusión — canal WhatsApp: fuera de alcance, sigue sin implementar.** `difusion_posts.canal`
   acepta `email | whatsapp | ambos` y la UI muestra el canal elegido, pero **solo se envía por
   email**: la tanda de envío cubrió únicamente ese canal. `src/lib/whatsapp/wa-link.ts` está
@@ -1112,15 +1132,20 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
   - **Verificación:** `tsc --noEmit`, `npm run lint` y `npm run build` los tres en **exit 0**; el
     lint **se mantuvo en 0 problemas**.
 
-- **⬜ ABIERTO — DECISIÓN DEL MÉDICO, NO deuda técnica (anotado 2026-09-04) — 5 consultas quedaron
-  guardadas 3 h antes de la realidad. ¿Se corrigen o se dejan?**
+- **⬜ DECIDIDO — 2026-09-04, POR EL MÉDICO: LAS 5 CONSULTAS CON LA HORA CORRIDA SE DEJAN COMO
+  ESTÁN. NO SE CORRIGEN.**
+  ⚠⚠ **Esto NO es un pendiente y NO es un olvido: es una decisión tomada, y se deja escrita
+  justamente para que nadie la "arregle" dentro de seis meses creyendo que quedó a medias.** Quien
+  vuelva por acá y quiera revertirla tiene que leer los cuatro ⚠ de abajo antes, sobre todo el de
+  la selección fila por fila.
   Son las filas que el usuario corrigió a mano mientras el bug de zona de `fecha_hora` estaba vivo
   (ver el ítem resuelto de arriba). **El fix cortó la fuente; no reinterpretó lo viejo.**
   - **Alcance exacto: 5 filas de `public.consultas`** (sobre 38). Las otras **33 están bien**.
-  - ⚠⚠ **Las 5 están en `estado = 'finalizada'`.** Corregirlas es **escribir sobre historia clínica
-    cerrada**: contra la **regla de negocio 1** (una consulta finalizada no se edita) y sobre
-    documentación que la **Ley 26.529** obliga a conservar. **Por eso lo decide el médico y no una
-    limpieza de código** — no se anota acá como una tarea pendiente de ejecutar.
+  - ⚠⚠ **EL MOTIVO QUE SOSTIENE LA DECISIÓN: las 5 están en `estado = 'finalizada'`.** Corregirlas
+    es **escribir sobre historia clínica cerrada**: contra la **regla de negocio 1** (una consulta
+    finalizada no se edita) y sobre documentación que la **Ley 26.529** obliga a conservar. Entre
+    dejar un dato con 3 h de desfase y tocar una HC cerrada, **el médico eligió lo primero**. Por
+    eso esto lo decidió él y no una limpieza de código.
   - ⚠ **Si se decide corregir, la selección tiene que ser EXPLÍCITA, fila por fila.** Un criterio
     automático del tipo *"diferencia contra `created_at` ≈ 3 h"* **confundiría una consulta
     legítimamente retroactiva con una corrompida**: la fila del **2026-06-18** es exactamente ese
@@ -1136,9 +1161,32 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     valor que estaba guardado; hasta ahora se leía con el mismo desfase con que se había escrito, y
     por eso parecía correcto.
 
-- **⬜ ABIERTO (anotado 2026-09-04) — 8 sitios más derivan "hoy" o "ahora" en UTC. Severidad BAJA a
-  MEDIA. PREEXISTENTE.** Comparten la raíz del bug de `fecha_hora` —calcular un día u hora de pared
-  con `toISOString()`— pero son de **otro riesgo** (ver el ⚠ del final).
+- **✅ RESUELTO (2026-09-04, PRs #121 y #122 / commits `44c1104` y `5b5986d`, sin migración) — los
+  8 sitios que derivaban "hoy" o "ahora" en UTC.** Severidad BAJA a MEDIA. PREEXISTENTE. Comparten
+  la raíz del bug de `fecha_hora` —calcular un día u hora de pared con `toISOString()`— pero son de
+  **otro riesgo** (ver el ⚠ del final, que sigue siendo la razón por la que se pudieron hacer
+  sueltos).
+  - **Se cerraron en DOS tandas, no en una:** el PR #121 tomó **7** de los 8, y el octavo
+    —`stats-cards.tsx`— quedó para el PR #122 **a propósito**, porque ahí el bug de zona convivía
+    con **otros dos que no eran de zona** (ver el ítem siguiente).
+  - **El helper que faltaba se agregó:** **`hoyAR()`** en `lib/utils/format-date.ts`, exactamente
+    como este ítem recomendaba en su último ⚠ — en vez de repetir `formatFechaAR(new Date(), …)` en
+    8 archivos. Regla de uso completa en `CLAUDE.md` → **nota técnica 41**.
+  - ⚠ **Uno de los 8 NO se arregló con `hoyAR()`:** el nombre del archivo del PDF de consultas no
+    deriva *hoy*, sino el día de un instante **ya guardado** (`consulta.fecha_hora`), así que va con
+    `formatFechaAR(<instante>, 'yyyy-MM-dd')`. La distinción quedó escrita en la nota 41 porque es
+    el error fácil al aplicar el helper.
+  - **De yapa:** el `hoyStr` de `/certificados` se **izó fuera del `.map()`**, donde se recalculaba
+    una vez **por certificado**; ahora se calcula una sola vez y las 50 filas de la página se
+    comparan todas contra el mismo día aunque el render cruce la medianoche.
+  - ⚠ **Dependencia nueva que conviene tener presente:** `hoyAR()` se evalúa **por request**, así
+    que las rutas que lo usan tienen que seguir siendo **dinámicas (`ƒ`)**. Verificado en el build:
+    `/dashboard`, `/certificados` y `/verificar/[codigo]` lo son. Si alguna se volviera estática, el
+    "hoy" quedaría congelado en la fecha del deploy.
+  - **Verificación:** `tsc --noEmit`, `npm run lint` y `npm run build` los tres en **exit 0**, en
+    las dos tandas; el lint se mantuvo en **0 problemas**.
+
+  **El relevamiento original, que se conserva porque documenta el impacto de cada sitio:**
   - **Los dos que más importan** — la fecha se **imprime en el PDF y se congela al emitir** (regla de
     negocio 5), así que **queda mal para siempre**. Entre las **21:00 y las 00:00 ART el documento se
     fecha MAÑANA**:
@@ -1164,19 +1212,79 @@ Ajustes de comportamiento, flujos incompletos, detalles de usabilidad y trabajo 
     `formatFechaAR(new Date(), 'yyyy-MM-dd')`. Si se ataca esta familia, **conviene agregar el helper
     a `lib/utils/format-date.ts`** en vez de repetir esa expresión en 8 archivos — que es
     exactamente cómo nacieron los 6 duplicados que la **nota técnica 18** vino a unificar.
+    *(Se hizo así: es `hoyAR()`.)*
 
-- **⬜ ABIERTO (anotado 2026-09-04, hallado relevando el turnero) — el PATCH del turnero DESCARTA la
-  mitad del payload en silencio. Bug VIVO. PREEXISTENTE.** `turno-form.tsx` manda por PATCH el
-  objeto completo del formulario (10 claves), pero `PATCH /api/turnero/[id]` valida con
-  **`turnoUpdateWithDatesSchema`**, que **no declara `paciente_id`, `categoria`,
-  `paciente_nombre_libre`, `origen` ni `consulta_id`** — y es un `z.object` **sin `.passthrough()`**,
-  así que Zod los **borra** antes del `.update()`. Consecuencia: **cambiar el paciente o la categoría
-  de un turno existente desde el modal NO HACE NADA**, y el toast dice *"Turno actualizado"*. Sin
-  error, sin 400, sin log.
+- **✅ RESUELTO (2026-09-04, PR #122 / commit `5b5986d`, sin migración) — las tres ventanas
+  temporales de las tarjetas del dashboard.** Un solo archivo,
+  `src/components/dashboard/stats-cards.tsx` (función `getStats`).
+  ⚠⚠ **Eran TRES bugs distintos y solo UNO era de zona**, así que cambiar el helper **no
+  alcanzaba** — por eso este archivo quedó afuera del PR #121 aunque una de sus líneas figuraba en
+  el relevamiento de los 8 sitios de arriba.
+  - **"Turnos Hoy" — el de zona, y con DOS problemas encadenados.** El día se calculaba en UTC **y**
+    los límites eran timestamps **sin offset**, que Postgres interpreta en la zona de la sesión
+    (UTC). La ventana efectiva iba de **ayer 21:00 a hoy 20:59 AR**: contaba los turnos nocturnos de
+    ayer y no los de esta noche. ⚠ **Poner `hoyAR()` a secas habría arreglado solo la mitad** —el
+    día— y dejado los límites en UTC; hay que construir **instantes**. Es la lección que quedó en
+    `CLAUDE.md` → **nota técnica 41**. De paso el `.lte(…T23:59:59)` pasó a `.lt(<día siguiente>)`:
+    el `lte` perdía el último segundo y un turno a las **23:59:30** no se contaba.
+  - **"Turnos esta semana" — ⚠ NO era de zona, era de LÓGICA.** Dos cosas, y la segunda es la
+    grave:
+    - **(a)** `new Date()` + `setDate(...)` **conservaba la hora actual**, así que la semana
+      arrancaba el lunes **a la hora en que se abría el dashboard**. Un turno del lunes 09:00 se
+      contaba a las 08:00 y **dejaba de contarse a las 15:00** — el mismo turno, el mismo día.
+    - **(b)** ⚠⚠ **el DOMINGO contaba la semana SIGUIENTE.** `getDay()` devuelve **0** el domingo,
+      así que `getDate() - 0 + 1` daba **mañana** y la ventana empezaba **en el futuro**: la
+      tarjeta mostraba los turnos ya agendados para la semana entrante en vez de los de la semana
+      que estaba cerrando. Hoy es criterio **ISO** (lunes a domingo, el domingo pertenece a la
+      semana que **termina**), con el token `i` de date-fns y anclado a la medianoche AR.
+  - **"Consultas este mes" — corrimiento chico en el caso normal, MES ENTERO en el borde.** El
+    `new Date(y, m, 1)` daba la medianoche del **runtime**, así que el mes arrancaba a las **21:00
+    del último día del mes anterior**. Eso son 3 horas de más casi siempre — pero el **último día
+    del mes a las 22:00 ART** el runtime UTC ya cree que empezó el mes siguiente, y entonces la
+    tarjeta **pasaba de mostrar el mes completo a mostrar la última hora**. Se recuperaba sola al
+    día siguiente, que es exactamente por qué un bug así sobrevive: parece un error de carga.
+  - **No se tocó** la query de pacientes (solo `count`, sin fechas) ni ningún otro componente del
+    dashboard.
+  - **Verificación:** las ventanas viejas y nuevas se **midieron** reproduciendo ambos cálculos con
+    `TZ=UTC` sobre cuatro instantes de prueba, no se estimaron. `tsc`, `lint` y `build` en **0**.
 
-- **⬜ ABIERTO (anotado 2026-09-04) — `turnoUpdateSchema` (`lib/validations/turno.schema.ts:87`) no
-  tiene consumidores.** Convive con `turnoUpdateWithDatesSchema`, que es el que usa el PATCH.
-  Conviene decidir cuál queda **antes** de tocar el ítem de arriba, no después.
+- **✅ RESUELTO (2026-09-04, PR #120 / commit `82a489c`, sin migración) — el PATCH del turnero
+  descartaba la mitad del payload en silencio.** Bug VIVO. PREEXISTENTE. `turno-form.tsx` mandaba
+  por PATCH el objeto completo del formulario (10 claves), pero `PATCH /api/turnero/[id]` valida con
+  **`turnoUpdateWithDatesSchema`**, que **no declaraba `paciente_id`, `categoria` ni
+  `paciente_nombre_libre`** — y es un `z.object` **sin `.passthrough()`**, así que Zod los **borraba**
+  antes del `.update()`. **Cambiar el paciente o la categoría de un turno existente NO HACÍA NADA** y
+  el toast decía *"Turno actualizado"*: sin error, sin 400, sin log.
+  - **Los tres campos ahora están declarados**, `optional` y **sin `.default()`** (un default acá se
+    inyectaría en todo PATCH que no lo mande —drag/resize incluido— y pisaría el valor guardado).
+  - ⚠⚠ **`origen` y `consulta_id` SIGUEN AFUERA, y NO es el mismo olvido: es deliberado.** Son
+    campos de **sistema**, sin ningún input en el formulario. `origen` editable **mentiría sobre la
+    procedencia** del turno, y `consulta_id` editable rompería el índice único parcial
+    **`turnos_consulta_id_unico`** (migración 038, un turno por consulta). Detalle en `CLAUDE.md` →
+    *Estado de desarrollo* → la serie de PRs #120–#123.
+  - **Entraron en la misma tanda, porque el bug las destapó:** la **validación de tenant** del
+    `paciente_id` (helper nuevo `lib/pacientes/verificar-paciente.ts` — `CLAUDE.md` → **nota técnica
+    42**), el **cruce categoría/paciente** con valores efectivos (un `turno_medico` sin paciente
+    ahora da **400** en vez de reventar contra la CHECK y salir como 500), el chequeo de **paciente
+    archivado** —que el turnero era el único de su familia en no tener, **regla de negocio 9**— y el
+    cambio de `undefined` a **`null`** al limpiar los campos de paciente en el formulario (ver la
+    convención de `JSON.stringify` en `CLAUDE.md` → *Convenciones de código*).
+  - ⚠ **Sin backfill:** las **21 filas** viejas con `paciente_nombre_libre = ''` quedan como están.
+    La normalización a `NULL` corta la fuente, no reinterpreta lo guardado.
+
+- **✅ RESUELTO (2026-09-04, PR #120 / commit `82a489c`) — `turnoUpdateSchema` no tenía
+  consumidores: se BORRÓ.** Se decidió antes de tocar el ítem de arriba, como este ítem
+  recomendaba.
+  - ⚠⚠ **Y "arreglarlo" en vez de borrarlo habría sido un bug PEOR — vale dejarlo escrito, porque
+    era el camino que parecía obvio.** Era `turnoBaseSchema.partial()`, y `.partial()` hace los
+    campos opcionales pero **NO elimina sus `.default()`**: los de `estado`, `categoria` y `origen`
+    se habrían inyectado en **cada PATCH** que no los mandara —drag y resize incluidos— **pisando
+    los valores guardados** con `'pendiente'`, `'turno_medico'` y `'manual'`. O sea que el schema
+    que parecía la solución al ítem de arriba habría convertido un PATCH mudo en un PATCH que
+    **corrompe**. El comentario de `turnoUpdateWithDatesSchema` ya advertía justamente eso, y tener
+    las dos formas conviviendo **invitaba a usar la incorrecta**.
+  - La fila correspondiente de la tabla de `CLAUDE.md` → **nota técnica 39** quedó actualizada:
+    `turnoBaseSchema` **sigue exportado** pero hoy **no tiene ninguna derivación viva**.
 
 - **⬜ ABIERTO (anotado 2026-09-04) — `/turnero?paciente_id={id}` es un link muerto.** Lo emite
   `app/(app)/pacientes/[id]/page.tsx:265` ("Ver turnos"), pero `app/(app)/turnero/page.tsx` **no lee

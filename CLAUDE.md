@@ -260,6 +260,21 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
   (`trigger()` + `getValues()`, como en ese componente), `getValues()` devuelve el **input crudo**,
   **no** el output transformado — la normalización queda del lado del servidor, donde se hace el
   `safeParse`.
+- **⚠⚠ Para LIMPIAR un campo de un formulario va `null`, NUNCA `undefined`: `JSON.stringify`
+  DESCARTA las claves `undefined`.** Un `form.setValue(campo, undefined)` **no llega nunca al
+  endpoint** —la clave no viaja en el body—, así que el servidor no recibe ninguna orden y **el
+  valor viejo sobrevive en la base**. Es una diferencia **semántica** real, no de estilo: `undefined`
+  dice *"no mandes este campo"* (lo correcto en un PATCH parcial) y `null` dice *"poneló en NULL"*
+  (lo correcto para **desvincular**). Los schemas tienen que declarar esos campos `.nullable()` para
+  aceptarlo.
+  **No es teórico:** fue la causa de **tres síntomas distintos** al editar turnos —el evento del
+  calendario seguía mostrando el paciente tras pasar la categoría a `personal`, volver a
+  `turno_medico` dejaba el campo vacío pero la fila con su id viejo, y `paciente_nombre_libre`
+  quedaba guardado como `''`—. Mismo motivo por el que `patient-form.tsx` manda
+  `obra_social_id: null` explícito al soltar la obra social.
+  ⚠ Corolario del lado del servidor: `''` **tampoco es `NULL`**. Un `<input>` en blanco manda cadena
+  vacía, que **pasa** las validaciones de `.optional()` y **no la atrapan** los fallbacks `??` río
+  abajo. Donde importe, normalizar en la escritura con `(valor ?? '').trim() || null`.
 - **Imports:** alias `@/` → `src/`. Agrupar externas → componentes → lib → types.
   Preferí importar tipos desde `@/types` (barrel `index.ts`).
 - Al tocar tipos, mantené la organización por dominio existente (no consolidar en
@@ -313,7 +328,15 @@ Funciones SQL clave: `get_medico_id()`, `get_user_role()`, `get_user_medico_id()
 8. **Asistente sin vínculo** → redirigido a onboarding, no puede usar la app.
 9. **Pacientes se archivan, no se borran** (Ley 26.529 — conservación de la HC). Archivar
    (`archivado_at`) los saca de listados y bloquea escritura (editar, emitir documentos,
-   **crear consultas**), pero la HC queda de **solo lectura**. El borrado físico real es la
+   **crear consultas** y **agendarle turnos**), pero la HC queda de **solo lectura**.
+   ⚠ **Los turnos entraron en ese conjunto el 2026-09-04** y con el mismo criterio que pedidos,
+   certificados y consultas: ni al **crear** (`POST /api/turnero` → 409) ni al **reasignar** un
+   turno existente a un paciente archivado (`PATCH /api/turnero/[id]` → 409). Hasta entonces el
+   turnero era el **único** endpoint de la familia que no lo chequeaba.
+   ⚠⚠ **Lo que NO bloquea: administrar los turnos que el paciente YA tenía.** Mover la hora o
+   cambiar el estado de un turno de un paciente archivado **sigue permitido** — la regla prohíbe
+   turnos **nuevos**, no congela la agenda pasada. De ahí la asimetría del PATCH descrita en la
+   **nota técnica 42**. El borrado físico real es la
    **excepción**: solo pacientes sin **ninguna** actuación (consultas, estudios, evoluciones,
    turnos, pedidos, certificados, recetas — la fila dormida de `historia_clinica`, si la
    hay, no cuenta). Archivar / desarchivar /
@@ -791,6 +814,71 @@ RLS del esquema, cambia el orden de la bandeja y termina con el deep-link mudo:
    aceptar tanto el request de un Route Handler como las cabeceras de un Server Component.
    Ver **nota técnica 36** (incluye el límite: **los PDF ya emitidos no se regeneran**).
 
+**TURNERO + ZONA HORARIA — cuatro tandas, SIN migración** (2026-09-04, PRs #120–#123). Cierra el
+PATCH mudo del turnero y barre el antipatrón de "hoy en UTC" del proyecto. ⚠ **Ninguna de las
+cuatro tocó la base**: no hay migración nueva, y la última aplicada sigue siendo la **048**.
+1. **El PATCH del turnero descartaba la mitad del payload (PR #120, `82a489c`).** `turno-form.tsx`
+   mandaba el objeto completo del formulario, pero `turnoUpdateWithDatesSchema` **no declaraba**
+   `paciente_id`, `categoria` ni `paciente_nombre_libre` — y es un `z.object` **sin
+   `.passthrough()`**, así que Zod los **borraba** antes del `.update()`: **cambiar el paciente o la
+   categoría de un turno existente NO HACÍA NADA** y el toast decía *"Turno actualizado"*. Sin
+   error, sin 400, sin log. Los tres campos ahora están declarados, **`optional` y sin
+   `.default()`**.
+   - ⚠⚠ **`origen` y `consulta_id` SIGUEN AFUERA, Y ES A PROPÓSITO — no es el mismo olvido.** Son
+     campos de **sistema**: el formulario no tiene ningún input para ellos (los arrastra desde
+     `initialData` solo para no perderlos), así que el usuario no puede tocarlos y **que Zod los
+     descarte es el comportamiento correcto**. `origen` registra de dónde salió el turno
+     (`manual` | `desde_hc`) y editable **mentiría sobre la procedencia**, que es lo único que ese
+     campo existe para decir; `consulta_id` es peor, porque tiene el índice único parcial
+     **`turnos_consulta_id_unico`** (migración 038, **un turno por consulta**) y editable permitiría
+     romper esa relación o chocar contra un `23505` que nadie maneja. Los escriben `POST
+     /api/turnero` y los dos endpoints de consultas, y **nadie más**.
+   - ⚠⚠ **`turnoUpdateSchema` se BORRÓ, y "arreglarlo" habría sido un bug PEOR.** Era
+     `turnoBaseSchema.partial()` y **no tenía consumidores**, pero era una **trampa activa**: al
+     derivar del base heredaba los **`.default()`** de `estado`, `categoria` y `origen`, que
+     `.partial()` **no elimina** — se habrían inyectado en **cada PATCH** que no los mandara
+     (drag/resize incluido), **pisando los valores guardados** con `'pendiente'`,
+     `'turno_medico'` y `'manual'`. Era exactamente lo que el comentario de
+     `turnoUpdateWithDatesSchema` ya advertía que había que evitar, así que tener las dos formas
+     conviviendo **invitaba a usar la incorrecta**. Ver **nota técnica 39**.
+   - **Validación de tenant del `paciente_id`** (helper nuevo `lib/pacientes/verificar-paciente.ts`)
+     y **cruce categoría/paciente** con valores efectivos en el PATCH, más el chequeo de **paciente
+     archivado** en el POST — que el turnero era el único de su familia en no tener (**regla de
+     negocio 9**). Ver **nota técnica 42**.
+   - **`null` en vez de `undefined`** al limpiar los campos de paciente en el formulario, y
+     normalización de `paciente_nombre_libre` vacío a `NULL` en POST y PATCH. Ver la convención de
+     `JSON.stringify` en *Convenciones de código*. ⚠ **Sin backfill** de las 21 filas viejas
+     guardadas con `''`: se cortó la fuente.
+2. **`hoyAR()` y los 7 sitios que derivaban el día en UTC (PR #121, `44c1104`).** Helper nuevo en el
+   canon de fechas, aplicado a los **6** sitios que necesitaban *hoy* —los dos formularios de
+   documentos, los dos fallbacks de sus endpoints y los dos badges de "expirado"— más un **séptimo
+   que NO usa `hoyAR()`**: el nombre del archivo del PDF de consultas, que deriva el día de un
+   instante guardado y va con `formatFechaAR`. De paso, el `hoyStr` de `/certificados` se **izó
+   fuera del `.map()`**, donde se recalculaba por fila. Ver **nota técnica 41**.
+3. **Las tres ventanas temporales del dashboard (PR #122, `5b5986d`).** `stats-cards.tsx` tenía
+   **TRES bugs distintos y solo uno era de zona**, así que cambiar el helper **no alcanzaba**:
+   - **"Turnos Hoy"** combinaba el día en UTC **con límites sin offset** que Postgres leía en UTC:
+     la ventana efectiva iba de **ayer 21:00 a hoy 20:59 AR**. Ahora es un rango de **instantes**,
+     **semiabierto** (el `.lte(…T23:59:59)` perdía el último segundo del día).
+   - **"Turnos esta semana"** — ⚠ **no era de zona, era de LÓGICA.** Conservaba la **hora actual**,
+     así que la semana arrancaba el lunes a la hora en que se abría el dashboard y un turno del
+     lunes a la mañana desaparecía por la tarde; y el **DOMINGO contaba al revés** (`getDay()`
+     devuelve 0, así que `getDate() - 0 + 1` daba **mañana**) y la tarjeta mostraba **la semana que
+     todavía no había empezado**. Hoy es criterio **ISO** (lunes a domingo, el domingo pertenece a
+     la semana que **termina**), anclado a la medianoche AR.
+   - **"Consultas este mes"** arrancaba a las **21:00 del último día del mes anterior**. En el borde
+     el efecto no eran 3 horas sino **el mes entero**: el 31 a las 22:00 ART el runtime UTC ya cree
+     que empezó el mes siguiente, y la tarjeta pasaba de mostrar el mes completo a mostrar **la
+     última hora**.
+4. **El corte del límite diario de difusión (PR #123, `b1add88`).** El contador de la **regla de
+   negocio 12** usaba `new Date()` + `setHours(0, 0, 0, 0)` —medianoche del **runtime**—, así que el
+   cupo de 100 se reseteaba a las **21:00 ART**. Dos efectos reales: los envíos de la franja
+   21:00–00:00 **gastaban el cupo del día siguiente por adelantado** (y de ahí un **429** sobre un
+   día que tenía los 100 libres, sin mandar **ni un email**, porque el rechazo es todo-o-nada), y
+   simétricamente esa franja permitía hasta **200 en un mismo día argentino**. ⚠ **No se tocó el
+   límite de 100** ni el `enviado_at` de auditoría del insert, que escribe *"ahora"* en un
+   `timestamptz` y **es correcto**.
+
 **Pendiente:** ver `PENDIENTES.md` (pulidos finales en tres bloques: Funcional,
 Seguridad, Estético), el bucket **`difusion`** (aún no creado; `documentos` y `estudios`
 ya existen por migración), el **opt-out de difusión** (Ley 25.326, bloqueante de go-live), la
@@ -900,7 +988,9 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
 | `resolverTenant`, `tenantDeProfile`, **`resolverAcceso`** | `src/lib/auth/tenant.ts` | Resolución del tenant (`medico_id` efectivo) y autorización por permiso. `tenantDeProfile` es la variante **pura**, para quien ya leyó el `profile`. `resolverAcceso` suma el chequeo de permiso y acepta **un permiso o un array (OR)**. Ver **nota técnica 24** |
 | `formatFechaAR`, `formatFecha`, `formatFechaLarga`, `TZ_AR` | `src/lib/utils/format-date.ts` | Formateo de fechas en zona AR. El motor lanza; los dos wrappers degradan al texto crudo. Ver **nota técnica 18** |
 | **`parseFechaHoraAR`** | `src/lib/utils/format-date.ts` | La **inversa**: ancla una hora de PARED argentina (sin offset) al instante correcto, para persistirla en un `timestamptz`. ⚠ Forma **PAR** con `formatParaInputAR`. Ver **nota técnica 25** |
+| **`hoyAR`** | `src/lib/utils/format-date.ts` | El día de HOY en zona del consultorio, como `"YYYY-MM-DD"`. Reemplaza al antipatrón `new Date().toISOString().slice(0, 10)`, que da UTC. ⚠ **No sirve para filtrar un `timestamptz`**: eso necesita un INSTANTE (`parseFechaHoraAR(...).toISOString()`). Ver **nota técnica 41** |
 | **`formatParaInputAR`** | `src/lib/utils/format-date.ts` | La otra mitad del par: instante → string `"YYYY-MM-DDTHH:mm"` para un `<input type="datetime-local">`, en zona AR. ⚠ **No se toca sola**: convertir un solo lado del par corrompe datos en silencio. Ver **nota técnica 25** |
+| **`verificarPacienteDelTenant`**, tipo `PacienteVerificado` | `src/lib/pacientes/verificar-paciente.ts` | ¿El `paciente_id` que mandó el cliente es de ESTE tenant y admite escritura? ⚠ **Ni la RLS ni la FK lo validan.** Admin client + `.eq('creado_por', …)`; devuelve una unión discriminada con `motivo` (404 vs 409). Módulo **solo-servidor**. Ver **nota técnica 42** |
 | `buscarSolapamientos` | `src/lib/agenda/solapamiento.ts` | Criterio ÚNICO de "franja ocupada" de la agenda. Ver **nota técnica 23** |
 | **`sanitizarTextoBusqueda`** | `src/lib/validations/shared.ts` | Criterio ÚNICO para meter el `?q=` de una búsqueda dentro de un `ilike`: `trim` → `slice(maxLen)` → escape de `%`, `_` y `\`. ⚠ **El escapado va DESPUÉS del recorte de longitud**: al revés, el corte puede partir al medio un par `\%` y dejar un backslash colgado. Lo usan los **4** buscadores por nombre/DNI (`/pacientes`, `GET /api/pacientes`, `/pedidos`, `/certificados`). ⚠ El resultado es para el **patrón**, no para la UI: el texto escapado no vuelve a pantalla (los llamadores mantienen el `q` crudo aparte), y no sirve para un `eq`/`in`/`fts` |
 | `BotonCrearConPermiso` | `src/components/shared/boton-crear-con-permiso.tsx` | Botón de acción que se **deshabilita** (en vez de rebotar contra `/sin-acceso`) cuando falta el permiso. Client Component: lee del `PermisosProvider`, así que sirve en páginas Server que **no** consultan `profiles`, sin agregarles una query. Es **solo UX** — la autorización real la hacen la página destino y el endpoint |
@@ -1826,9 +1916,15 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
 
       | Base | Refinado que se exporta | Derivación | ¿El base se exporta? |
       |---|---|---|---|
-      | `turnoBaseSchema` (`turno.schema.ts`) | `turnoSchema` (`.superRefine`) | `turnoUpdateSchema = turnoBaseSchema.partial()` | **Sí** |
+      | `turnoBaseSchema` (`turno.schema.ts`) | `turnoSchema` (`.superRefine`) | ⚠ **ninguna viva** — ver el ⚠ de abajo | **Sí** |
       | `bloqueoAgendaBaseObject` (`turno.schema.ts`) | `bloqueoAgendaSchema` | `bloqueoAgendaUpdateSchema = …​.partial()` | No |
       | **`pacienteBaseObject`** (`paciente.schema.ts`) | `pacienteSchema` (`.refine` de obra social) | `pacienteAltaRapidaSchema = …​.pick({…}).extend({…})` | **No** |
+
+      ⚠⚠ **`turnoBaseSchema` YA NO TIENE NINGUNA DERIVACIÓN VIVA: `turnoUpdateSchema` se
+      BORRÓ** (tanda del PATCH del turnero, 2026-09-04). Era
+      `turnoBaseSchema.partial()`, **no tenía consumidores** y era una **trampa activa** — ver
+      el detalle en *Estado de desarrollo*. Se conserva la fila porque el base **sigue
+      exportado** y el patrón sigue siendo el correcto si mañana hace falta derivar.
 
       ⚠ **`pacienteBaseObject` NO se exporta, a diferencia de `turnoBaseSchema`**, y es
       deliberado: su único derivado vive **en el mismo archivo**, así que dejarlo privado impide
@@ -1869,3 +1965,90 @@ todos nacieron de encontrar el mismo criterio duplicado y divergido en varios ar
     - **Si aparece otro flujo que pida "un formulario dentro de un modal", este es el patrón**: un
       `useState` de vista y dos ramas en el mismo `DialogContent`, con el encabezado reflejando en
       cuál está. Es más barato que un Dialog anidado y no tiene sus problemas de foco.
+41. **⚠⚠ DERIVAR "EL DÍA DE HOY" VA CON `hoyAR()` (`src/lib/utils/format-date.ts`), NUNCA CON
+    `new Date().toISOString().slice(0, 10)`.** El canon expone `hoyAR()`, que devuelve el día
+    de hoy **en la zona del consultorio** como `"YYYY-MM-DD"`. Es la nota más reutilizable de
+    su serie: el antipatrón estaba repartido en **8 sitios** y ninguno era intencional.
+    - **Por qué el antipatrón está mal, y por qué se ve poco:** `toISOString()` serializa en
+      **UTC**.
+      · **En el cliente** falla **3 horas por día** — entre las **21:00 y las 00:00 ART**
+        devuelve el día **siguiente**. Invisible en cualquier prueba diurna, que es exactamente
+        por qué sobrevivió tanto.
+      · **En el SERVIDOR falla SIEMPRE**, porque el runtime de Vercel es **UTC**: no hay franja
+        segura, y el resto del día acierta solo por la coincidencia de que UTC y ART comparten
+        el número de día.
+      Es el bug de la **nota técnica 18** (formatear en la zona del runtime) aplicado a derivar
+      un **día** en vez de a renderizar un instante.
+    - ⚠ **CUÁNDO NO USAR `hoyAR()`:** cuando lo que se necesita **no es hoy**, sino el día de un
+      **instante YA GUARDADO**. Ahí va **`formatFechaAR(<instante>, 'yyyy-MM-dd')`**. El caso
+      vivo es el **nombre del archivo del PDF de consultas**
+      (`api/consultas/[id]/pdf/route.ts`), que deriva el día de `consulta.fecha_hora` — un
+      `timestamptz`: con `toISOString()` una consulta de las 22:00 ART se descargaba nombrada
+      con la fecha del día siguiente.
+    - ⚠⚠ **EL PUNTO QUE MÁS IMPORTA, Y EL QUE CASI SE PASA POR ALTO: UN STRING DE DÍA NO SIRVE
+      PARA FILTRAR UNA COLUMNA `timestamptz`.** Poner `hoyAR()` donde antes había un
+      `toISOString().slice(0, 10)` arregla **el día**, y puede dejar **el bug entero en pie**.
+      Un literal como `"2026-09-04T00:00:00"` —sin offset— **no lo interpreta JS: lo interpreta
+      POSTGRES**, en la zona de la **sesión**, que es **UTC** (verificado a nivel de cluster: no
+      hay override de `TimeZone` para `authenticated` ni `authenticator`). Para filtrar un
+      `timestamptz` hay que construir **INSTANTES**:
+      ```ts
+      const desde = parseFechaHoraAR(`${hoyAR()}T00:00`).toISOString()   // con offset
+      ```
+      Es la trampa de la **nota técnica 25** en el sentido de **entrada**. Los casos vivos son
+      las **tres ventanas** de `components/dashboard/stats-cards.tsx` (hoy / semana / mes) y el
+      corte del **límite diario** de `api/difusion/enviar/route.ts`.
+      ⚠ Y el rango va **semiabierto** —`.gte(desde)` + `.lt(<día siguiente>)`, no
+      `.lte(…T23:59:59)`—, mismo criterio que `lib/agenda/solapamiento.ts` (**nota 23**): el
+      `lte` pierde el último segundo del día y un turno a las 23:59:30 no se cuenta.
+    - ⚠ **DEPENDENCIA DEL MODO DE RENDER, y no es teórica.** `hoyAR()` se evalúa **por
+      request**, así que toda ruta que lo use tiene que ser **dinámica (`ƒ`)**. Si alguna se
+      volviera **prerenderizada (`○`)**, el "hoy" quedaría **congelado en la fecha del deploy**
+      y las comparaciones se harían contra el día en que se compiló. Hoy son dinámicas las tres
+      que lo usan —**`/dashboard`, `/certificados` y `/verificar/[codigo]`**—, verificado en la
+      salida de `npm run build`. Es la misma clase de dependencia que la **nota 17** con el
+      nonce de la CSP, donde `/login` y `/registro` **sí** son estáticas y por eso nunca lo
+      reciben.
+    - ⚠ **`hoyAR()` no lleva try/catch, a diferencia de `formatFecha`.** Su entrada es
+      `new Date()` —el instante actual—, que **nunca** es inválida, así que no hay nada que
+      degradar. **No copiar ese patrón** donde la fecha venga de afuera: ahí el motor
+      `formatFechaAR` **LANZA** y hace falta el wrapper que degrada.
+42. **⚠⚠ UN `paciente_id` QUE LLEGA DEL CLIENTE HAY QUE VALIDARLO CONTRA EL TENANT: NO LO HACE
+    NADIE MÁS.** Ni la RLS ni la foreign key. `turnos_update` (y `turnos_insert`) solo miran
+    **`medico_id`** —el del **TURNO**—, y `turnos_paciente_id_fkey` referencia `pacientes(id)`
+    **sin filtrar tenant**: acepta el id de un paciente de **otro consultorio**. Todo endpoint
+    que acepte un `paciente_id` del cliente y no lo valide **abre una fuga de aislamiento** — se
+    le podría asignar a un registro propio un paciente ajeno. **No es un detalle de UX.**
+    - **El criterio vive en un helper:** `verificarPacienteDelTenant(pacienteId, tenantMedicoId)`
+      en **`src/lib/pacientes/verificar-paciente.ts`**. Devuelve
+      `{ ok: true } | { ok: false; motivo: 'no-encontrado' | 'archivado' }`.
+    - ⚠ **Es una unión discriminada con `motivo`, no un booleano**, por la misma razón que
+      `resolverAcceso` (**nota 24**): las dos causas de rechazo necesitan respuestas HTTP
+      **distintas** —**404** "no encontrado" contra **409** "está archivado"— y mensajes
+      distintos. Un booleano las colapsaría en un solo error genérico. Y **devuelve un valor, no
+      una `NextResponse`**: cada llamador redacta su propio texto (el del turnero habla de
+      agendar, el de pedidos de emitir documentos).
+    - ⚠ **LOS DOS DETALLES QUE LO HACEN FUNCIONAR, y sin los cuales no sirve:**
+      1. **Admin client (bypass RLS), no el de sesión.** Quien gestiona la agenda **puede no
+         tener `ver_pacientes`** —son 12 permisos independientes—, y con el cliente de sesión la
+         RLS le escondería la fila: el chequeo devolvería un falso *"no existe"* para un paciente
+         que **sí** es del tenant.
+      2. **`.eq('creado_por', tenantMedicoId)`.** Es **lo que lo convierte en validación de
+         TENANT** y no de mera existencia. ⚠ **Sin ese `.eq` el fetch no sirve para nada**,
+         porque con el admin client **todas** las filas son visibles y cualquier id existente
+         pasaría.
+      Los dos van juntos: el admin client sin el `.eq` es peor que no chequear.
+    - **Quiénes lo usan hoy: `POST /api/turnero` y `PATCH /api/turnero/[id]`.**
+      ⚠ Los **POST de `pedidos`, `certificados` y `consultas`** tienen el **mismo chequeo
+      INLINE** —son el patrón que este helper generaliza— y **no se migraron**. Es un refactor
+      **sin cambio de comportamiento**, y son los candidatos naturales si alguien vuelve por ahí.
+    - ⚠⚠ **LA ASIMETRÍA DEL PATCH ES LA PARTE NO OBVIA, Y ES DELIBERADA:** el chequeo de
+      **TENANT** corre **siempre** que venga un `paciente_id` no nulo; el de **ARCHIVADO** solo
+      si el paciente **CAMBIA** (`updates.paciente_id !== existing.paciente_id`).
+      **Por qué:** el formulario manda **siempre** el `paciente_id` al editar (lo siembra desde
+      `initialData`), así que una guarda de archivado **incondicional** dejaría los turnos de un
+      paciente archivado **imposibles de editar para siempre** — ni siquiera para **moverles la
+      hora**, que devolvería 409 eternamente. La **regla de negocio 9** prohíbe agendarle turnos
+      **nuevos** a un archivado, **no** administrar los que ya tenía.
+      ⚠ El de **tenant no se relaja**: es el que cierra la fuga de aislamiento y **no depende de
+      si el valor cambió**. Mandar `paciente_id: null` es **desvincular** y no valida nada.
