@@ -1,13 +1,59 @@
 import { createClient } from '@/lib/supabase/server'
 import { Users, CalendarDays, TrendingUp, ClipboardList } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { hoyAR, formatFechaAR, parseFechaHoraAR } from '@/lib/utils/format-date'
+
+const MS_POR_DIA = 24 * 60 * 60 * 1000
 
 async function getStats() {
   const supabase = await createClient()
-  const today = new Date().toISOString().split('T')[0]
-  const weekStart = new Date()
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1)
-  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+
+  // ── Las tres ventanas temporales ───────────────────────────────────────────
+  //
+  // ⚠⚠ LAS TRES SE CONSTRUYEN COMO **INSTANTES** (`.toISOString()`, o sea CON offset),
+  // nunca como strings de día. Del otro lado hay columnas `timestamptz`
+  // (`turnos.fecha_inicio`, `consultas.created_at`), y un string SIN offset —del tipo
+  // `"2026-09-04T00:00:00"`— no lo interpreta JS: lo interpreta **POSTGRES**, en la zona de
+  // la SESIÓN, que es **UTC** (verificado a nivel de cluster: no hay override de `TimeZone`
+  // para `authenticated` ni `authenticator`). Es la misma trampa de la nota técnica 25, en
+  // el sentido de entrada.
+  //
+  // Por eso el día de partida sale de `hoyAR()` y el anclaje de `parseFechaHoraAR`: las tres
+  // ventanas son días del **CONSULTORIO**, no del runtime — que en Vercel es UTC siempre, así
+  // que derivarlas de `new Date()` fallaba TODOS los días, no solo de noche.
+
+  const hoy = hoyAR() // "YYYY-MM-DD" en zona AR
+  const inicioHoy = parseFechaHoraAR(`${hoy}T00:00`)
+
+  // ── Hoy: [medianoche AR de hoy, medianoche AR de mañana) ───────────────────
+  // ⚠ Intervalo SEMIABIERTO, igual que `lib/agenda/solapamiento.ts` (nota técnica 23). El
+  // `.lte(…T23:59:59)` anterior perdía el último segundo del día: un turno a las 23:59:30
+  // no se contaba.
+  // ⚠ El día siguiente se calcula sumando milisegundos AL INSTANTE, no con `setDate()` sobre
+  // una fecha local: así el cruce de medianoche queda anclado a AR y no depende de la zona
+  // del runtime. (Asume que Argentina no tiene horario de verano, que es el caso desde 2009;
+  // si volviera a tenerlo, este `+24 h` habría que derivarlo del día siguiente en calendario.)
+  const desdeHoy = inicioHoy.toISOString()
+  const hastaHoy = new Date(inicioHoy.getTime() + MS_POR_DIA).toISOString()
+
+  // ── Semana ISO: desde el LUNES 00:00 AR ────────────────────────────────────
+  // Criterio ISO: la semana va de lunes a domingo, y el DOMINGO pertenece a la semana que
+  // TERMINA. El token `i` de date-fns da 1 = lunes … 7 = domingo, así que restar `(i - 1)`
+  // días siempre cae en el lunes de la semana en curso.
+  // ⚠ Esto corrige DOS bugs que no eran de zona:
+  //   (a) el cálculo anterior conservaba la HORA ACTUAL, así que la semana arrancaba el lunes
+  //       a la hora en que se abría el dashboard y los turnos del lunes a la mañana
+  //       desaparecían por la tarde. Ahora ancla a la medianoche AR del lunes.
+  //   (b) el DOMINGO contaba al revés: `getDay()` devuelve 0 y `getDate() - 0 + 1` daba
+  //       MAÑANA, así que la tarjeta mostraba la semana que todavía no había empezado.
+  const diaIso = Number(formatFechaAR(inicioHoy, 'i'))
+  const inicioSemana = new Date(inicioHoy.getTime() - (diaIso - 1) * MS_POR_DIA).toISOString()
+
+  // ── Mes: día 1 a las 00:00 AR ──────────────────────────────────────────────
+  // ⚠ El año y el mes salen de `hoy` (zona AR), NO de `getFullYear()`/`getMonth()`, que leen
+  // la zona del RUNTIME. La medianoche AR del día 1 son las 03:00 UTC, así que con el cálculo
+  // anterior el mes arrancaba a las 21:00 del último día del mes ANTERIOR.
+  const inicioMes = parseFechaHoraAR(`${hoy.slice(0, 7)}-01T00:00`).toISOString()
 
   const [
     { count: totalPacientes },
@@ -19,18 +65,18 @@ async function getStats() {
     supabase
       .from('turnos')
       .select('*', { count: 'exact', head: true })
-      .gte('fecha_inicio', `${today}T00:00:00`)
-      .lte('fecha_inicio', `${today}T23:59:59`)
+      .gte('fecha_inicio', desdeHoy)
+      .lt('fecha_inicio', hastaHoy)
       .not('estado', 'eq', 'cancelado'),
     supabase
       .from('turnos')
       .select('*', { count: 'exact', head: true })
-      .gte('fecha_inicio', weekStart.toISOString())
+      .gte('fecha_inicio', inicioSemana)
       .not('estado', 'eq', 'cancelado'),
     supabase
       .from('consultas')
       .select('*', { count: 'exact', head: true })
-      .gte('created_at', monthStart),
+      .gte('created_at', inicioMes),
   ])
 
   return {
