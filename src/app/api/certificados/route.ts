@@ -5,6 +5,7 @@ import { certificadoSchema } from '@/lib/validations/pedido.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { congelarPdfDocumento, getBaseUrl, construirEmisorSnapshot } from '@/lib/pdf/documentos'
 import { resolverAcceso } from '@/lib/auth/tenant'
+import { hoyAR } from '@/lib/utils/format-date'
 
 // ── GET /api/certificados ─────────────────────────────────────
 
@@ -125,7 +126,7 @@ export async function POST(request: NextRequest) {
       .insert({
         ...insertData,
         firmado_por: tenantMedicoId,
-        fecha_certificado: insertData.fecha_certificado || new Date().toISOString().slice(0, 10),
+        fecha_certificado: insertData.fecha_certificado || hoyAR(),
         emisor_snapshot: emisorSnapshot,
       })
       .select()

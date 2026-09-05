@@ -5,6 +5,7 @@ import { pedidoSchema } from '@/lib/validations/pedido.schema'
 import { rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { congelarPdfDocumento, getBaseUrl, construirEmisorSnapshot } from '@/lib/pdf/documentos'
 import { resolverAcceso } from '@/lib/auth/tenant'
+import { hoyAR } from '@/lib/utils/format-date'
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -133,7 +134,7 @@ export async function POST(request: NextRequest) {
       .insert({
         ...result.data,
         firmado_por: tenantMedicoId,
-        fecha_pedido: result.data.fecha_pedido || new Date().toISOString().slice(0, 10),
+        fecha_pedido: result.data.fecha_pedido || hoyAR(),
         emisor_snapshot: emisorSnapshot,
       })
       .select()

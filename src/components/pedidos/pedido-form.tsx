@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 
 import { pedidoSchema, type PedidoFormValues } from '@/lib/validations/pedido.schema'
 import { resolverObraSocial, SIN_OBRA_SOCIAL_LABEL } from '@/lib/pacientes/obra-social'
+import { hoyAR } from '@/lib/utils/format-date'
 import type { PacienteBusqueda } from '@/types'
 
 /**
@@ -57,7 +58,7 @@ export function PedidoForm({ preselectedPacienteId }: PedidoFormProps) {
   } = useForm<PedidoFormValues>({
     resolver: zodResolver(pedidoSchema),
     defaultValues: {
-      fecha_pedido: new Date().toISOString().slice(0, 10),
+      fecha_pedido: hoyAR(),
     },
   })
 

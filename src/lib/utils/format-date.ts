@@ -136,3 +136,31 @@ export function formatParaInputAR(fecha: string | Date): string {
   }
   return formatFechaAR(fecha, "yyyy-MM-dd'T'HH:mm")
 }
+
+/**
+ * El día de HOY en la zona del consultorio, como `"YYYY-MM-DD"`.
+ *
+ * Formato pensado para comparar contra columnas `DATE` de la base (que son strings
+ * sin zona) y para sembrar el valor inicial de un `<input type="date">`.
+ *
+ * ⚠⚠ **NO usar `new Date().toISOString().slice(0, 10)` para esto.** Ése es el patrón
+ * que este helper viene a reemplazar, y está mal en los dos lados:
+ *  · **En el cliente** devuelve el día en **UTC**, así que entre las **21:00 y las
+ *    00:00 ART** adelanta al día SIGUIENTE. Es un bug de tres horas por día: invisible
+ *    en cualquier prueba diurna, y por eso sobrevivió tanto.
+ *  · **En el servidor es peor: falla TODOS los días, todo el día.** El runtime de
+ *    Vercel es UTC siempre, así que no hay franja segura — durante esas tres horas el
+ *    día está corrido y el resto del tiempo acierta por coincidencia de que UTC y ART
+ *    comparten el número de día.
+ *
+ * Es el mismo bug de la nota técnica 18 (formatear en la zona del runtime), aplicado
+ * a derivar un DÍA en vez de a renderizar un instante.
+ *
+ * ⚠ **Sin try/catch, a diferencia de `formatFecha`.** Su entrada es `new Date()` —el
+ * instante actual—, que **nunca** es inválido, así que no hay nada que degradar. **No
+ * copiar este patrón** donde la fecha venga de afuera: ahí el motor `formatFechaAR`
+ * **LANZA** ante una entrada inválida y hace falta el wrapper que degrada.
+ */
+export function hoyAR(): string {
+  return formatFechaAR(new Date(), 'yyyy-MM-dd')
+}

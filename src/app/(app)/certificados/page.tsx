@@ -4,7 +4,7 @@ import { BotonCrearConPermiso } from '@/components/shared/boton-crear-con-permis
 import PageHeader from '@/components/shared/page-header'
 import { PlusCircle, Award, Calendar, Ban, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
-import { formatFecha } from '@/lib/utils/format-date'
+import { formatFecha, hoyAR } from '@/lib/utils/format-date'
 import { sanitizarTextoBusqueda } from '@/lib/validations/shared'
 import { CertificadosFiltros } from '@/components/certificados/certificados-filtros'
 import { Suspense } from 'react'
@@ -44,6 +44,12 @@ export default async function CertificadosPage({ searchParams }: Props) {
   }
 
   const { data: certificados } = await query
+
+  // ⚠ Se calcula UNA vez, fuera del `.map()` de abajo, donde antes vivía: el día de hoy
+  // no depende del certificado, así que recalcularlo por fila era una llamada por
+  // certificado sin ninguna razón. Además garantiza que las 50 filas de la página se
+  // comparen todas contra el MISMO día, aunque el render cruce la medianoche.
+  const hoyStr = hoyAR()
 
   return (
     <div className="space-y-6">
@@ -112,8 +118,7 @@ export default async function CertificadosPage({ searchParams }: Props) {
                 : cert.contenido
               : null
 
-            // Estado derivado
-            const hoyStr = new Date().toISOString().slice(0, 10)
+            // Estado derivado (`hoyStr` se calcula una sola vez arriba)
             const isAnulado = cert.estado === 'revocado'
             const isExpirado = !isAnulado && cert.valido_hasta ? hoyStr > cert.valido_hasta : false
 
